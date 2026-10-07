@@ -216,30 +216,30 @@ describe("AgentLoop tool calls", () => {
           })
       }
     ]
-    const researchStub: AgentToolDef = {
-      name: "research.query",
+    const retrievalStub: AgentToolDef = {
+      name: "retrieval.query",
       tier: "T1",
       description: "Search the public web.",
       argsHint: '{ "query": "..." }',
       run: (args, ctx) =>
         Effect.succeed(`[verified] stubbed answer for "${String(args["query"])}" (turn ${ctx.turnId})`)
     }
-    const stub = new StubProvider("research-model")
+    const stub = new StubProvider("retrieval-model")
     stub.queueTexts(
-      `Let me look that up:\n${toolBlock("research.query", { query: "tucson weather" })}\ndone.`,
-      "Based on the research: sunny."
+      `Let me look that up:\n${toolBlock("retrieval.query", { query: "tucson weather" })}\ndone.`,
+      "Based on the retrieval: sunny."
     )
     const chunks = await collectChat(
-      buildStack(tmpRoot(), { impls, extraTools: [researchStub] }),
+      buildStack(tmpRoot(), { impls, extraTools: [retrievalStub] }),
       stub,
       "s1",
       "what is the weather in Tucson"
     )
     // The hook saw the call gated at T1 (the module's declared tier).
-    expect(seen).toEqual(["before:research.query@T1"])
+    expect(seen).toEqual(["before:retrieval.query@T1"])
     const report = doneReport(chunks)
     expect(report.executed.length).toBe(1)
-    expect(report.executed[0]!.tool).toBe("research.query")
+    expect(report.executed[0]!.tool).toBe("retrieval.query")
     expect(report.executed[0]!.result).toContain('[verified] stubbed answer for "tucson weather"')
     expect(report.blocked).toEqual([])
   })

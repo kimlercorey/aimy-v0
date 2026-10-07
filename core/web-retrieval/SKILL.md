@@ -1,12 +1,12 @@
 ---
-name: web-research
+name: web-retrieval
 version: 1.0.0
-description: Web research reference module — sourced answers with per-claim verification badges from the HonestyService ledger.
+description: Web retrieval reference module — sourced answers with per-claim verification badges from the HonestyService ledger.
 author: AImy project
 license: MIT
 aimy:
   hooks: [beforeToolCall, afterToolCall]
-  tools: [research.query]
+  tools: [retrieval.query]
   filesystem:
     read: []
     write: []
@@ -18,9 +18,9 @@ aimy:
   subprocess: false
 ---
 
-# web-research
+# web-retrieval
 
-Reference domain module for M4 (Track 2). Researches a query on the public
+Reference domain module for M4 (Track 2). Retrievales a query on the public
 web and returns an answer where **every factual claim carries a verification
 badge** derived by `HonestyService`:
 
@@ -32,20 +32,20 @@ badge** derived by `HonestyService`:
 The module never presents an unsourced claim as verified: badges are pure
 derived data in the honesty service; this module has no badge constructor.
 
-## Tool: `research.query`
+## Tool: `retrieval.query`
 
 Arguments: `{ query, sessionId, turnId, maxSources? }` (`maxSources` 1–10,
-default 3). Returns a `ResearchReport`: `{ query, answer, claims, fetchedCount,
+default 3). Returns a `RetrievalReport`: `{ query, answer, claims, fetchedCount,
 resultCount }`. `answer` renders each claim labeled `[verified]` /
 `[unverified]` / `[failed]`.
 
 ## Hook participation
 
-- `beforeToolCall` — fail-fast validation of `research.query` arguments
+- `beforeToolCall` — fail-fast validation of `retrieval.query` arguments
   (empty query, out-of-range `maxSources`, missing ledger scope). Deny blocks
   the call; it never terminates the turn.
 - `afterToolCall` — pass-through. Outcomes are ledger-backed by construction
-  (the research flow records every claim before returning); this hook is the
+  (the retrieval flow records every claim before returning); this hook is the
   documented extension point where a future verification arm attaches judge
   verdicts.
 
@@ -75,7 +75,7 @@ Filesystem: none. Subprocess: denied. Memory: none — claims live in the
 - The default search provider scrapes the DuckDuckGo HTML endpoint; markup
   changes or rate-limiting surface as typed errors (`MalformedSearchResponse`,
   `SearchError`), never silent empty results. The provider is behind the
-  `SearchProvider` interface — swap it without touching the research flow.
+  `SearchProvider` interface — swap it without touching the retrieval flow.
 - Text extraction is a simple tag-stripper, not a readability port: nav and
   boilerplate are included, JS-rendered pages yield little.
 - No telemetry, no calls to AImy infrastructure.

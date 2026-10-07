@@ -21,7 +21,7 @@ export interface ToggleSnapshot {
   readonly offlineMode: boolean
   readonly localInference: boolean
   readonly cloudEndpoints: ReadonlyArray<{ readonly id: string; readonly enabled: boolean }>
-  readonly webResearch: ReadonlyArray<{ readonly moduleId: string; readonly enabled: boolean }>
+  readonly webRetrieval: ReadonlyArray<{ readonly moduleId: string; readonly enabled: boolean }>
   readonly updateChecks: boolean
   readonly trustedBroadcast: boolean
   readonly telemetry: boolean
@@ -47,7 +47,7 @@ export const snapshotOf = (model: Model): ToggleSnapshot => ({
   offlineMode: model.offlineMode,
   localInference: model.localInference,
   cloudEndpoints: model.cloudEndpoints.map((e) => ({ id: e.id, enabled: e.enabled })),
-  webResearch: model.webResearch.map((m) => ({ moduleId: m.moduleId, enabled: m.enabled })),
+  webRetrieval: model.webRetrieval.map((m) => ({ moduleId: m.moduleId, enabled: m.enabled })),
   updateChecks: model.updateChecks,
   trustedBroadcast: model.trustedBroadcast,
   telemetry: model.telemetry,
@@ -85,13 +85,13 @@ export const interpretEgress = (
           endpoint.enabled ? { _tag: "Allowed" } : denied(`cloud endpoint '${endpoint.id}' is not opted in`)
         )
       }
-      case "webResearch": {
-        const mod = snapshot.webResearch.find((m) => m.moduleId === attempt.targetId)
+      case "webRetrieval": {
+        const mod = snapshot.webRetrieval.find((m) => m.moduleId === attempt.targetId)
         if (mod === undefined) {
-          return Effect.succeed(denied(`unknown web-research module '${attempt.targetId ?? "(none)"}' — fail-closed`))
+          return Effect.succeed(denied(`unknown web-retrieval module '${attempt.targetId ?? "(none)"}' — fail-closed`))
         }
         return Effect.succeed(
-          mod.enabled ? { _tag: "Allowed" } : denied(`web-research module '${mod.moduleId}' is not opted in`)
+          mod.enabled ? { _tag: "Allowed" } : denied(`web-retrieval module '${mod.moduleId}' is not opted in`)
         )
       }
       case "updateChecks":

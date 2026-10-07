@@ -6,21 +6,21 @@
  *   SafetyKernel.layerFromPolicy(openPolicy)
  *     -> kernel-backed PermissionGate behind MemoryServiceLive (+ tmp MemoryPaths)
  *     -> ModuleHooks with the REAL kernel behind the SafetyKernelSeam
- *        (the module-hook dispatcher; the web-research impls ride it)
+ *        (the module-hook dispatcher; the web-retrieval impls ride it)
  *     -> ModuleHost via makeModuleHost (lifecycle + hook dispatch +
  *        manifest enforcement + DirectGate + runtime registry), provided as
  *        a Layer alongside the rest; the host's own kernel seam and the
  *        DirectGate use the allow-all stub (the manifest/hook/dispatch
  *        enforcement under test lives in the host, not the kernel)
- *     -> HonestyServiceInMemory (the SAME ledger the research tool writes)
+ *     -> HonestyServiceInMemory (the SAME ledger the retrieval tool writes)
  *     -> InferencePoolLive (zero-socket: no provider registered)
  *     -> AgentLoop via layerAgentLoop() (honesty picked up via serviceOption)
- *   web-research installed from its REAL SKILL.md via packageModule
- *   (tier T1) -> enable -> start; the research tool runs against a MOCK
+ *   web-retrieval installed from its REAL SKILL.md via packageModule
+ *   (tier T1) -> enable -> start; the retrieval tool runs against a MOCK
  *   HttpClient (fixture routes + request spy) — no test here opens a socket.
  *
  * Covers:
- *   1. Full-stack composition: a "research X" tool call routes through the
+ *   1. Full-stack composition: a "retrieval X" tool call routes through the
  *      seam (ModuleHost.callTool) to the module; the module's hooks fire;
  *      its claims land in the HonestyService ledger with correct badges
  *      (sourced -> verified with evidence, synthesis/coverage -> unverified);
@@ -30,7 +30,7 @@
  *      BEFORE any socket opens (asserted via the fetch spy).
  *   3. Disable-mid-run: a disable issued mid-turn stops hook dispatch
  *      immediately (counter-proven), cleans the runtime registry (no
- *      residue), and a research.query while disabled fails with a clean
+ *      residue), and a retrieval.query while disabled fails with a clean
  *      typed ModuleError — not a hang, not a silent no-op.
  *   4. Badge correctness: sourced claim -> getBadge "verified" with the
  *      evidence listed; unsourced claim -> "unverified", structurally.
@@ -88,19 +88,19 @@ import {
 import { ToolName } from "./substrate/types.js"
 import {
   EgressDenied,
-  RESEARCH_MODULE,
-  RESEARCH_QUERY_TOOL,
+  RETRIEVAL_MODULE,
+  RETRIEVAL_QUERY_TOOL,
   checkFetchEgress,
   fetchSource,
   makeDuckDuckGoHtmlProvider,
-  makeResearchTool,
-  researchHookImpls,
-  researchToolCall,
+  makeRetrievalTool,
+  retrievalHookImpls,
+  retrievalToolCall,
   type HttpClientShape,
   type HttpResponse,
-  type ResearchTool
-} from "./web-research/src/index.js"
-import { DDG_HTML_FIXTURE, SOURCE_HTML_FIXTURE, ok } from "./web-research/test/fixtures.js"
+  type RetrievalTool
+} from "./web-retrieval/src/index.js"
+import { DDG_HTML_FIXTURE, SOURCE_HTML_FIXTURE, ok } from "./web-retrieval/test/fixtures.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures (the proven patterns from m1-wiring.test.ts)
@@ -108,7 +108,7 @@ import { DDG_HTML_FIXTURE, SOURCE_HTML_FIXTURE, ok } from "./web-research/test/f
 
 const tmpRoot = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "aimy-m4-test-"))
 
-const webResearchDir = (): string => fileURLToPath(new URL("./web-research", import.meta.url))
+const webRetrievalDir = (): string => fileURLToPath(new URL("./web-retrieval", import.meta.url))
 
 const pathsLayer = (dir: string): Layer.Layer<MemoryPaths> =>
   Layer.succeed(MemoryPaths, {
@@ -193,7 +193,7 @@ const openPolicy: PolicyDocument = {
   version: 1,
   rules: [
     { tool: "*", tier: "T0", decision: "allow", reason: "m4 wiring: T0 reads and tools" },
-    { tool: "*", tier: "T1", decision: "allow", reason: "m4 wiring: T1 tools (research.query)" },
+    { tool: "*", tier: "T1", decision: "allow", reason: "m4 wiring: T1 tools (retrieval.query)" },
     { tool: "*", tier: "T2", decision: "deny", reason: "m4 wiring default" },
     { tool: "*", tier: "T3", decision: "deny", reason: "m4 wiring default" }
   ]
@@ -210,11 +210,11 @@ export interface HookFireCounts {
   seenTools: Array<string>
 }
 
-/** web-research hook impls with a counting wrapper: every fired hook is proven. */
-const countingResearchImpls = (counts: HookFireCounts): ModuleHookImpls => {
-  const base = researchHookImpls(RESEARCH_MODULE)
+/** web-retrieval hook impls with a counting wrapper: every fired hook is proven. */
+const countingRetrievalImpls = (counts: HookFireCounts): ModuleHookImpls => {
+  const base = retrievalHookImpls(RETRIEVAL_MODULE)
   return {
-    module: RESEARCH_MODULE,
+    module: RETRIEVAL_MODULE,
     beforeToolCall: (call: ToolCall) =>
       Effect.andThen(
         Effect.sync(() => {
@@ -302,7 +302,7 @@ export interface M4World {
   readonly lifecycle: ModuleLifecycleApi
   readonly agentLoop: AgentLoopService
   readonly memory: MemoryServiceShape
-  readonly tool: ResearchTool
+  readonly tool: RetrievalTool
   readonly honesty: HonestyServiceShape
   readonly http: HttpClientShape
   readonly counts: HookFireCounts
@@ -311,7 +311,7 @@ export interface M4World {
 }
 
 /**
- * Build a fresh M4 world: full layer stack + web-research installed from its
+ * Build a fresh M4 world: full layer stack + web-retrieval installed from its
  * REAL SKILL.md (packageModule, tier T1), enabled, started. The HTTP layer
  * is mocked (fixture routes + spy) — no socket is ever opened.
  */
@@ -332,7 +332,7 @@ const withM4World = <A, E>(
           : Effect.succeed(res)
       })
   }
-  const layer = buildM4Layers(dir, [countingResearchImpls(counts)])
+  const layer = buildM4Layers(dir, [countingRetrievalImpls(counts)])
   return Effect.runPromise(
     Effect.gen(function* () {
       const host = yield* ModuleHost
@@ -340,12 +340,12 @@ const withM4World = <A, E>(
       const agentLoop = yield* AgentLoop
       const memory = yield* MemoryService
       const honesty = yield* HonestyService
-      const pkg = yield* packageModule(webResearchDir(), { tier: "T1" })
-      expect(pkg.moduleId).toBe(RESEARCH_MODULE)
+      const pkg = yield* packageModule(webRetrievalDir(), { tier: "T1" })
+      expect(pkg.moduleId).toBe(RETRIEVAL_MODULE)
       yield* host.install(pkg)
-      yield* host.enable(RESEARCH_MODULE)
-      yield* host.start(RESEARCH_MODULE)
-      const tool = makeResearchTool({
+      yield* host.enable(RETRIEVAL_MODULE)
+      yield* host.start(RETRIEVAL_MODULE)
+      const tool = makeRetrievalTool({
         provider: makeDuckDuckGoHtmlProvider({ http }),
         http,
         honesty
@@ -355,18 +355,18 @@ const withM4World = <A, E>(
   )
 }
 
-const researchArgs = (query: string, sessionId: string, turnId: string) => ({
+const retrievalArgs = (query: string, sessionId: string, turnId: string) => ({
   query,
   sessionId,
   turnId
 })
 
 // ---------------------------------------------------------------------------
-// 1. Full-stack composition: "research X" routes through the seam
+// 1. Full-stack composition: "retrieval X" routes through the seam
 // ---------------------------------------------------------------------------
 
 describe("M4 full-stack composition", () => {
-  it("routes 'research X' through the seam: hooks fire, claims land badged in the ledger", async () => {
+  it("routes 'retrieval X' through the seam: hooks fire, claims land badged in the ledger", async () => {
     await withM4World(({ host, agentLoop, memory, tool, honesty, counts }) =>
       Effect.gen(function* () {
         // Composition proof: the sibling services resolve from the same layer build.
@@ -374,18 +374,18 @@ describe("M4 full-stack composition", () => {
         const tree = yield* memory.read("m4-probe")
         expect(Array.isArray(tree.entries)).toBe(true)
 
-        expect(yield* host.runtimeModules()).toEqual([RESEARCH_MODULE])
+        expect(yield* host.runtimeModules()).toEqual([RETRIEVAL_MODULE])
 
         const report = yield* host.callTool(
-          RESEARCH_MODULE,
-          researchToolCall("m4t1:call:0", researchArgs("test query", "m4s1", "m4t1")),
-          tool.invoke(researchArgs("test query", "m4s1", "m4t1"))
+          RETRIEVAL_MODULE,
+          retrievalToolCall("m4t1:call:0", retrievalArgs("test query", "m4s1", "m4t1")),
+          tool.invoke(retrievalArgs("test query", "m4s1", "m4t1"))
         )
 
         // Routed through the seam: the module's hooks fired on THIS call.
         expect(counts.beforeToolCall).toBe(1)
         expect(counts.afterToolCall).toBe(1)
-        expect(counts.seenTools).toEqual([RESEARCH_QUERY_TOOL])
+        expect(counts.seenTools).toEqual([RETRIEVAL_QUERY_TOOL])
 
         // Fixture: 3 results; the http:// one is egress-denied; 2 fetched.
         expect(report.resultCount).toBe(3)
@@ -415,9 +415,9 @@ describe("M4 full-stack composition", () => {
         // BEFORE any hook fires — it never reaches the module.
         const denied = yield* Effect.flip(
           host.callTool(
-            RESEARCH_MODULE,
+            RETRIEVAL_MODULE,
             {
-              ...researchToolCall("m4t1:call:1", researchArgs("x", "m4s1", "m4t1")),
+              ...retrievalToolCall("m4t1:call:1", retrievalArgs("x", "m4s1", "m4t1")),
               tool: "web_fetch"
             },
             Effect.succeed("must never run")
@@ -439,14 +439,14 @@ describe("M4 manifest enforcement", () => {
   it("denies egress to an undeclared host fail-closed, opening no socket", async () => {
     await withM4World(({ http, lifecycle, requested }) =>
       Effect.gen(function* () {
-        const manifest = (yield* lifecycle.get(RESEARCH_MODULE)).manifest
+        const manifest = (yield* lifecycle.get(RETRIEVAL_MODULE)).manifest
         // The installed manifest allowlists exactly the declared search host.
         expect(manifest.network).toEqual({ vendorHosts: ["html.duckduckgo.com"] })
 
         // Declared host passes; normalization (case, port) never widens the match.
         yield* enforceEgress(
           manifest,
-          { moduleId: RESEARCH_MODULE, host: "HTML.DUCKDUCKGO.COM:443" },
+          { moduleId: RETRIEVAL_MODULE, host: "HTML.DUCKDUCKGO.COM:443" },
           { firstPartyHosts: [] }
         )
 
@@ -454,7 +454,7 @@ describe("M4 manifest enforcement", () => {
         const denied = yield* Effect.flip(
           enforceEgress(
             manifest,
-            { moduleId: RESEARCH_MODULE, host: "evil.example.com" },
+            { moduleId: RETRIEVAL_MODULE, host: "evil.example.com" },
             { firstPartyHosts: [] }
           )
         )
@@ -504,15 +504,15 @@ describe("M4 disable-mid-run", () => {
         // Disable MID-CALL: the disable lands after beforeToolCall fired but
         // before the tool finished — the trailing afterToolCall must not fire.
         const report = yield* host.callTool(
-          RESEARCH_MODULE,
-          researchToolCall("m4t3:call:0", researchArgs("test query", "m4s3", "m4t3")),
+          RETRIEVAL_MODULE,
+          retrievalToolCall("m4t3:call:0", retrievalArgs("test query", "m4s3", "m4t3")),
           Effect.andThen(
-            host.disable(RESEARCH_MODULE),
-            tool.invoke(researchArgs("test query", "m4s3", "m4t3"))
+            host.disable(RETRIEVAL_MODULE),
+            tool.invoke(retrievalArgs("test query", "m4s3", "m4t3"))
           )
         )
 
-        // The research itself completed (in-flight execution is not killed;
+        // The retrieval itself completed (in-flight execution is not killed;
         // only hook dispatch stops) — 2 of 3 fixtures fetched.
         expect(report.fetchedCount).toBe(2)
         // Counter-proven: beforeToolCall fired (pre-disable); afterToolCall
@@ -520,17 +520,17 @@ describe("M4 disable-mid-run", () => {
         // hooks stopped firing mid-run.
         expect(counts.beforeToolCall).toBe(1)
         expect(counts.afterToolCall).toBe(0)
-        expect(counts.seenTools).toEqual([RESEARCH_QUERY_TOOL])
+        expect(counts.seenTools).toEqual([RETRIEVAL_QUERY_TOOL])
         // Runtime registry cleaned: no residue.
         expect(yield* host.runtimeModules()).toEqual([])
 
-        // Invoking research.query while disabled -> clean typed ModuleError
+        // Invoking retrieval.query while disabled -> clean typed ModuleError
         // (not a hang, not a silent no-op).
         const err = yield* Effect.flip(
           host.callTool(
-            RESEARCH_MODULE,
-            researchToolCall("m4t3:call:1", researchArgs("test query", "m4s3", "m4t3")),
-            tool.invoke(researchArgs("test query", "m4s3", "m4t3"))
+            RETRIEVAL_MODULE,
+            retrievalToolCall("m4t3:call:1", retrievalArgs("test query", "m4s3", "m4t3")),
+            tool.invoke(retrievalArgs("test query", "m4s3", "m4t3"))
           )
         )
         expect(err).toBeInstanceOf(ModuleError)
@@ -544,13 +544,13 @@ describe("M4 disable-mid-run", () => {
         expect(counts.afterToolCall).toBe(0)
 
         // No residue: re-enable + start recovers cleanly and hooks fire again.
-        yield* host.enable(RESEARCH_MODULE)
-        yield* host.start(RESEARCH_MODULE)
-        expect(yield* host.runtimeModules()).toEqual([RESEARCH_MODULE])
+        yield* host.enable(RETRIEVAL_MODULE)
+        yield* host.start(RETRIEVAL_MODULE)
+        expect(yield* host.runtimeModules()).toEqual([RETRIEVAL_MODULE])
         yield* host.callTool(
-          RESEARCH_MODULE,
-          researchToolCall("m4t3:call:2", researchArgs("test query", "m4s3", "m4t3")),
-          tool.invoke(researchArgs("test query", "m4s3", "m4t3"))
+          RETRIEVAL_MODULE,
+          retrievalToolCall("m4t3:call:2", retrievalArgs("test query", "m4s3", "m4t3")),
+          tool.invoke(retrievalArgs("test query", "m4s3", "m4t3"))
         )
         expect(counts.beforeToolCall).toBe(2)
         expect(counts.afterToolCall).toBe(1)

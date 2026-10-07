@@ -27,7 +27,7 @@ describe("substrate error taxonomy", () => {
     expect(new ExportError({ reason: "disk full" })._tag).toBe("ExportError")
     expect(new ConfigError({ reason: "bad json" })._tag).toBe("ConfigError")
     expect(new IdentityError({ reason: "no keypair" })._tag).toBe("IdentityError")
-    expect(new ModuleError({ module: "web-research", reason: "crash" })._tag)
+    expect(new ModuleError({ module: "web-retrieval", reason: "crash" })._tag)
       .toBe("ModuleError")
     expect(new AscError({ reason: "dial out of range" })._tag).toBe("AscError")
   })

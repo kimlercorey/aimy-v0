@@ -2,9 +2,9 @@
 
 import type { TurnHonestyReport } from "../../honesty/wiring.js"
 import type { TurnReport } from "../../agent-loop/src/index.js"
-import type { ResearchReport } from "../../web-research/src/index.js"
+import type { RetrievalReport } from "../../web-retrieval/src/index.js"
 
-export type ChatCommand = "quit" | "new" | "help" | "researchOff" | "researchOn" | "unknown"
+export type ChatCommand = "quit" | "new" | "help" | "retrievalOff" | "retrievalOn" | "unknown"
 
 /** Classify a REPL line: slash-commands vs. chat input. */
 export const parseCommand = (line: string): ChatCommand | { readonly input: string } => {
@@ -18,24 +18,24 @@ export const parseCommand = (line: string): ChatCommand | { readonly input: stri
       return "new"
     case "/help":
       return "help"
-    case "/research-off":
-      return "researchOff"
-    case "/research-on":
-      return "researchOn"
+    case "/retrieval-off":
+      return "retrievalOff"
+    case "/retrieval-on":
+      return "retrievalOn"
     default:
       return "unknown"
   }
 }
 
 /**
- * Classify a "research <query>" line. Returns the query (possibly "") when
- * the line is a research command, undefined otherwise. "researching x" is
- * NOT a research command — the prefix must be the whole word "research".
+ * Classify a "retrieval <query>" line. Returns the query (possibly "") when
+ * the line is a retrieval command, undefined otherwise. "retrieving x" is
+ * NOT a retrieval command — the prefix must be the whole word "retrieval".
  */
-export const parseResearchCommand = (line: string): string | undefined => {
+export const parseRetrievalCommand = (line: string): string | undefined => {
   const t = line.trim()
-  if (t === "research") return ""
-  if (t.startsWith("research ")) return t.slice("research ".length)
+  if (t === "retrieval") return ""
+  if (t.startsWith("retrieval ")) return t.slice("retrieval ".length)
   return undefined
 }
 
@@ -110,24 +110,24 @@ export const formatToolResult = (result: unknown): string => {
   }
 }
 
-const researchBadgeMark = (status: "verified" | "unverified" | "failed"): string =>
+const retrievalBadgeMark = (status: "verified" | "unverified" | "failed"): string =>
   status === "verified" ? "✓" : status === "failed" ? "✗" : "?"
 
 /**
- * Render a research report with per-claim verification badges inline:
+ * Render a retrieval report with per-claim verification badges inline:
  * `✓ verified [source url]` for sourced claims, `? unverified` for the
  * module's own synthesis/coverage. Pure data in → text out.
  */
-export const renderResearchReport = (report: ResearchReport): string => {
+export const renderRetrievalReport = (report: RetrievalReport): string => {
   const lines = [
-    `Research: "${report.query}" — fetched ${report.fetchedCount} of ${report.resultCount} result${report.resultCount === 1 ? "" : "s"}`
+    `Retrieval: "${report.query}" — fetched ${report.fetchedCount} of ${report.resultCount} result${report.resultCount === 1 ? "" : "s"}`
   ]
   for (const { claim, badge } of report.claims) {
     const src =
       badge.status === "verified" && badge.evidence.length > 0
         ? ` [${badge.evidence.map((e) => e.ref).join(", ")}]`
         : ""
-    lines.push(`${researchBadgeMark(badge.status)} ${badge.status}${src} — ${claim.text}`)
+    lines.push(`${retrievalBadgeMark(badge.status)} ${badge.status}${src} — ${claim.text}`)
   }
   return lines.join("\n")
 }

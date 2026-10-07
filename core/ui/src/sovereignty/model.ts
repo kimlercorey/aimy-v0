@@ -17,7 +17,7 @@ import { Schema } from "effect"
  */
 export const VENDOR_NETWORK_CLASSES = [
   "cloudEndpoint",
-  "webResearch",
+  "webRetrieval",
   "updateChecks",
   "trustedBroadcast",
   "telemetry"
@@ -34,12 +34,12 @@ export const CloudEndpointToggle = Schema.Struct({
 })
 export type CloudEndpointToggle = typeof CloudEndpointToggle.Type
 
-export const WebResearchToggle = Schema.Struct({
+export const WebRetrievalToggle = Schema.Struct({
   moduleId: Schema.String,
   moduleLabel: Schema.String,
   enabled: Schema.Boolean
 })
-export type WebResearchToggle = typeof WebResearchToggle.Type
+export type WebRetrievalToggle = typeof WebRetrievalToggle.Type
 
 export const PairSyncScope = Schema.Struct({
   pairId: Schema.String,
@@ -66,7 +66,7 @@ export const Model = Schema.Struct({
   offlineMode: Schema.Boolean,
   localInference: Schema.Boolean,
   cloudEndpoints: Schema.Array(CloudEndpointToggle),
-  webResearch: Schema.Array(WebResearchToggle),
+  webRetrieval: Schema.Array(WebRetrievalToggle),
   updateChecks: Schema.Boolean,
   trustedBroadcast: Schema.Boolean,
   telemetry: Schema.Boolean,
@@ -101,8 +101,8 @@ export const INVENTORY: ReadonlyArray<InventoryRow> = [
     kind: "perEndpoint"
   },
   {
-    classId: "webResearch",
-    label: "Web-research fetch",
+    classId: "webRetrieval",
+    label: "Web-retrieval fetch",
     statedDataFlow: "sends: query + retrieved URLs; receives: page content",
     kind: "perModule"
   },
@@ -158,7 +158,7 @@ export const initialModel = (): Model => ({
       enabled: false
     }
   ],
-  webResearch: [{ moduleId: "web-research", moduleLabel: "Web-research reference module", enabled: false }],
+  webRetrieval: [{ moduleId: "web-retrieval", moduleLabel: "Web-retrieval reference module", enabled: false }],
   updateChecks: false,
   trustedBroadcast: false,
   telemetry: false,

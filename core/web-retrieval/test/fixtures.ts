@@ -1,5 +1,5 @@
 /**
- * web-research/test/fixtures.ts — offline fixtures. No test in this library
+ * web-retrieval/test/fixtures.ts — offline fixtures. No test in this library
  * opens a socket; the provider parser is pure over these strings and the
  * HTTP layer is mocked.
  */
@@ -55,7 +55,7 @@ export const SOURCE_HTML_FIXTURE = `<!DOCTYPE html><html><head>
 <nav>Home | About | Contact</nav>
 <article>
 <h1>Example Article &amp; Findings</h1>
-<p>The quick brown fox jumps over the lazy dog. Researchers found that
+<p>The quick brown fox jumps over the lazy dog. Retrievalers found that
 foxes prefer &quot;lazy&quot; dogs for jumping&#46;</p>
 <p>Second paragraph with a <a href="/more">link</a> and more text.</p>
 </article>

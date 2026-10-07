@@ -33,25 +33,25 @@ describe("capability enforcement", () => {
 
   it.effect("filesystem scopes: within scope ok, outside denied (no prefix-sibling leak)", () =>
     Effect.gen(function* () {
-      const m = testManifest({ filesystem: { read: ["/data/research"], write: ["/data/research/out"] } })
-      yield* enforceFsRead(m, "mod", "/data/research")
-      yield* enforceFsRead(m, "mod", "/data/research/papers/a.pdf")
-      yield* enforceFsWrite(m, "mod", "/data/research/out/report.md")
+      const m = testManifest({ filesystem: { read: ["/data/retrieval"], write: ["/data/retrieval/out"] } })
+      yield* enforceFsRead(m, "mod", "/data/retrieval")
+      yield* enforceFsRead(m, "mod", "/data/retrieval/papers/a.pdf")
+      yield* enforceFsWrite(m, "mod", "/data/retrieval/out/report.md")
       // Prefix sibling is NOT within scope.
-      yield* expectDenied(enforceFsRead(m, "mod", "/data/research-private"), "fs.read")
+      yield* expectDenied(enforceFsRead(m, "mod", "/data/retrieval-private"), "fs.read")
       // Write scope does not grant read elsewhere; read scope does not grant write.
-      yield* expectDenied(enforceFsWrite(m, "mod", "/data/research/papers/a.pdf"), "fs.write")
+      yield* expectDenied(enforceFsWrite(m, "mod", "/data/retrieval/papers/a.pdf"), "fs.write")
       yield* expectDenied(enforceFsRead(m, "mod", "/etc/passwd"), "fs.read")
     })
   )
 
   it.effect("memory scopes: declared stores ok, undeclared store and write denied", () =>
     Effect.gen(function* () {
-      const m = testManifest({ memory: { stores: ["research"], write: false } })
-      yield* enforceMemoryStore(m, "mod", "research")
+      const m = testManifest({ memory: { stores: ["retrieval"], write: false } })
+      yield* enforceMemoryStore(m, "mod", "retrieval")
       yield* expectDenied(enforceMemoryStore(m, "mod", "identity"), "memory.store")
       yield* expectDenied(enforceMemoryWrite(m, "mod"), "memory.write")
-      const w = testManifest({ memory: { stores: ["research"], write: true } })
+      const w = testManifest({ memory: { stores: ["retrieval"], write: true } })
       yield* enforceMemoryWrite(w, "mod")
     })
   )

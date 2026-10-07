@@ -42,7 +42,7 @@
     "comms/**/*",
     "export/**/*",
     "jobs/**/*",
-    "web-research/src/**/*",
+    "web-retrieval/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]

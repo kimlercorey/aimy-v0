@@ -25,12 +25,12 @@ Every MoSCoW v1.0 MUST in this part's three sections gets an architectural home 
 | 6 | Local secret locker | Part 02 (`SecretLocker`). Seam: export ships the locker *manifest* only, never values (§3.8); the UI never renders raw secrets. |
 | 7 | Internal job runner | Part 01 (`JobRunner`). Seam: UI `jobs` view + completion banners (§3.5); the ASC diagnostic cadence is a scheduled job (§1.12). |
 | 8 | MCP module system | Part 01 (`ModuleHost`). Seam: UI `moduleRegistry` view (§3.1); DevTools dispatch can address module lifecycle Messages (§3.9). |
-| 9 | Reference domain module (web-research) | Part 01 (`ModuleHost`) + domain logic elsewhere. Seam: the dynamic verification biasing routes novel claims to it (§2.5). |
+| 9 | Reference domain module (web-retrieval) | Part 01 (`ModuleHost`) + domain logic elsewhere. Seam: the dynamic verification biasing routes novel claims to it (§2.5). |
 | 10 | Fail-closed permission/sandboxing | Part 02 (`SafetyKernel`). Seam: the permission-prompt UI surface and "denial kills the intent" UX (§4.1). |
 | 11 | Honesty/validation layer (ThinkingBox judges) | Part 01 (`HonestyService`). Seam: §1.15 (RF as semantic ceiling, adversarial post-hook, post-output audit); UI verdict badges (§3.1). |
 | 12 | ASC core (L1/L2/L3, dials, guard, error term) | §1 — entirely this part. |
 | 13 | Learning loop v1 + learning timeline UI | Loop: Part 01 (`MemoryService`/learning). Timeline UI: §3.7 — entirely this part. |
-| 14 | Web research capability | Domain module (Part 01 seam). This part: the routing that sends novel claims to it (§2.5). |
+| 14 | Web retrieval capability | Domain module (Part 01 seam). This part: the routing that sends novel claims to it (§2.5). |
 | 15 | In-app comms banner infrastructure | §3.5 — the queue, priorities, and user controls are entirely this part; Part 01's `CommsBanner` is the core-side event source it subscribes to. |
 | 16 | One-click full data export | §3.8 — the export flow and bundle contract are entirely this part, composed over Part 01's `DataExport` capability. |
 | 17 | Desktop app shell, graphically polished | §3 — the Foldkit shell is entirely this part. |
@@ -93,7 +93,7 @@ The pipeline plugs into the agent loop's hook points (Part 01 `AgentLoop`, borro
 3. Second-order error `ε²_t` on the stake estimation (paper §VIII.C): compare computed stake vs. actual effort vs. user response; calibrate `ζ`.
 4. Reflective Fidelity scoring for deliverables (paper §IX; §1.15): the running log (session-scoped) and the track-record update (persistent).
 5. `AscSelfNarration.append(...)`: the turn's story delta — including errors. The `DialComputation` record is archived and linked.
-6. Dynamic verification biasing (§2.5): if the turn revealed novelty (domain absent from the capability map, or a surprise with high ED), raise the verification intensity for subsequent claims of that type — route through the web-research module and/or a higher adversarial challenge level.
+6. Dynamic verification biasing (§2.5): if the turn revealed novelty (domain absent from the capability map, or a surprise with high ED), raise the verification intensity for subsequent claims of that type — route through the web-retrieval module and/or a higher adversarial challenge level.
 
 **What the loop never does:** the loop never writes dials directly, never skips the post-turn audit on abort (teardown ordering — Pi #9340: cancellation must not trigger post-cancel side effects, and the audit that *did* run must be marked as partial), and never emits completion before the audit settles (Pi #5886: define "settled" precisely — here, *settled* = post-turn audit complete and `DialComputation` archived).
 
@@ -269,7 +269,7 @@ The choice between avatar and abstract is a product-design decision for the UI p
 The SHOULD's "dynamic biasing for seeking additional verification on novel task types" is the anticipation loop pointed at the honesty layer:
 
 - **Novelty detection:** the pre-turn pipeline (§1.3) checks the input's domain against the L1 capability map. Novel = domain absent, or `sampleCount` below threshold, or the last encounter carried high surprise (ED). Novelty raises the computed stake `Z_t` (paper §VIII.B: track record is a stake input) and fires the dynamic verification bias.
-- **The bias:** claims in the output get routed through stronger verification before shipping — the web-research reference module (MoSCoW MUST 9/14) for factual claims, the ThinkingBox judges at a higher adversarial challenge level (§1.15) for deliverables. This is the T2 lesson structuralized (paper §V.C): investigate before patching, with the investigation depth scaled by novelty × stake.
+- **The bias:** claims in the output get routed through stronger verification before shipping — the web-retrieval reference module (MoSCoW MUST 9/14) for factual claims, the ThinkingBox judges at a higher adversarial challenge level (§1.15) for deliverables. This is the T2 lesson structuralized (paper §V.C): investigate before patching, with the investigation depth scaled by novelty × stake.
 - **User-visible:** the verification badges (§1.15) show *why* the verification ran — "novel domain: verified against web sources" — and the L3 narrative records the first encounter with the domain, seeding the track record. The second encounter is no longer novel; the bias decays as the track record grows. This is the learning loop's honesty dimension: novelty is met with verification, not with confident improvisation.
 
 ---
@@ -284,7 +284,7 @@ One record, Schema-defined, the entire UI state. Fields (each a nested Schema-de
 - `instance` — install UUID, instance label, platform info (Part 02). Read-only in the UI; shown in the sovereignty panel and export.
 - `session` — the active session view: the message list (virtualized), streaming state, the session-tree position (branch/leaf), context meter readings (true usage incl. reasoning tokens — §4.2).
 - `memoryView` — the memory browser state: selected store, entry list, search/filter, with compacted summaries visually distinguished from preserved originals (Pi session-tree philosophy — originals are never silently replaced).
-- `moduleRegistry` — installed modules with lifecycle state (installed/enabled/updating/blocked), per-module capability manifests, the web-research reference module's status.
+- `moduleRegistry` — installed modules with lifecycle state (installed/enabled/updating/blocked), per-module capability manifests, the web-retrieval reference module's status.
 - `inferencePool` — endpoints (local default; opt-in cloud), active model, queue depth, aux-model routing status, per-request cost/latency. Read-only status; switching models is explicit, costed, confirmed (Hermes #128757).
 - `asc` — the ASC view state: current dial vector (read-only — §3.9), the latest `DialComputation` summary, the other-model guard flag feed, recent error-term firings, the capability map (confidence vs. observed per domain), the L3 narrative excerpt, the affect-tuning controls (paper §VII.C parameters: persistence blend, proxy weights, error-term λ, diagnostic cadence), and per-deliverable verification badges (§1.15).
 - `jobs` — the job-runner view: scheduled, running, completed, failed; each job's provenance and controls (pause/cancel).
@@ -342,14 +342,14 @@ MoSCoW MUST 15. The banner queue is a Message-driven priority queue in the Model
 The toggles are MUST; the rich dashboard is SHOULD. The MVP surface is the **sovereignty panel**: every network-call intent class the app wants, each with an explicit toggle, each showing its stated data flow:
 
 - Inference endpoints: local default (on); each cloud endpoint (off, per-endpoint toggle — "sends: prompt text + model id; receives: tokens")
-- Web-research fetch (per-module toggle — "sends: query + retrieved URLs; receives: page content")
+- Web-retrieval fetch (per-module toggle — "sends: query + retrieved URLs; receives: page content")
 - Update checks (off — "sends: version + platform; receives: update metadata"; Part 02's self-update-as-safety-critical applies)
 - Trusted broadcast subscription (off — "receives: signed broadcasts"; §3.5)
 - Telemetry / error reporting (off — every item; the OpenTelemetry suggestion-engine path is a Could and stays off)
 - Cloud TTS fallback (no such fallback exists; the toggle documents its absence — honesty about what *isn't* collected is part of the surface)
 - First-party LAN: discoverability (off), per-pair sync scopes (only after mutual pairing — Part 02)
 
-Mechanics (Part 02 owns the network classes; the UI owns the surface): toggles are per-instance, revocable, recorded in the opt-in ledger with timestamps. **Enforcement is at the `NetworkEgress` command boundary** (§3.3) — the interpreter checks the toggle before the packet exists. A toggle flipped off mid-flight cancels the in-flight egress (fail-closed). The **offline-mode switch** denies all vendor-network classes in one gesture (first-party LAN keeps its own toggles — sovereignty supported, not forced). The SHOULD extension adds history ("what was sent, when, to whom"), per-domain web-research scoping, and the data-flow explainer views. The toggles themselves — the MUST — ship in MVP as this panel.
+Mechanics (Part 02 owns the network classes; the UI owns the surface): toggles are per-instance, revocable, recorded in the opt-in ledger with timestamps. **Enforcement is at the `NetworkEgress` command boundary** (§3.3) — the interpreter checks the toggle before the packet exists. A toggle flipped off mid-flight cancels the in-flight egress (fail-closed). The **offline-mode switch** denies all vendor-network classes in one gesture (first-party LAN keeps its own toggles — sovereignty supported, not forced). The SHOULD extension adds history ("what was sent, when, to whom"), per-domain web-retrieval scoping, and the data-flow explainer views. The toggles themselves — the MUST — ship in MVP as this panel.
 ### 3.7 Learning timeline view — "learning made visible"
 
 MoSCoW MUST 13's UI half. The timeline is the trust UX for the Continuity pillar: everything the system learned, in one inspectable, human-readable surface. It borrows Hermes's journey-graph *pattern* (decomposition harvest #16) with AImy's own visual and interaction design — this is soul territory, not a skin.

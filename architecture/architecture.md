@@ -12,7 +12,7 @@
 
 ## Locked decisions (not revisited here)
 
-TypeScript + Effect as the full-stack substrate (one Effect program: UI, core logic, infra; failures typed end to end). Foldkit for the UI (Elm architecture). First reference domain module: web-research. ASC dial defaults per the paper, with user-facing tuning controls. MIT open source.
+TypeScript + Effect as the full-stack substrate (one Effect program: UI, core logic, infra; failures typed end to end). Foldkit for the UI (Elm architecture). First reference domain module: web-retrieval. ASC dial defaults per the paper, with user-facing tuning controls. MIT open source.
 
 ## Reading guide
 
@@ -55,7 +55,7 @@ AImy is built as **one Effect program** whose composition *is* its enforcement: 
 *Ground truth: `~/workspace/aimy/planning/mvp-moscow.md` (v1.0 FINAL) · `~/workspace/aimy/decomposition/pi-hermes-decomposition.md` · ASC paper (`workspace/user/files/paperASC.pdf`)*
 *Locked substrate: TypeScript + Effect, full bet — the whole program (UI, core logic, infra) as one Effect program. No code in this document; Effect idioms are used as the design language.*
 
-Scope of this part: the sovereign core, the module/MCP seam, the memory system (incl. the learning loop), and the inference pool. Sibling sections own: presence/ASC detail (the ASC *engine's* internal design), the Foldkit UI shell, desktop packaging, and the web-research reference module's domain logic.
+Scope of this part: the sovereign core, the module/MCP seam, the memory system (incl. the learning loop), and the inference pool. Sibling sections own: presence/ASC detail (the ASC *engine's* internal design), the Foldkit UI shell, desktop packaging, and the web-retrieval reference module's domain logic.
 
 ---
 
@@ -159,12 +159,12 @@ Two network classes (MoSCoW Position) are enforced in the `InferencePool` egress
 | 6 Local secret locker | §1.1 `SecretLocker`; §1.3 boundaries | ✅ housed |
 | 7 Internal job runner | §1.1 `JobRunner`; §3.5 idle-gated scheduling | ✅ housed |
 | 8 MCP module system | §2 | ✅ housed |
-| 9 Reference domain module (web-research) | §2.8 (seam + verification arm; domain logic is the module author's) | ✅ housed |
+| 9 Reference domain module (web-retrieval) | §2.8 (seam + verification arm; domain logic is the module author's) | ✅ housed |
 | 10 Fail-closed permission/sandboxing | §1.1 `SafetyKernel`; §1.3; §2.5 | ✅ housed |
 | 11 Honesty/validation + ThinkingBox judges + verification arm | §1.1 `HonestyService`; §2.8; §3.5 | ✅ housed |
 | 12 ASC core | §1.1 `ASCEngine` — layer + state-ownership boundary only; internal design is the presence section's | ⚠️ delegated, not open |
 | 13 Learning loop v1 + timeline | §3.5, §3.6 | ✅ housed |
-| 14 Web research capability | §2.8 | ✅ housed |
+| 14 Web retrieval capability | §2.8 | ✅ housed |
 | 15 Comms banner infra | §1.1 `CommsBanner` (event-stream channel) | ✅ housed |
 | 16 One-click full export | §1.1 `DataExport` composed capability | ✅ housed |
 | 17 Desktop shell, polished | Sibling UI section; this part supplies the `AgentEvent` stream contract as the seam | ⚠️ delegated, not open |
@@ -279,11 +279,11 @@ Full skill listing in the system prompt is a per-turn token tax (Hermes #2045, #
 - The index itself is budget-capped; beyond the cap, skills are retrieved by the memory retrieval path (§3.3), not by prompt stuffing.
 - This is a cost/latency decision with sovereignty implications (prompt cache stability) — hence architectural, not tunable-by-prompt.
 
-### 2.8 Reference module: web-research + the verification arm
+### 2.8 Reference module: web-retrieval + the verification arm
 
-The first reference domain module is **web-research** (locked). It exercises the full seam end to end: hook participation, capability-manifested network egress (declared vendor hosts for search/fetch), tool contributions, and — critically — the honesty pillar:
+The first reference domain module is **web-retrieval** (locked). It exercises the full seam end to end: hook participation, capability-manifested network egress (declared vendor hosts for search/fetch), tool contributions, and — critically — the honesty pillar:
 
-- Web-research answers ship with **verification evidence** attached (sources fetched, claims checked), feeding the `HonestyService` evidence ledger.
+- Web-retrieval answers ship with **verification evidence** attached (sources fetched, claims checked), feeding the `HonestyService` evidence ledger.
 - **Self-written skills ship with an independent verification arm** (Hermes #25833, #96704): when the learning loop (§3.5) synthesizes a skill, the skill is *not* trusted on the author's assertion. Between "skill written" and "skill trusted" sits an independent check — tests, evals, or a second-model critic run through `HonestyService`'s ThinkingBox-style executable judges (deterministic, versioned, PASS/FAIL over final state, side effects, and dialogue resolution). Nothing varies a skill and measures the downstream outcome in Hermes (#96704) — we build that measurement with the loop, not after. This is also what keeps AImy from being "Hermes but prettier": our loop optimizes *honesty and verification*, paired with an eval harness, so learned skills are *measured* to help.
 - Software-building is the second reference module; it reuses this exact seam and verification discipline.
 
@@ -419,7 +419,7 @@ Borrow the *shape* of Pi's `packages/ai` (one canonical message model; per-provi
 ### 4.4 Two dispatch modes
 
 - **Powerhouse:** aggregate providers/endpoints into one logical engine — requests route to the best available endpoint by capability, cost, and current load; failover across endpoints within the same purpose class.
-- **Parallel threads:** separate providers/endpoints for parallelization — independent requests (e.g. multi-angle research, judge panels) run concurrently on distinct endpoints, each with its own cancellation scope and budget.
+- **Parallel threads:** separate providers/endpoints for parallelization — independent requests (e.g. multi-angle retrieval, judge panels) run concurrently on distinct endpoints, each with its own cancellation scope and budget.
 
 The mode is chosen per request class by policy, overridable per request. Both modes respect aux-model routing (§4.5) and the quirk budget (§4.7).
 
@@ -562,7 +562,7 @@ MCP modules are instance-aware by design: at module initialization the host inje
 
 **Tiers, not binaries (Hermes #527).** Hermes's gateway auth was binary — authorized user equals full terminal — and it is the canonical example of what not to ship. AImy's permission system is per-tool **allow / ask / deny** with **tiered capabilities from day one**:
 
-- **T0 — Observe:** read local files (within trust scope), web research reads, memory reads. Default: allow within the trusted project scope; ask outside it.
+- **T0 — Observe:** read local files (within trust scope), web retrieval reads, memory reads. Default: allow within the trusted project scope; ask outside it.
 - **T1 — Bounded local writes:** writes to the instance's own data dirs, temp/scratch, project files under an explicitly trusted root. Default: ask on first use per project (trust decision, §2.4), then allow within the grant.
 - **T2 — External effects:** network egress, messaging, calendar, any vendor-network call, secret-locker reads. Default: **deny unless an explicit opt-in or per-action approval exists.** This tier is where the sovereignty defaults bite.
 - **T3 — Destructive / privileged:** deletes, config changes, permission-policy changes, credential use, code execution outside a sandbox, pairing/sync grants. Default: **ask every time** (no standing allow for T3), with the approval recorded in the audit trail.
@@ -695,7 +695,7 @@ The items:
   - **Secondary: critical product comms to verified cohorts** (version-critical notices, community/safety notices). Strictly opt-in per topic; topics are separate subscriptions (security-disclosure is its own topic, on by independent opt-in).
   - **Never:** marketing, engagement content, growth messaging. The moment the channel carries marketing, the duty-of-care framing is dead and user trust with it. This constraint is stated in the architecture so a future PM can't "just send one promo."
   - **Cohort verification (OPEN RISK OR-6):** "verified cohorts" needs a verification mechanism that doesn't itself become identity infrastructure. MVP scope: security disclosure goes to *all* users opted into the security topic; cohort targeting is deferred until a privacy-preserving cohort design exists.
-- **Suggestion engine.** Feeds on opt-in plugin telemetry to suggest modules/skills ("users with the web-research module also installed X"). The engine's inputs are the telemetry the user already opted into — no separate collection. Suggestions appear in the dashboard, never as pushes, and the suggestion logic is documented.
+- **Suggestion engine.** Feeds on opt-in plugin telemetry to suggest modules/skills ("users with the web-retrieval module also installed X"). The engine's inputs are the telemetry the user already opted into — no separate collection. Suggestions appear in the dashboard, never as pushes, and the suggestion logic is documented.
 - **Later: opt-in community page** (enthusiast connections, support center). Post-MVP; when built, it follows the same four mechanics. Noted here so the network-class table stays complete.
 
 **Comms-banner infrastructure (MUST #15) — the channel contract.** The banner system is the delivery surface for both user alerts (job done, cron status — owned by the runtime/UI parts) and vendor broadcast (this part). The contract this part defines: topic subscriptions (`security-disclosure`, `product-critical`, `suggestions`), signed payloads, local audit log of received broadcasts, per-topic opt-in state in the policy document, and a user-visible "what was sent to me and why" view. The widget implementation belongs to the UI part; the trust properties belong here.
@@ -853,12 +853,12 @@ Every MoSCoW v1.0 MUST in this part's three sections gets an architectural home 
 | 6 | Local secret locker | Part 02 (`SecretLocker`). Seam: export ships the locker *manifest* only, never values (§3.8); the UI never renders raw secrets. |
 | 7 | Internal job runner | Part 01 (`JobRunner`). Seam: UI `jobs` view + completion banners (§3.5); the ASC diagnostic cadence is a scheduled job (§1.12). |
 | 8 | MCP module system | Part 01 (`ModuleHost`). Seam: UI `moduleRegistry` view (§3.1); DevTools dispatch can address module lifecycle Messages (§3.9). |
-| 9 | Reference domain module (web-research) | Part 01 (`ModuleHost`) + domain logic elsewhere. Seam: the dynamic verification biasing routes novel claims to it (§2.5). |
+| 9 | Reference domain module (web-retrieval) | Part 01 (`ModuleHost`) + domain logic elsewhere. Seam: the dynamic verification biasing routes novel claims to it (§2.5). |
 | 10 | Fail-closed permission/sandboxing | Part 02 (`SafetyKernel`). Seam: the permission-prompt UI surface and "denial kills the intent" UX (§4.1). |
 | 11 | Honesty/validation layer (ThinkingBox judges) | Part 01 (`HonestyService`). Seam: §1.15 (RF as semantic ceiling, adversarial post-hook, post-output audit); UI verdict badges (§3.1). |
 | 12 | ASC core (L1/L2/L3, dials, guard, error term) | §1 — entirely this part. |
 | 13 | Learning loop v1 + learning timeline UI | Loop: Part 01 (`MemoryService`/learning). Timeline UI: §3.7 — entirely this part. |
-| 14 | Web research capability | Domain module (Part 01 seam). This part: the routing that sends novel claims to it (§2.5). |
+| 14 | Web retrieval capability | Domain module (Part 01 seam). This part: the routing that sends novel claims to it (§2.5). |
 | 15 | In-app comms banner infrastructure | §3.5 — the queue, priorities, and user controls are entirely this part; Part 01's `CommsBanner` is the core-side event source it subscribes to. |
 | 16 | One-click full data export | §3.8 — the export flow and bundle contract are entirely this part, composed over Part 01's `DataExport` capability. |
 | 17 | Desktop app shell, graphically polished | §3 — the Foldkit shell is entirely this part. |
@@ -921,7 +921,7 @@ The pipeline plugs into the agent loop's hook points (Part 01 `AgentLoop`, borro
 3. Second-order error `ε²_t` on the stake estimation (paper §VIII.C): compare computed stake vs. actual effort vs. user response; calibrate `ζ`.
 4. Reflective Fidelity scoring for deliverables (paper §IX; §1.15): the running log (session-scoped) and the track-record update (persistent).
 5. `AscSelfNarration.append(...)`: the turn's story delta — including errors. The `DialComputation` record is archived and linked.
-6. Dynamic verification biasing (§2.5): if the turn revealed novelty (domain absent from the capability map, or a surprise with high ED), raise the verification intensity for subsequent claims of that type — route through the web-research module and/or a higher adversarial challenge level.
+6. Dynamic verification biasing (§2.5): if the turn revealed novelty (domain absent from the capability map, or a surprise with high ED), raise the verification intensity for subsequent claims of that type — route through the web-retrieval module and/or a higher adversarial challenge level.
 
 **What the loop never does:** the loop never writes dials directly, never skips the post-turn audit on abort (teardown ordering — Pi #9340: cancellation must not trigger post-cancel side effects, and the audit that *did* run must be marked as partial), and never emits completion before the audit settles (Pi #5886: define "settled" precisely — here, *settled* = post-turn audit complete and `DialComputation` archived).
 
@@ -1097,7 +1097,7 @@ The choice between avatar and abstract is a product-design decision for the UI p
 The SHOULD's "dynamic biasing for seeking additional verification on novel task types" is the anticipation loop pointed at the honesty layer:
 
 - **Novelty detection:** the pre-turn pipeline (§1.3) checks the input's domain against the L1 capability map. Novel = domain absent, or `sampleCount` below threshold, or the last encounter carried high surprise (ED). Novelty raises the computed stake `Z_t` (paper §VIII.B: track record is a stake input) and fires the dynamic verification bias.
-- **The bias:** claims in the output get routed through stronger verification before shipping — the web-research reference module (MoSCoW MUST 9/14) for factual claims, the ThinkingBox judges at a higher adversarial challenge level (§1.15) for deliverables. This is the T2 lesson structuralized (paper §V.C): investigate before patching, with the investigation depth scaled by novelty × stake.
+- **The bias:** claims in the output get routed through stronger verification before shipping — the web-retrieval reference module (MoSCoW MUST 9/14) for factual claims, the ThinkingBox judges at a higher adversarial challenge level (§1.15) for deliverables. This is the T2 lesson structuralized (paper §V.C): investigate before patching, with the investigation depth scaled by novelty × stake.
 - **User-visible:** the verification badges (§1.15) show *why* the verification ran — "novel domain: verified against web sources" — and the L3 narrative records the first encounter with the domain, seeding the track record. The second encounter is no longer novel; the bias decays as the track record grows. This is the learning loop's honesty dimension: novelty is met with verification, not with confident improvisation.
 
 ---
@@ -1112,7 +1112,7 @@ One record, Schema-defined, the entire UI state. Fields (each a nested Schema-de
 - `instance` — install UUID, instance label, platform info (Part 02). Read-only in the UI; shown in the sovereignty panel and export.
 - `session` — the active session view: the message list (virtualized), streaming state, the session-tree position (branch/leaf), context meter readings (true usage incl. reasoning tokens — §4.2).
 - `memoryView` — the memory browser state: selected store, entry list, search/filter, with compacted summaries visually distinguished from preserved originals (Pi session-tree philosophy — originals are never silently replaced).
-- `moduleRegistry` — installed modules with lifecycle state (installed/enabled/updating/blocked), per-module capability manifests, the web-research reference module's status.
+- `moduleRegistry` — installed modules with lifecycle state (installed/enabled/updating/blocked), per-module capability manifests, the web-retrieval reference module's status.
 - `inferencePool` — endpoints (local default; opt-in cloud), active model, queue depth, aux-model routing status, per-request cost/latency. Read-only status; switching models is explicit, costed, confirmed (Hermes #128757).
 - `asc` — the ASC view state: current dial vector (read-only — §3.9), the latest `DialComputation` summary, the other-model guard flag feed, recent error-term firings, the capability map (confidence vs. observed per domain), the L3 narrative excerpt, the affect-tuning controls (paper §VII.C parameters: persistence blend, proxy weights, error-term λ, diagnostic cadence), and per-deliverable verification badges (§1.15).
 - `jobs` — the job-runner view: scheduled, running, completed, failed; each job's provenance and controls (pause/cancel).
@@ -1170,14 +1170,14 @@ MoSCoW MUST 15. The banner queue is a Message-driven priority queue in the Model
 The toggles are MUST; the rich dashboard is SHOULD. The MVP surface is the **sovereignty panel**: every network-call intent class the app wants, each with an explicit toggle, each showing its stated data flow:
 
 - Inference endpoints: local default (on); each cloud endpoint (off, per-endpoint toggle — "sends: prompt text + model id; receives: tokens")
-- Web-research fetch (per-module toggle — "sends: query + retrieved URLs; receives: page content")
+- Web-retrieval fetch (per-module toggle — "sends: query + retrieved URLs; receives: page content")
 - Update checks (off — "sends: version + platform; receives: update metadata"; Part 02's self-update-as-safety-critical applies)
 - Trusted broadcast subscription (off — "receives: signed broadcasts"; §3.5)
 - Telemetry / error reporting (off — every item; the OpenTelemetry suggestion-engine path is a Could and stays off)
 - Cloud TTS fallback (no such fallback exists; the toggle documents its absence — honesty about what *isn't* collected is part of the surface)
 - First-party LAN: discoverability (off), per-pair sync scopes (only after mutual pairing — Part 02)
 
-Mechanics (Part 02 owns the network classes; the UI owns the surface): toggles are per-instance, revocable, recorded in the opt-in ledger with timestamps. **Enforcement is at the `NetworkEgress` command boundary** (§3.3) — the interpreter checks the toggle before the packet exists. A toggle flipped off mid-flight cancels the in-flight egress (fail-closed). The **offline-mode switch** denies all vendor-network classes in one gesture (first-party LAN keeps its own toggles — sovereignty supported, not forced). The SHOULD extension adds history ("what was sent, when, to whom"), per-domain web-research scoping, and the data-flow explainer views. The toggles themselves — the MUST — ship in MVP as this panel.
+Mechanics (Part 02 owns the network classes; the UI owns the surface): toggles are per-instance, revocable, recorded in the opt-in ledger with timestamps. **Enforcement is at the `NetworkEgress` command boundary** (§3.3) — the interpreter checks the toggle before the packet exists. A toggle flipped off mid-flight cancels the in-flight egress (fail-closed). The **offline-mode switch** denies all vendor-network classes in one gesture (first-party LAN keeps its own toggles — sovereignty supported, not forced). The SHOULD extension adds history ("what was sent, when, to whom"), per-domain web-retrieval scoping, and the data-flow explainer views. The toggles themselves — the MUST — ship in MVP as this panel.
 ### 3.7 Learning timeline view — "learning made visible"
 
 MoSCoW MUST 13's UI half. The timeline is the trust UX for the Continuity pillar: everything the system learned, in one inspectable, human-readable surface. It borrows Hermes's journey-graph *pattern* (decomposition harvest #16) with AImy's own visual and interaction design — this is soul territory, not a skin.
@@ -1291,9 +1291,9 @@ Each milestone is independently demoable and ends with a named demo. MoSCoW MUST
 **Claims:** MUST 11.
 **Extension points:** ↳ the verification arm's full pipeline (built in M6); ↳ RF scoring surface (M5).
 
-### M4 — Module seam + web-research reference module
-**Build:** `ModuleHost` (lifecycle state machine, hook dispatch, capability manifests, out-of-process sandbox), SKILL.md packaging + validation, MCP fleet with newest-spec conformance + startup isolation; **web-research** reference module with declared egress, exercising the full seam.
-**Demo:** "research X" → sourced answer with verification badges; disable the module mid-run → hooks stop firing, no residue.
+### M4 — Module seam + web-retrieval reference module
+**Build:** `ModuleHost` (lifecycle state machine, hook dispatch, capability manifests, out-of-process sandbox), SKILL.md packaging + validation, MCP fleet with newest-spec conformance + startup isolation; **web-retrieval** reference module with declared egress, exercising the full seam.
+**Demo:** "retrieval X" → sourced answer with verification badges; disable the module mid-run → hooks stop firing, no residue.
 **Claims:** MUST 8, 9, 14.
 **Extension points:** ↳ module registry UI; ↳ Skill Garden distribution shape (Could); ↳ software-building module (post-MVP, reuses this seam + M3 judges).
 
@@ -1348,12 +1348,12 @@ Each milestone is independently demoable and ends with a named demo. MoSCoW MUST
 | 6 | Local secret locker | I §1.1 + II §1.5 | OS keychain only; `Redacted` end-to-end; manifest-only export |
 | 7 | Internal job runner | I §1.1 `JobRunner` | UI jobs view + banners (III §3.1/3.5); idle-gated on local GPU |
 | 8 | MCP module system | I §2 (`ModuleHost`) | InstanceContext seam (II §1.6); lifecycle-hook taxonomy |
-| 9 | Reference domain module (web-research) | I §2.8 | Exercises full seam + honesty layer; software-building second |
+| 9 | Reference domain module (web-retrieval) | I §2.8 | Exercises full seam + honesty layer; software-building second |
 | 10 | Fail-closed permission/sandboxing | I §1.1 `SafetyKernel`; II §2.1–2.3 | Gates at execution; denial kills intent; tiered T0–T3 |
 | 11 | Honesty/validation + judges + verification arm | I §1.1 `HonestyService`; II §2.6–2.7 | RF ceiling + adversarial arm (III §1.15); badges in UI |
 | 12 | ASC core (L1/L2/L3, dials, guard, error term) | III §1 (7 services) | Boundary/gates in I §1.1; dials read-only everywhere |
 | 13 | Learning loop v1 + timeline | I §3.5–3.6 (loop); III §3.7 (timeline UI) | Verification arm gates trust (II §2.7) |
-| 14 | Web research capability | I §2.8 (module) | Novelty-routed verification (III §2.5) |
+| 14 | Web retrieval capability | I §2.8 (module) | Novelty-routed verification (III §2.5) |
 | 15 | Comms banner infrastructure | I §1.1 `CommsBanner`; III §3.5 (queue/UI) | Channel contract in II §3.3; trusted broadcast reuses it |
 | 16 | One-click full export | I §1.1 `DataExport`; III §3.8 (flow) | Verify-before-package; locker manifest only, never values |
 | 17 | Desktop shell, polished | III §3 (Foldkit) | `AgentEvent` stream + `UserIntent` gate as the seam (I §1.3) |

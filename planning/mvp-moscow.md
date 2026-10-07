@@ -18,12 +18,12 @@
 6. ✅ **Local secret locker** — in-app, encrypted at rest; the trust anchor for memories, keys, and per-instance secrets.
 7. ✅ **Internal job runner** — in-app scheduler for background tasks, cron jobs, long-running work. Prerequisite for background execution and status alerts.
 8. ✅ **MCP module system** — lifecycle-hook taxonomy as the seam modules hang off (Pi's best pattern). Modules are instance-aware by design (a module can know *which* AImy it runs on).
-9. ✅ **One reference domain module proving the seam end-to-end** — web-research (locked 2026-10-07; software-building goes second).
+9. ✅ **One reference domain module proving the seam end-to-end** — web-retrieval (locked 2026-10-07; software-building goes second).
 10. ⚠️ **Fail-closed permission/sandboxing** — per-tool allow/ask/deny; denial kills the intent, not just the call; every code-execution path gated; sandbox selection fail-closed. *(Permission tiers verified; OS sandbox backends are honest stubs — real backends land after MVP.)*
-11. ✅ **Honesty/validation layer** — verification evidence attached to claims; research answers grounded. **ThinkingBox-style executable judges** as the mechanism: deterministic, versioned checks over final state, side effects, and dialogue resolution → PASS/FAIL verdict per task. Self-written skills ship with an independent verification arm (Hermes #25833/#96704).
+11. ✅ **Honesty/validation layer** — verification evidence attached to claims; retrieval answers grounded. **ThinkingBox-style executable judges** as the mechanism: deterministic, versioned checks over final state, side effects, and dialogue resolution → PASS/FAIL verdict per task. Self-written skills ship with an independent verification arm (Hermes #25833/#96704).
 12. ✅ **ASC core (from the paper)** — L1 self-model (capability map, track record, relational model), L2 self-monitoring (four dials: Warmth/Playfulness/Intensity/Vulnerability, computed not chosen; other-model guard flags impression management), L3 self-narration (persistent story *including the system's own errors*). The error term keeps the self-model calibrated to the track record. This is the presence + honesty engine — and neither Pi nor Hermes has it.
 13. ✅ **Learning loop v1** — skill creation from experience + **learning timeline UI** (show the user what was remembered — the trust mechanism). *(Loop verified end-to-end (M6); timeline UI built in M8.)*
-14. ✅ **Web research capability** — real-world validation methods, not just model knowledge.
+14. ✅ **Web retrieval capability** — real-world validation methods, not just model knowledge.
 15. ✅ **In-app comms banner infrastructure** — the channel by which the system alerts the user (long-running job done, cron status). Product-owner broadcast reuses this channel (see Should, with conditions).
 16. ✅ **One-click full data export** — memory, skills, identity, locker manifest. "No one can take it from you" requires *you* can take all of you, trivially.
 17. ✅ **Desktop app shell, graphically polished** — beauty is a pillar, not a coat of paint. *(M8 complete 2026-10-07: Foldkit shell, ASC panel with read-only dials, FACS engine, sovereignty toggles default-off-except-local-inference, timeline/jobs/banners views, export wizard, onboarding, DevTools gated; 871/871 tests green.)*
@@ -80,7 +80,7 @@ Non-negotiable: full functionality offline; no feature held hostage to connectiv
 
 - **Language + substrate: TypeScript + Effect, full bet.** Trust made structural; the first 100 are technical enthusiasts.
 - **UI framework: Foldkit.** Coherent with the Effect bet; React ecosystem surrendered deliberately.
-- **First reference domain module: web-research.** Honesty pillar made visible; exercises the ThinkingBox judges; tighter scope than software-building (which goes second).
+- **First reference domain module: web-retrieval.** Honesty pillar made visible; exercises the ThinkingBox judges; tighter scope than software-building (which goes second).
 - **ASC dial defaults: ship the paper's defaults; expose tuning as a user control.** "Tune my affect" is a differentiator.
 - **WON'T updated:** no React-ecosystem UI (Foldkit committed).
 - **Sandbox backend (locked 2026-10-07):** hybrid — OS-native per platform at MVP (Seatbelt/macOS, namespaces+seccomp/Linux), WASM for portable skill scripts, in-process permission gate for T0/T1. Container runtime dependency rejected (kills the install story); hardened Windows sandboxing deferred. Gates the IronProxy pattern and the software-building module's code execution.

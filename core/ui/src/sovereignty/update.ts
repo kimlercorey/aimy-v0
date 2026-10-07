@@ -24,7 +24,7 @@ const labelFor = (model: Model, classId: string, targetId: string | undefined): 
   if (targetId === undefined) return base
   const target =
     model.cloudEndpoints.find((e) => e.id === targetId)?.label ??
-    model.webResearch.find((m) => m.moduleId === targetId)?.moduleLabel ??
+    model.webRetrieval.find((m) => m.moduleId === targetId)?.moduleLabel ??
     model.pairSyncScopes.find((p) => p.pairId === targetId)?.pairLabel ??
     targetId
   return `${base} — ${target}`
@@ -54,10 +54,10 @@ const flipToggle = (
           e.id === targetId ? { ...e, enabled } : e
         )
       }
-    case "webResearch":
+    case "webRetrieval":
       return {
         ...model,
-        webResearch: model.webResearch.map((m) =>
+        webRetrieval: model.webRetrieval.map((m) =>
           m.moduleId === targetId ? { ...m, enabled } : m
         )
       }

@@ -11,7 +11,7 @@
  * Key space:
  * - flat toggles: offlineMode, localInference, updateChecks,
  *   trustedBroadcast, telemetry, lanDiscoverability
- * - per-item toggles: `cloudEndpoint:<id>`, `webResearch:<moduleId>`,
+ * - per-item toggles: `cloudEndpoint:<id>`, `webRetrieval:<moduleId>`,
  *   `pairSync:<pairId>`
  *
  * Defaults: everything off except local inference (the MoSCoW-verified
@@ -41,7 +41,7 @@ const FLAT_DEFAULTS: Readonly<Record<string, boolean>> = {
   lanDiscoverability: false
 }
 
-const ITEM_KEY_RE = /^(cloudEndpoint|webResearch|pairSync):[A-Za-z0-9._-]{1,128}$/
+const ITEM_KEY_RE = /^(cloudEndpoint|webRetrieval|pairSync):[A-Za-z0-9._-]{1,128}$/
 
 const isKnownKey = (key: string): boolean =>
   (FLAT_KEYS as ReadonlyArray<string>).includes(key) || ITEM_KEY_RE.test(key)

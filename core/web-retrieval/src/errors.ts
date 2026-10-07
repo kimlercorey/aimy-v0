@@ -1,5 +1,5 @@
 /**
- * web-research/errors.ts — typed failures for the web-research module.
+ * web-retrieval/errors.ts — typed failures for the web-retrieval module.
  *
  * Every failure the module can produce is a tagged error: no untyped throws
  * cross the module boundary (architecture §1.4 — boundary functions return
@@ -49,15 +49,15 @@ export class EgressDenied extends Data.TaggedError("EgressDenied")<{
   readonly reason: string
 }> {}
 
-/** research.query was invoked with invalid arguments (empty query, bad maxSources). Fail-fast: no search, no fetch, no ledger write. */
-export class InvalidResearchArgs extends Data.TaggedError("InvalidResearchArgs")<{
+/** retrieval.query was invoked with invalid arguments (empty query, bad maxSources). Fail-fast: no search, no fetch, no ledger write. */
+export class InvalidRetrievalArgs extends Data.TaggedError("InvalidRetrievalArgs")<{
   readonly reason: string
 }> {}
 
-export type ResearchError =
+export type RetrievalError =
   | SearchError
   | MalformedSearchResponse
   | FetchError
   | FetchTimeout
   | EgressDenied
-  | InvalidResearchArgs
+  | InvalidRetrievalArgs

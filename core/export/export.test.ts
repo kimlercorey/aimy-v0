@@ -40,26 +40,26 @@ import { EXPORTER_VERSION, RECEIPT_FILE_NAME, exportData, verifyBundle } from ".
 
 // Known-valid SKILL.md (mirrors module-seam's own fixture shape).
 const SKILL_MD = `---
-name: web-research
+name: web-retrieval
 version: 1.0.0
-description: Web research reference module.
+description: Web retrieval reference module.
 author: AImy
 license: ISC
 aimy:
   hooks: [beforeToolCall, afterToolCall]
   tools: [web_fetch, web_search, skill_view]
   filesystem:
-    read: [/data/research]
+    read: [/data/retrieval]
     write: []
   network:
     vendorHosts: [api.search.example, cdn.fetch.example]
   memory:
-    stores: [research]
+    stores: [retrieval]
     write: true
   subprocess: false
 ---
 
-# Web Research
+# Web Retrieval
 
 Body text here.
 `
@@ -116,8 +116,8 @@ const testStack = (paths: AimyPaths) =>
               identity: stubIdentitySeam("test-instance"),
               backends: makeBackendSet(makeDirectGate(kernel)),
               platform: "linux",
-              skills: [{ name: "web-research", description: "Web research reference module." }],
-              skillStore: makeMapSkillStore(new Map([["web-research", "# Web Research\n\nBody"]]))
+              skills: [{ name: "web-retrieval", description: "Web retrieval reference module." }],
+              skillStore: makeMapSkillStore(new Map([["web-retrieval", "# Web Retrieval\n\nBody"]]))
             })
           )
         })
@@ -154,8 +154,8 @@ const seedWorld: Effect.Effect<
   yield* locker.store("api/canary-token", Redacted.make(CANARY), { profile: "default" })
   yield* locker.store("oauth/google", Redacted.make(OTHER_SECRET), { profile: "personal" })
 
-  yield* host.install({ moduleId: "web-research", skillMd: SKILL_MD, tier: "T0" })
-  yield* host.enable("web-research")
+  yield* host.install({ moduleId: "web-retrieval", skillMd: SKILL_MD, tier: "T0" })
+  yield* host.enable("web-retrieval")
 })
 
 const setupExported = (outDir: string) =>
@@ -239,13 +239,13 @@ describe("DataExport round-trip", () => {
         modules: Array<{ moduleId: string; manifest: { tools: Array<string> } }>
       }
       expect(modules.moduleCount).toBe(1)
-      expect(modules.modules[0]?.moduleId).toBe("web-research")
+      expect(modules.modules[0]?.moduleId).toBe("web-retrieval")
       expect(modules.modules[0]?.manifest.tools).toContain("web_fetch")
 
       const skills = JSON.parse(yield* readUtf8(path.join(outDir, "skills/skill-index.json"))) as {
         entries: Array<{ name: string }>
       }
-      expect(skills.entries.map((e) => e.name)).toContain("web-research")
+      expect(skills.entries.map((e) => e.name)).toContain("web-retrieval")
     })
   )
 

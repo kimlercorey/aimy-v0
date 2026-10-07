@@ -23,45 +23,45 @@ import {
 } from "../src/index.js"
 
 export const SKILL_MD_V1 = `---
-name: web-research
+name: web-retrieval
 version: 1.0.0
-description: Web research reference module.
+description: Web retrieval reference module.
 author: AImy
 license: ISC
 aimy:
   hooks: [beforeToolCall, afterToolCall]
   tools: [web_fetch, web_search, skill_view]
   filesystem:
-    read: [/data/research]
+    read: [/data/retrieval]
     write: []
   network:
     vendorHosts: [api.search.example, cdn.fetch.example]
   memory:
-    stores: [research]
+    stores: [retrieval]
     write: true
   subprocess: false
 ---
 
-# Web Research
+# Web Retrieval
 
 Body text here.
 `
 
 /** v2 narrows the manifest: drops web_search and memory write. */
 export const SKILL_MD_V2_NARROW = `---
-name: web-research
+name: web-retrieval
 version: 2.0.0
-description: Web research reference module.
+description: Web retrieval reference module.
 aimy:
   hooks: [beforeToolCall]
   tools: [web_fetch, skill_view]
   filesystem:
-    read: [/data/research]
+    read: [/data/retrieval]
     write: []
   network:
     vendorHosts: [api.search.example]
   memory:
-    stores: [research]
+    stores: [retrieval]
     write: false
   subprocess: false
 ---
@@ -69,19 +69,19 @@ aimy:
 
 /** v2 widens the manifest: adds a tool, a write path, and subprocess. */
 export const SKILL_MD_V2_WIDE = `---
-name: web-research
+name: web-retrieval
 version: 2.0.0
-description: Web research reference module.
+description: Web retrieval reference module.
 aimy:
   hooks: [beforeToolCall, afterToolCall]
   tools: [web_fetch, web_search, skill_view, code_exec]
   filesystem:
-    read: [/data/research]
-    write: [/data/research/out]
+    read: [/data/retrieval]
+    write: [/data/retrieval/out]
   network:
     vendorHosts: [api.search.example, cdn.fetch.example]
   memory:
-    stores: [research]
+    stores: [retrieval]
     write: true
   subprocess: true
 ---

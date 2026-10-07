@@ -23,7 +23,7 @@ import {
 } from "../src/index.js"
 import { SKILL_MD_V1, SKILL_MD_V2_NARROW, SKILL_MD_V2_WIDE, testCall, withTestHost } from "./fixtures.js"
 
-const installEnable = (host: ModuleHostApi, moduleId = "web-research") =>
+const installEnable = (host: ModuleHostApi, moduleId = "web-retrieval") =>
   Effect.gen(function* () {
     yield* host.install({ moduleId, skillMd: SKILL_MD_V1, tier: "T0" })
     yield* host.enable(moduleId)
@@ -90,11 +90,11 @@ describe("ModuleHost lifecycle (Track 1)", () => {
       (host) =>
         Effect.gen(function* () {
           yield* installEnable(host)
-          yield* host.start("web-research")
-          expect(yield* host.runtimeModules()).toEqual(["web-research"])
+          yield* host.start("web-retrieval")
+          expect(yield* host.runtimeModules()).toEqual(["web-retrieval"])
 
           const turn = {
-            turn: { turnId: "t1", module: "web-research" },
+            turn: { turnId: "t1", module: "web-retrieval" },
             contextMessages: [],
             toolCalls: [testCall()],
             executeTool: () => Effect.succeed("ok")
@@ -103,24 +103,24 @@ describe("ModuleHost lifecycle (Track 1)", () => {
           expect(before.executed).toBe(1)
 
           // Disable mid-run: hooks must stop, runtime entry must go.
-          yield* host.disable("web-research")
+          yield* host.disable("web-retrieval")
           expect(yield* host.runtimeModules()).toEqual([])
 
           // New turns and tool calls are refused with a typed error.
           yield* expectModuleError(host.runTurn(turn))
-          yield* expectModuleError(host.callTool("web-research", testCall(), Effect.succeed("x")))
+          yield* expectModuleError(host.callTool("web-retrieval", testCall(), Effect.succeed("x")))
 
           // Re-enable + start: the module recovers cleanly.
-          yield* host.enable("web-research")
-          yield* host.start("web-research")
-          expect(yield* host.runtimeModules()).toEqual(["web-research"])
-          const after = yield* host.runTurn({ ...turn, turn: { turnId: "t2", module: "web-research" } })
+          yield* host.enable("web-retrieval")
+          yield* host.start("web-retrieval")
+          expect(yield* host.runtimeModules()).toEqual(["web-retrieval"])
+          const after = yield* host.runTurn({ ...turn, turn: { turnId: "t2", module: "web-retrieval" } })
           expect(after.executed).toBe(1)
         }),
       {
         impls: [
           {
-            module: "web-research",
+            module: "web-retrieval",
             beforeToolCall: () => Effect.succeed(Allow)
           } satisfies ModuleHookImpls
         ]
@@ -134,9 +134,9 @@ describe("ModuleHost lifecycle (Track 1)", () => {
         (host) =>
           Effect.gen(function* () {
             yield* installEnable(host)
-            yield* host.start("web-research")
+            yield* host.start("web-retrieval")
             const turn = {
-              turn: { turnId: "t1", module: "web-research" },
+              turn: { turnId: "t1", module: "web-retrieval" },
               contextMessages: [],
               toolCalls: [testCall()],
               executeTool: () => Effect.succeed("ok")
@@ -145,14 +145,14 @@ describe("ModuleHost lifecycle (Track 1)", () => {
             const firedBefore = total(yield* Ref.get(counts))
             expect(firedBefore).toBeGreaterThan(0)
 
-            yield* host.disable("web-research")
+            yield* host.disable("web-retrieval")
             // The host refuses the turn before any hook fires (ModuleError);
             // the in-flight guard would additionally deny dispatch.
             yield* Effect.flip(host.runTurn(turn))
-            yield* Effect.flip(host.callTool("web-research", testCall(), Effect.succeed("x")))
+            yield* Effect.flip(host.callTool("web-retrieval", testCall(), Effect.succeed("x")))
             expect(total(yield* Ref.get(counts))).toBe(firedBefore)
           }),
-        { impls: [countingImpl("web-research", counts)] }
+        { impls: [countingImpl("web-retrieval", counts)] }
       )
     )
   )
@@ -230,24 +230,24 @@ describe("ModuleHost update + rollback (Track 1)", () => {
       Effect.gen(function* () {
         yield* installEnable(host)
         // Stage a narrowing update: free activation, no trust decision.
-        yield* host.stageUpdate("web-research", SKILL_MD_V2_NARROW, "2.0.0")
-        yield* host.activateUpdate("web-research")
+        yield* host.stageUpdate("web-retrieval", SKILL_MD_V2_NARROW, "2.0.0")
+        yield* host.activateUpdate("web-retrieval")
         // Stage a widening update: activation without trust fails typed.
-        yield* host.stageUpdate("web-research", SKILL_MD_V2_WIDE, "3.0.0")
-        const trustErr = yield* Effect.flip(host.activateUpdate("web-research"))
+        yield* host.stageUpdate("web-retrieval", SKILL_MD_V2_WIDE, "3.0.0")
+        const trustErr = yield* Effect.flip(host.activateUpdate("web-retrieval"))
         expect(trustErr).toBeInstanceOf(TrustDecisionRequired)
-        const diff = yield* host.diffUpdate("web-research")
-        yield* host.activateUpdate("web-research", {
+        const diff = yield* host.diffUpdate("web-retrieval")
+        yield* host.activateUpdate("web-retrieval", {
           decidedAt: Date.now(),
           widened: diff.widened,
           approved: true
         })
         // One-click rollback restores the previous (narrowed) version.
-        yield* host.rollback("web-research")
+        yield* host.rollback("web-retrieval")
         // Roll back a staged-but-unactivated update: stage is discarded.
-        yield* host.stageUpdate("web-research", SKILL_MD_V2_WIDE, "4.0.0")
-        yield* host.rollback("web-research")
-        yield* expectModuleError(host.diffUpdate("web-research")) // no staged update left
+        yield* host.stageUpdate("web-retrieval", SKILL_MD_V2_WIDE, "4.0.0")
+        yield* host.rollback("web-retrieval")
+        yield* expectModuleError(host.diffUpdate("web-retrieval")) // no staged update left
       })
     )
   )
@@ -256,20 +256,20 @@ describe("ModuleHost update + rollback (Track 1)", () => {
     withTestHost((host) =>
       Effect.gen(function* () {
         yield* host.install({
-          moduleId: "web-research",
+          moduleId: "web-retrieval",
           skillMd: SKILL_MD_V1,
           tier: "T0",
           artifacts: { memoryEntries: ["mem-1"], skillEntries: ["sk-1"] }
         })
-        yield* host.enable("web-research")
-        yield* host.start("web-research")
-        expect(yield* host.runtimeModules()).toEqual(["web-research"])
-        const archive = yield* host.remove("web-research")
+        yield* host.enable("web-retrieval")
+        yield* host.start("web-retrieval")
+        expect(yield* host.runtimeModules()).toEqual(["web-retrieval"])
+        const archive = yield* host.remove("web-retrieval")
         expect(archive.archivedMemoryEntries).toEqual(["mem-1"])
         expect(archive.archivedSkillEntries).toEqual(["sk-1"])
         expect(yield* host.runtimeModules()).toEqual([])
         // The module is gone: further operations fail typed.
-        yield* expectModuleError(host.enable("web-research"))
+        yield* expectModuleError(host.enable("web-retrieval"))
       })
     )
   )
@@ -278,13 +278,13 @@ describe("ModuleHost update + rollback (Track 1)", () => {
     withTestHost((host) =>
       Effect.gen(function* () {
         yield* installEnable(host)
-        yield* host.start("web-research")
-        expect(yield* host.runtimeModules()).toEqual(["web-research"])
-        yield* host.stop("web-research")
+        yield* host.start("web-retrieval")
+        expect(yield* host.runtimeModules()).toEqual(["web-retrieval"])
+        yield* host.stop("web-retrieval")
         expect(yield* host.runtimeModules()).toEqual([])
         // Back to enabled: can start again.
-        yield* host.start("web-research")
-        expect(yield* host.runtimeModules()).toEqual(["web-research"])
+        yield* host.start("web-retrieval")
+        expect(yield* host.runtimeModules()).toEqual(["web-retrieval"])
       })
     )
   )

@@ -1,5 +1,5 @@
 /**
- * web-research/http.ts — the injectable HTTP seam.
+ * web-retrieval/http.ts — the injectable HTTP seam.
  *
  * Everything in this module that touches the network goes through
  * `HttpClient`, an Effect service. Production wires `HttpClientLive`
@@ -34,7 +34,7 @@ export interface HttpClientShape {
   readonly request: (req: HttpRequest) => Effect.Effect<HttpResponse, FetchError | FetchTimeout>
 }
 
-export class HttpClient extends Context.Service<HttpClient, HttpClientShape>()("aimy/web-research/HttpClient") {}
+export class HttpClient extends Context.Service<HttpClient, HttpClientShape>()("aimy/web-retrieval/HttpClient") {}
 
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,

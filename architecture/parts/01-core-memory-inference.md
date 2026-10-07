@@ -4,7 +4,7 @@
 *Ground truth: `~/workspace/aimy/planning/mvp-moscow.md` (v1.0 FINAL) · `~/workspace/aimy/decomposition/pi-hermes-decomposition.md` · ASC paper (`workspace/user/files/paperASC.pdf`)*
 *Locked substrate: TypeScript + Effect, full bet — the whole program (UI, core logic, infra) as one Effect program. No code in this document; Effect idioms are used as the design language.*
 
-Scope of this part: the sovereign core, the module/MCP seam, the memory system (incl. the learning loop), and the inference pool. Sibling sections own: presence/ASC detail (the ASC *engine's* internal design), the Foldkit UI shell, desktop packaging, and the web-research reference module's domain logic.
+Scope of this part: the sovereign core, the module/MCP seam, the memory system (incl. the learning loop), and the inference pool. Sibling sections own: presence/ASC detail (the ASC *engine's* internal design), the Foldkit UI shell, desktop packaging, and the web-retrieval reference module's domain logic.
 
 ---
 
@@ -108,12 +108,12 @@ Two network classes (MoSCoW Position) are enforced in the `InferencePool` egress
 | 6 Local secret locker | §1.1 `SecretLocker`; §1.3 boundaries | ✅ housed |
 | 7 Internal job runner | §1.1 `JobRunner`; §3.5 idle-gated scheduling | ✅ housed |
 | 8 MCP module system | §2 | ✅ housed |
-| 9 Reference domain module (web-research) | §2.8 (seam + verification arm; domain logic is the module author's) | ✅ housed |
+| 9 Reference domain module (web-retrieval) | §2.8 (seam + verification arm; domain logic is the module author's) | ✅ housed |
 | 10 Fail-closed permission/sandboxing | §1.1 `SafetyKernel`; §1.3; §2.5 | ✅ housed |
 | 11 Honesty/validation + ThinkingBox judges + verification arm | §1.1 `HonestyService`; §2.8; §3.5 | ✅ housed |
 | 12 ASC core | §1.1 `ASCEngine` — layer + state-ownership boundary only; internal design is the presence section's | ⚠️ delegated, not open |
 | 13 Learning loop v1 + timeline | §3.5, §3.6 | ✅ housed |
-| 14 Web research capability | §2.8 | ✅ housed |
+| 14 Web retrieval capability | §2.8 | ✅ housed |
 | 15 Comms banner infra | §1.1 `CommsBanner` (event-stream channel) | ✅ housed |
 | 16 One-click full export | §1.1 `DataExport` composed capability | ✅ housed |
 | 17 Desktop shell, polished | Sibling UI section; this part supplies the `AgentEvent` stream contract as the seam | ⚠️ delegated, not open |
@@ -228,11 +228,11 @@ Full skill listing in the system prompt is a per-turn token tax (Hermes #2045, #
 - The index itself is budget-capped; beyond the cap, skills are retrieved by the memory retrieval path (§3.3), not by prompt stuffing.
 - This is a cost/latency decision with sovereignty implications (prompt cache stability) — hence architectural, not tunable-by-prompt.
 
-### 2.8 Reference module: web-research + the verification arm
+### 2.8 Reference module: web-retrieval + the verification arm
 
-The first reference domain module is **web-research** (locked). It exercises the full seam end to end: hook participation, capability-manifested network egress (declared vendor hosts for search/fetch), tool contributions, and — critically — the honesty pillar:
+The first reference domain module is **web-retrieval** (locked). It exercises the full seam end to end: hook participation, capability-manifested network egress (declared vendor hosts for search/fetch), tool contributions, and — critically — the honesty pillar:
 
-- Web-research answers ship with **verification evidence** attached (sources fetched, claims checked), feeding the `HonestyService` evidence ledger.
+- Web-retrieval answers ship with **verification evidence** attached (sources fetched, claims checked), feeding the `HonestyService` evidence ledger.
 - **Self-written skills ship with an independent verification arm** (Hermes #25833, #96704): when the learning loop (§3.5) synthesizes a skill, the skill is *not* trusted on the author's assertion. Between "skill written" and "skill trusted" sits an independent check — tests, evals, or a second-model critic run through `HonestyService`'s ThinkingBox-style executable judges (deterministic, versioned, PASS/FAIL over final state, side effects, and dialogue resolution). Nothing varies a skill and measures the downstream outcome in Hermes (#96704) — we build that measurement with the loop, not after. This is also what keeps AImy from being "Hermes but prettier": our loop optimizes *honesty and verification*, paired with an eval harness, so learned skills are *measured* to help.
 - Software-building is the second reference module; it reuses this exact seam and verification discipline.
 
@@ -368,7 +368,7 @@ Borrow the *shape* of Pi's `packages/ai` (one canonical message model; per-provi
 ### 4.4 Two dispatch modes
 
 - **Powerhouse:** aggregate providers/endpoints into one logical engine — requests route to the best available endpoint by capability, cost, and current load; failover across endpoints within the same purpose class.
-- **Parallel threads:** separate providers/endpoints for parallelization — independent requests (e.g. multi-angle research, judge panels) run concurrently on distinct endpoints, each with its own cancellation scope and budget.
+- **Parallel threads:** separate providers/endpoints for parallelization — independent requests (e.g. multi-angle retrieval, judge panels) run concurrently on distinct endpoints, each with its own cancellation scope and budget.
 
 The mode is chosen per request class by policy, overridable per request. Both modes respect aux-model routing (§4.5) and the quirk budget (§4.7).
 

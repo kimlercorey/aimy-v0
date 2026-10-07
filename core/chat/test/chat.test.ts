@@ -8,17 +8,17 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { type AddressInfo } from "node:net"
 import { describe, expect, it } from "vitest"
 import { parseArgs } from "../src/args.js"
-import { formatHonestySummary, formatToolResult, friendlyErrorMessage, parseCommand, parseResearchCommand, renderResearchReport } from "../src/render.js"
+import { formatHonestySummary, formatToolResult, friendlyErrorMessage, parseCommand, parseRetrievalCommand, renderRetrievalReport } from "../src/render.js"
 import { buildChatStack } from "../src/stack.js"
-import { bootResearchModule, makeResearchToolForChat, researchViaSeam } from "../src/research.js"
+import { bootRetrievalModule, makeRetrievalToolForChat, retrievalViaSeam } from "../src/retrieval.js"
 import type { TurnHonestyReport } from "../../honesty/wiring.js"
 import { HonestyService } from "../../honesty/index.js"
 import { InferencePool } from "../../inference-pool/index.js"
 import { ModuleError, ModuleHost } from "../../module-seam/src/index.js"
 import { AgentLoop, type ChatChunk, type TurnReport } from "../../agent-loop/src/index.js"
-import { HttpClient, makeMockHttpClient } from "../../web-research/src/http.js"
-import { RESEARCH_MODULE, type ResearchReport } from "../../web-research/src/index.js"
-import { DDG_HTML_FIXTURE, SOURCE_HTML_FIXTURE, ok } from "../../web-research/test/fixtures.js"
+import { HttpClient, makeMockHttpClient } from "../../web-retrieval/src/http.js"
+import { RETRIEVAL_MODULE, type RetrievalReport } from "../../web-retrieval/src/index.js"
+import { DDG_HTML_FIXTURE, SOURCE_HTML_FIXTURE, ok } from "../../web-retrieval/test/fixtures.js"
 
 // ---------------------------------------------------------------------------
 // parseArgs
@@ -59,8 +59,8 @@ describe("parseCommand", () => {
     expect(parseCommand("/exit")).toBe("quit")
     expect(parseCommand("/new")).toBe("new")
     expect(parseCommand("/help")).toBe("help")
-    expect(parseCommand("/research-off")).toBe("researchOff")
-    expect(parseCommand("/research-on")).toBe("researchOn")
+    expect(parseCommand("/retrieval-off")).toBe("retrievalOff")
+    expect(parseCommand("/retrieval-on")).toBe("retrievalOn")
     expect(parseCommand("/nope")).toBe("unknown")
   })
   it("passes plain input through untouched", () => {
@@ -69,19 +69,19 @@ describe("parseCommand", () => {
   })
 })
 
-describe("parseResearchCommand", () => {
-  it("extracts the query from a research line", () => {
-    expect(parseResearchCommand("research what is the Effect library")).toBe("what is the Effect library")
-    expect(parseResearchCommand("  research  spaced query  ")).toBe(" spaced query")
+describe("parseRetrievalCommand", () => {
+  it("extracts the query from a retrieval line", () => {
+    expect(parseRetrievalCommand("retrieval what is the Effect library")).toBe("what is the Effect library")
+    expect(parseRetrievalCommand("  retrieval  spaced query  ")).toBe(" spaced query")
   })
-  it("bare 'research' yields an empty query (caller shows usage)", () => {
-    expect(parseResearchCommand("research")).toBe("")
+  it("bare 'retrieval' yields an empty query (caller shows usage)", () => {
+    expect(parseRetrievalCommand("retrieval")).toBe("")
   })
   it("does not match lookalikes or slash commands", () => {
-    expect(parseResearchCommand("researching the topic")).toBeUndefined()
-    expect(parseResearchCommand("my research notes")).toBeUndefined()
-    expect(parseResearchCommand("/research-off")).toBeUndefined()
-    expect(parseResearchCommand("hello")).toBeUndefined()
+    expect(parseRetrievalCommand("retrieving the topic")).toBeUndefined()
+    expect(parseRetrievalCommand("my retrieval notes")).toBeUndefined()
+    expect(parseRetrievalCommand("/retrieval-off")).toBeUndefined()
+    expect(parseRetrievalCommand("hello")).toBeUndefined()
   })
 })
 
@@ -206,8 +206,8 @@ describe("formatToolResult", () => {
   })
 })
 
-describe("renderResearchReport", () => {
-  const sourcedReport = (): ResearchReport => ({
+describe("renderRetrievalReport", () => {
+  const sourcedReport = (): RetrievalReport => ({
     query: "q",
     answer: "labeled",
     claims: [
@@ -252,8 +252,8 @@ describe("renderResearchReport", () => {
   })
 
   it("renders per-claim badges inline: ✓ verified [source url] / ? unverified", () => {
-    const out = renderResearchReport(sourcedReport())
-    expect(out).toContain('Research: "q" — fetched 1 of 2 results')
+    const out = renderRetrievalReport(sourcedReport())
+    expect(out).toContain('Retrieval: "q" — fetched 1 of 2 results')
     expect(out).toContain("✓ verified [https://example.com/x]")
     expect(out).toContain("? unverified")
   })
@@ -343,13 +343,13 @@ describe("chat acceptance: mock endpoint through the real stack", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Research acceptance: the web-research module through the real chat stack
+// Retrieval acceptance: the web-retrieval module through the real chat stack
 // (mock HTTP — no socket is ever opened)
 // ---------------------------------------------------------------------------
 
 const SEARCH_URL = "https://html.duckduckgo.com/html/?q=test%20query"
 
-const researchRoutes = new Map([
+const retrievalRoutes = new Map([
   [SEARCH_URL, ok(DDG_HTML_FIXTURE)],
   ["https://example.com/first", ok(SOURCE_HTML_FIXTURE)],
   [
@@ -363,19 +363,19 @@ const researchRoutes = new Map([
   ]
 ])
 
-const mockResearchHttp = makeMockHttpClient((req) => {
-  const res = researchRoutes.get(req.url)
+const mockRetrievalHttp = makeMockHttpClient((req) => {
+  const res = retrievalRoutes.get(req.url)
   return Effect.succeed(res ?? { status: 404, contentType: "text/html", body: "not found" })
 })
 
-describe("research acceptance: module seam through the real chat stack", () => {
-  it("research <query> → sourced answer with badges, hooks fired through the seam", async () => {
-    const { layer, researchHookCounts } = buildChatStack({
+describe("retrieval acceptance: module seam through the real chat stack", () => {
+  it("retrieval <query> → sourced answer with badges, hooks fired through the seam", async () => {
+    const { layer, retrievalHookCounts } = buildChatStack({
       baseUrl: "http://127.0.0.1:1",
       model: "mock-model",
-      httpLayer: mockResearchHttp
+      httpLayer: mockRetrievalHttp
     })
-    // One provide: boot and research share the SAME ModuleHost (the layer
+    // One provide: boot and retrieval share the SAME ModuleHost (the layer
     // rebuilds on every provide, so a second provide would lose the install).
     const { report } = await Effect.runPromise(
       Effect.provide(
@@ -383,11 +383,11 @@ describe("research acceptance: module seam through the real chat stack", () => {
           const host = yield* ModuleHost
           const honesty = yield* HonestyService
           const http = yield* HttpClient
-          const pkg = yield* bootResearchModule(host)
-          expect(pkg.moduleId).toBe(RESEARCH_MODULE)
-          expect(yield* host.runtimeModules()).toEqual([RESEARCH_MODULE])
-          const tool = makeResearchToolForChat(http, honesty)
-          const report = yield* researchViaSeam(host, tool, "test query", "chat-acc-s", "chat-acc-t")
+          const pkg = yield* bootRetrievalModule(host)
+          expect(pkg.moduleId).toBe(RETRIEVAL_MODULE)
+          expect(yield* host.runtimeModules()).toEqual([RETRIEVAL_MODULE])
+          const tool = makeRetrievalToolForChat(http, honesty)
+          const report = yield* retrievalViaSeam(host, tool, "test query", "chat-acc-s", "chat-acc-t")
           return { report }
         }),
         layer
@@ -397,19 +397,19 @@ describe("research acceptance: module seam through the real chat stack", () => {
     expect(report.resultCount).toBe(3)
     expect(report.claims.filter((c) => c.badge.status === "verified")).toHaveLength(2)
     expect(report.claims.filter((c) => c.badge.status === "unverified")).toHaveLength(2)
-    const rendered = renderResearchReport(report)
+    const rendered = renderRetrievalReport(report)
     expect(rendered).toContain("✓ verified [https://example.com/first]")
     expect(rendered).toContain("? unverified")
     // The module's hooks fired through the seam's dispatch, not around it.
-    expect(researchHookCounts.beforeToolCall).toBe(1)
-    expect(researchHookCounts.afterToolCall).toBe(1)
+    expect(retrievalHookCounts.beforeToolCall).toBe(1)
+    expect(retrievalHookCounts.afterToolCall).toBe(1)
   }, 20000)
 
-  it("disable → hooks stop and runtime empties; disabled research is a typed error; re-enable recovers", async () => {
-    const { layer, researchHookCounts } = buildChatStack({
+  it("disable → hooks stop and runtime empties; disabled retrieval is a typed error; re-enable recovers", async () => {
+    const { layer, retrievalHookCounts } = buildChatStack({
       baseUrl: "http://127.0.0.1:1",
       model: "mock-model",
-      httpLayer: mockResearchHttp
+      httpLayer: mockRetrievalHttp
     })
     await Effect.runPromise(
       Effect.provide(
@@ -417,24 +417,24 @@ describe("research acceptance: module seam through the real chat stack", () => {
           const host = yield* ModuleHost
           const honesty = yield* HonestyService
           const http = yield* HttpClient
-          yield* bootResearchModule(host)
-          const tool = makeResearchToolForChat(http, honesty)
-          yield* researchViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t2")
-          const firedBefore = researchHookCounts.beforeToolCall
+          yield* bootRetrievalModule(host)
+          const tool = makeRetrievalToolForChat(http, honesty)
+          yield* retrievalViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t2")
+          const firedBefore = retrievalHookCounts.beforeToolCall
 
-          yield* host.disable(RESEARCH_MODULE)
+          yield* host.disable(RETRIEVAL_MODULE)
           expect(yield* host.runtimeModules()).toEqual([])
 
           const err = yield* Effect.flip(
-            researchViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t3")
+            retrievalViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t3")
           )
           expect(err).toBeInstanceOf(ModuleError)
-          expect(researchHookCounts.beforeToolCall).toBe(firedBefore)
+          expect(retrievalHookCounts.beforeToolCall).toBe(firedBefore)
 
-          yield* host.enable(RESEARCH_MODULE)
-          yield* host.start(RESEARCH_MODULE)
-          yield* researchViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t4")
-          expect(researchHookCounts.beforeToolCall).toBe(firedBefore + 1)
+          yield* host.enable(RETRIEVAL_MODULE)
+          yield* host.start(RETRIEVAL_MODULE)
+          yield* retrievalViaSeam(host, tool, "test query", "chat-acc-s2", "chat-acc-t4")
+          expect(retrievalHookCounts.beforeToolCall).toBe(firedBefore + 1)
         }),
         layer
       )

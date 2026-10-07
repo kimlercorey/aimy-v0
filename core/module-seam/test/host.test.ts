@@ -22,8 +22,8 @@ import {
 
 const installAndEnable = (host: ModuleHostApi) =>
   Effect.gen(function* () {
-    yield* host.install({ moduleId: "web-research", skillMd: SKILL_MD_V1, tier: "T0" })
-    yield* host.enable("web-research")
+    yield* host.install({ moduleId: "web-retrieval", skillMd: SKILL_MD_V1, tier: "T0" })
+    yield* host.enable("web-retrieval")
   })
 
 describe("ModuleHost", () => {
@@ -31,18 +31,18 @@ describe("ModuleHost", () => {
     withTestHost((host) =>
       Effect.gen(function* () {
         const record = yield* host.install({
-          moduleId: "web-research",
+          moduleId: "web-retrieval",
           skillMd: SKILL_MD_V1,
           tier: "T0",
           config: { intimateMode: false }
         })
-        expect(record.name).toBe("web-research")
+        expect(record.name).toBe("web-retrieval")
         expect(record.version).toBe("1.0.0")
         expect(record.manifest.tools).toContain("web_fetch")
-        yield* host.enable("web-research")
-        const ctx = yield* host.start("web-research")
+        yield* host.enable("web-retrieval")
+        const ctx = yield* host.start("web-retrieval")
         expect(ctx.instanceId).toBe("test-instance-uuid-0001")
-        expect(ctx.moduleId).toBe("web-research")
+        expect(ctx.moduleId).toBe("web-retrieval")
         expect(ctx.config["intimateMode"]).toBe(false)
       })
     )
@@ -65,7 +65,7 @@ describe("ModuleHost", () => {
         yield* installAndEnable(host)
         const ran = yield* Ref.make(false)
         const err = yield* Effect.flip(
-          host.callTool("web-research", testCall({ tool: "code_exec" }), Ref.set(ran, true))
+          host.callTool("web-retrieval", testCall({ tool: "code_exec" }), Ref.set(ran, true))
         )
         expect(err).toBeInstanceOf(PermissionDenied)
         expect((err as PermissionDenied).reason).toContain("undeclared")
@@ -81,7 +81,7 @@ describe("ModuleHost", () => {
           yield* installAndEnable(host)
           const seen = yield* Ref.make<Array<string>>([])
           const result = yield* host.callTool(
-            "web-research",
+            "web-retrieval",
             testCall(),
             Ref.update(seen, (xs) => [...xs, "ran"]).pipe(Effect.as("fetched"))
           )
@@ -91,7 +91,7 @@ describe("ModuleHost", () => {
       {
         impls: [
           {
-            module: "web-research",
+            module: "web-retrieval",
             afterToolCall: (_call, outcome) => Effect.succeed(outcome)
           } satisfies ModuleHookImpls
         ]
@@ -105,7 +105,7 @@ describe("ModuleHost", () => {
         Effect.gen(function* () {
           yield* installAndEnable(host)
           const err = yield* Effect.flip(
-            host.callTool("web-research", testCall(), Effect.succeed("ran"))
+            host.callTool("web-retrieval", testCall(), Effect.succeed("ran"))
           )
           expect(err).toBeInstanceOf(TurnTerminated)
         }),
@@ -130,7 +130,7 @@ describe("ModuleHost", () => {
       Effect.gen(function* () {
         yield* installAndEnable(host)
         const report = yield* host.runTurn({
-          turn: { turnId: "t1", module: "web-research" },
+          turn: { turnId: "t1", module: "web-retrieval" },
           contextMessages: [],
           toolCalls: [testCall({ id: "c1" }), testCall({ id: "c2", truncated: true })],
           executeTool: () => Effect.succeed("ok")
@@ -146,22 +146,22 @@ describe("ModuleHost", () => {
     withTestHost((host) =>
       Effect.gen(function* () {
         yield* installAndEnable(host)
-        yield* host.stageUpdate("web-research", SKILL_MD_V2_WIDE, "2.0.0")
-        const diff = yield* host.diffUpdate("web-research")
+        yield* host.stageUpdate("web-retrieval", SKILL_MD_V2_WIDE, "2.0.0")
+        const diff = yield* host.diffUpdate("web-retrieval")
         expect(diff.widened).toContain("tool:+code_exec")
         expect(diff.widened).toContain("subprocess:off->on")
-        const err = yield* Effect.flip(host.activateUpdate("web-research"))
+        const err = yield* Effect.flip(host.activateUpdate("web-retrieval"))
         expect(err).toBeInstanceOf(TrustDecisionRequired)
-        yield* host.activateUpdate("web-research", {
+        yield* host.activateUpdate("web-retrieval", {
           decidedAt: Date.now(),
           widened: diff.widened,
           approved: true
         })
         // Narrowing is free.
-        yield* host.stageUpdate("web-research", SKILL_MD_V2_NARROW, "3.0.0")
-        yield* host.activateUpdate("web-research")
+        yield* host.stageUpdate("web-retrieval", SKILL_MD_V2_NARROW, "3.0.0")
+        yield* host.activateUpdate("web-retrieval")
         // Rollback restores the widened v2.
-        yield* host.rollback("web-research")
+        yield* host.rollback("web-retrieval")
       })
     )
   )
@@ -170,13 +170,13 @@ describe("ModuleHost", () => {
     withTestHost((host) =>
       Effect.gen(function* () {
         yield* host.install({
-          moduleId: "web-research",
+          moduleId: "web-retrieval",
           skillMd: SKILL_MD_V1,
           tier: "T0",
           artifacts: { memoryEntries: ["mem-9"], skillEntries: [] }
         })
-        yield* host.enable("web-research")
-        const archive = yield* host.remove("web-research")
+        yield* host.enable("web-retrieval")
+        const archive = yield* host.remove("web-retrieval")
         expect(archive.archivedMemoryEntries).toEqual(["mem-9"])
       })
     )
@@ -187,11 +187,11 @@ describe("ModuleHost", () => {
       (host) =>
         Effect.gen(function* () {
           yield* installAndEnable(host)
-          expect(yield* host.viewSkill("web-research", "web-search")).toBe("# Web Search\nbody")
+          expect(yield* host.viewSkill("web-retrieval", "web-search")).toBe("# Web Search\nbody")
           const index = yield* host.skillIndex()
           expect(index.total).toBe(2)
           expect(index.entries.map((e) => e.name)).toEqual(["notes", "web-search"])
-          const denied = yield* Effect.flip(host.viewSkill("web-research", "missing"))
+          const denied = yield* Effect.flip(host.viewSkill("web-retrieval", "missing"))
           expect(denied).toBeInstanceOf(ModuleError)
         }),
       {

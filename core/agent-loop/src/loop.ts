@@ -201,7 +201,7 @@ interface Deps {
   readonly ascOpts: AgentLoopAscOpts | undefined
   /**
    * Registered module tools (additive): tools beyond the built-ins that the
-   * model may call, e.g. `research.query` from the web-research module.
+   * model may call, e.g. `retrieval.query` from the web-retrieval module.
    * They appear in the system prompt and are gated at their declared tier
    * through the same `runTurn` hook dispatch as built-ins.
    */

@@ -104,9 +104,9 @@ describe("error term", () => {
     Effect.gen(function* () {
       const model = yield* AscSelfModel
       yield* model.load
-      yield* model.recordSurprise("research", 0.8)
+      yield* model.recordSurprise("retrieval", 0.8)
       const state = yield* model.snapshot
-      const tr = state.trackRecord["research"]!
+      const tr = state.trackRecord["retrieval"]!
       expect(tr.successes).toBe(0)
       expect(tr.misses).toBe(0)
       expect(tr.surprises.length).toBe(1)

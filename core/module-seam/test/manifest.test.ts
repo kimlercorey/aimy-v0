@@ -18,14 +18,14 @@ import { SKILL_MD_V1, testManifest } from "./fixtures.js"
 describe("parseModuleManifest", () => {
   it.effect("parses a valid SKILL.md frontmatter", () =>
     Effect.gen(function* () {
-      const m = yield* parseModuleManifest(SKILL_MD_V1, "web-research")
-      expect(m.name).toBe("web-research")
+      const m = yield* parseModuleManifest(SKILL_MD_V1, "web-retrieval")
+      expect(m.name).toBe("web-retrieval")
       expect(m.version).toBe("1.0.0")
       expect(m.capability.tools).toEqual(["web_fetch", "web_search", "skill_view"])
       expect(m.capability.hooks).toEqual(["beforeToolCall", "afterToolCall"])
-      expect(m.capability.filesystem.read).toEqual(["/data/research"])
+      expect(m.capability.filesystem.read).toEqual(["/data/retrieval"])
       expect(m.capability.network).toEqual({ vendorHosts: ["api.search.example", "cdn.fetch.example"] })
-      expect(m.capability.memory).toEqual({ stores: ["research"], write: true })
+      expect(m.capability.memory).toEqual({ stores: ["retrieval"], write: true })
       expect(m.capability.subprocess).toBe(false)
     })
   )
@@ -40,7 +40,7 @@ describe("parseModuleManifest", () => {
   it.effect("unknown capability keys are rejected fail-closed", () =>
     Effect.gen(function* () {
       const md = SKILL_MD_V1.replace("  subprocess: false", "  subprocess: false\n  backdoor: true")
-      const err = yield* Effect.flip(parseModuleManifest(md, "web-research"))
+      const err = yield* Effect.flip(parseModuleManifest(md, "web-retrieval"))
       expect(err).toBeInstanceOf(ModuleError)
       expect((err as ModuleError).reason).toContain("backdoor")
     })
@@ -52,7 +52,7 @@ describe("parseModuleManifest", () => {
         "  hooks: [beforeToolCall, afterToolCall]",
         "  hooks: [beforeToolCall, mindControl]"
       )
-      const err = yield* Effect.flip(parseModuleManifest(md, "web-research"))
+      const err = yield* Effect.flip(parseModuleManifest(md, "web-retrieval"))
       expect(err).toBeInstanceOf(ModuleError)
       expect((err as ModuleError).reason).toContain("mindControl")
     })
@@ -60,8 +60,8 @@ describe("parseModuleManifest", () => {
 
   it.effect("relative filesystem scopes are rejected", () =>
     Effect.gen(function* () {
-      const md = SKILL_MD_V1.replace("read: [/data/research]", "read: [data/research]")
-      const err = yield* Effect.flip(parseModuleManifest(md, "web-research"))
+      const md = SKILL_MD_V1.replace("read: [/data/retrieval]", "read: [data/retrieval]")
+      const err = yield* Effect.flip(parseModuleManifest(md, "web-retrieval"))
       expect(err).toBeInstanceOf(ModuleError)
       expect((err as ModuleError).reason).toContain("absolute path")
     })
@@ -70,7 +70,7 @@ describe("parseModuleManifest", () => {
   it.effect("invalid vendor hostnames are rejected", () =>
     Effect.gen(function* () {
       const md = SKILL_MD_V1.replace("api.search.example", "not a host!!")
-      const err = yield* Effect.flip(parseModuleManifest(md, "web-research"))
+      const err = yield* Effect.flip(parseModuleManifest(md, "web-retrieval"))
       expect(err).toBeInstanceOf(ModuleError)
     })
   )
@@ -108,9 +108,9 @@ describe("capability predicates (fail-closed)", () => {
   const m = testManifest({
     tools: ["web_fetch"],
     hooks: ["beforeToolCall"],
-    filesystem: { read: ["/data/research"], write: ["/data/research/out"] },
+    filesystem: { read: ["/data/retrieval"], write: ["/data/retrieval/out"] },
     network: { vendorHosts: ["api.search.example"] },
-    memory: { stores: ["research"], write: false },
+    memory: { stores: ["retrieval"], write: false },
     subprocess: false
   })
 
@@ -122,12 +122,12 @@ describe("capability predicates (fail-closed)", () => {
   })
 
   it("filesystem scopes are prefix-contained", () => {
-    expect(canReadPath(m, "/data/research/a/b")).toBe(true)
-    expect(canReadPath(m, "/data/research")).toBe(true)
+    expect(canReadPath(m, "/data/retrieval/a/b")).toBe(true)
+    expect(canReadPath(m, "/data/retrieval")).toBe(true)
     expect(canReadPath(m, "/data/other")).toBe(false)
-    expect(canReadPath(m, "/data/research-evil")).toBe(false) // prefix, not path segment
-    expect(canWritePath(m, "/data/research/out/f")).toBe(true)
-    expect(canWritePath(m, "/data/research/f")).toBe(false)
+    expect(canReadPath(m, "/data/retrieval-evil")).toBe(false) // prefix, not path segment
+    expect(canWritePath(m, "/data/retrieval/out/f")).toBe(true)
+    expect(canWritePath(m, "/data/retrieval/f")).toBe(false)
   })
 
   it("network egress classes", () => {
@@ -140,7 +140,7 @@ describe("capability predicates (fail-closed)", () => {
   })
 
   it("memory and subprocess defaults deny", () => {
-    expect(canUseMemoryStore(m, "research")).toBe(true)
+    expect(canUseMemoryStore(m, "retrieval")).toBe(true)
     expect(canUseMemoryStore(m, "other")).toBe(false)
     expect(canWriteMemory(m)).toBe(false)
     expect(canWriteMemory(testManifest({ memory: { stores: [], write: true } }))).toBe(true)

@@ -29,8 +29,8 @@ npm run dist -- --mac
 `npm run dist` runs, in order:
 
 1. `npm run build` — `tsc -b` (emits `dist/`, must stay fully clean)
-2. `npm run desktop:assets` — copies `web-research/SKILL.md` into
-   `dist/web-research/` (the engine reads it at runtime; `tsc` does not copy
+2. `npm run desktop:assets` — copies `web-retrieval/SKILL.md` into
+   `dist/web-retrieval/` (the engine reads it at runtime; `tsc` does not copy
    non-TS files)
 3. `npm run desktop:preload` — esbuild-bundles `desktop/src/preload.ts` to
    `dist/desktop/src/preload.cjs` (Electron does not support ESM in sandboxed

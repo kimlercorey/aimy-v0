@@ -872,11 +872,11 @@ describe("sovereignty store", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aimy-sov-")), "sov.json")
     const store = loadSovereigntyStore(file)
     store.set("telemetry", true)
-    store.set("webResearch:web-research", true)
+    store.set("webRetrieval:web-retrieval", true)
     const reloaded = loadSovereigntyStore(file)
     const byKey = new Map(reloaded.list().map((tg) => [tg.key, tg.enabled]))
     expect(byKey.get("telemetry")).toBe(true)
-    expect(byKey.get("webResearch:web-research")).toBe(true)
+    expect(byKey.get("webRetrieval:web-retrieval")).toBe(true)
     expect(byKey.get("localInference")).toBe(true)
   })
 
@@ -885,7 +885,7 @@ describe("sovereignty store", () => {
     const store = loadSovereigntyStore(file)
     expect(() => store.set("evil", true)).toThrow(/unknown sovereignty key/)
     expect(() => store.set("telemetry", "yes" as unknown as boolean)).toThrow(/must be a boolean/)
-    expect(() => store.set("webResearch:", true)).toThrow(/unknown sovereignty key/)
+    expect(() => store.set("webRetrieval:", true)).toThrow(/unknown sovereignty key/)
   })
 
   it("a corrupt file degrades to defaults instead of throwing", () => {

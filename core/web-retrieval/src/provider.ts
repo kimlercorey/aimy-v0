@@ -1,11 +1,11 @@
 /**
- * web-research/provider.ts — the SearchProvider seam.
+ * web-retrieval/provider.ts — the SearchProvider seam.
  *
- * THE SEAM: `SearchProvider` is the interface the research flow programs
+ * THE SEAM: `SearchProvider` is the interface the retrieval flow programs
  * against. `DuckDuckGoHtmlProvider` is the default implementation — no API
  * key, no account, no telemetry — but it is deliberately replaceable: any
  * provider (Brave Search API, a local SearXNG, an MCP search server) can be
- * dropped in without touching the research flow, the fetcher, or the
+ * dropped in without touching the retrieval flow, the fetcher, or the
  * honesty wiring. The provider declares its `searchHost`, which is exactly
  * the host the capability manifest allowlists.
  *
@@ -16,7 +16,7 @@
  * pretending to be a stable API.
  */
 import { Effect } from "effect"
-import { MalformedSearchResponse, SearchError, type ResearchError } from "./errors.js"
+import { MalformedSearchResponse, SearchError, type RetrievalError } from "./errors.js"
 import { HttpClient } from "./http.js"
 import { htmlToText } from "./html-text.js"
 import type { SearchResult } from "./types.js"
@@ -26,7 +26,7 @@ export interface SearchProvider {
   readonly name: string
   /** The single host this provider talks to — mirrors the manifest's vendorHosts. */
   readonly searchHost: string
-  readonly search: (query: string) => Effect.Effect<ReadonlyArray<SearchResult>, ResearchError>
+  readonly search: (query: string) => Effect.Effect<ReadonlyArray<SearchResult>, RetrievalError>
 }
 
 export const DUCKDUCKGO_HOST = "html.duckduckgo.com"
@@ -133,13 +133,13 @@ export const makeDuckDuckGoHtmlProvider = (deps: DuckDuckGoHtmlProviderDeps): Se
         .request({
           url,
           method: "GET",
-          headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AImy-web-research/1.0" },
+          headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AImy-web-retrieval/1.0" },
           timeoutMs: SEARCH_TIMEOUT_MS,
           maxBytes: SEARCH_MAX_BYTES,
         })
         .pipe(
           Effect.mapError(
-            (e): ResearchError =>
+            (e): RetrievalError =>
               e._tag === "FetchTimeout"
                 ? new SearchError({ provider: "duckduckgo-html", reason: `timed out after ${e.timeoutMs}ms` })
                 : new SearchError({ provider: "duckduckgo-html", reason: e.reason }),

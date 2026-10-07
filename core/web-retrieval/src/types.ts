@@ -1,7 +1,7 @@
 /**
- * web-research/types.ts — the module's public data shapes.
+ * web-retrieval/types.ts — the module's public data shapes.
  *
- * The honesty contract lives in these types: a `ResearchReport` never
+ * The honesty contract lives in these types: a `RetrievalReport` never
  * carries a claim except as a `ReportedClaim` whose `badge` was derived by
  * HonestyService from the evidence actually attached. The UI (or any
  * consumer) renders `badge.status` — it cannot be minted by hand.
@@ -46,8 +46,8 @@ export interface AnswerClaim {
   readonly sources: ReadonlyArray<SourceEvidence>
 }
 
-/** What `research()` returns and what the `research.query` tool yields. */
-export interface ResearchReport {
+/** What `retrieval()` returns and what the `retrieval.query` tool yields. */
+export interface RetrievalReport {
   readonly query: string
   /** Human-readable rendering; each claim is labeled with its badge status. */
   readonly answer: string

@@ -1,5 +1,5 @@
 /**
- * web-research/fetcher.ts — fetch a result URL and extract readable text.
+ * web-retrieval/fetcher.ts — fetch a result URL and extract readable text.
  *
  * Two responsibilities, kept separate:
  *
@@ -18,7 +18,7 @@
  *    visible text fails honestly as "requires JavaScript".
  */
 import { Effect } from "effect"
-import { FetchError, type ResearchError } from "./errors.js"
+import { FetchError, type RetrievalError } from "./errors.js"
 import { checkFetchEgress, HttpClient } from "./http.js"
 import { extractRawElementText, htmlToText } from "./html-text.js"
 import { extractMainContent, isJsShell, MIN_MAIN_CHARS } from "./readability.js"
@@ -73,13 +73,13 @@ export const fetchSource = (
   deps: FetchDeps,
   url: string,
   resultHosts: ReadonlySet<string>,
-): Effect.Effect<FetchedSource, ResearchError> =>
+): Effect.Effect<FetchedSource, RetrievalError> =>
   Effect.gen(function* () {
     yield* checkFetchEgress(url, resultHosts)
     const res = yield* deps.http.request({
       url,
       method: "GET",
-      headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AImy-web-research/1.0" },
+      headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AImy-web-retrieval/1.0" },
       timeoutMs: FETCH_TIMEOUT_MS,
       maxBytes: FETCH_MAX_BYTES,
     })

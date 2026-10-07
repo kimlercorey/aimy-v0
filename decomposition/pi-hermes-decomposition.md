@@ -1,7 +1,7 @@
 # Pi + Hermes Agent Decomposition — Project AImy
 
 **Date:** 2026-10-06/07 · **Phase:** decomposition (report only — no AImy code written)
-**Sources:** `github.com/earendil-works/pi` @ v1.0.4 (commit `eb326d2`); `github.com/NousResearch/hermes-agent` @ commit `0e37a439`. Both MIT. Code was read directly (shallow clones); issues/PRs surveyed via GitHub REST API. Full per-repo working notes: `/tmp/pi-decomp.md`, `/tmp/hermes-decomp.md` (ephemeral).
+**Sources:** `github.com/earendil-works/pi` @ v1.0.4 (commit `eb326d2`); `github.com/NousRetrieval/hermes-agent` @ commit `0e37a439`. Both MIT. Code was read directly (shallow clones); issues/PRs surveyed via GitHub REST API. Full per-repo working notes: `/tmp/pi-decomp.md`, `/tmp/hermes-decomp.md` (ephemeral).
 
 **AImy frame:** local-first modular companion platform. Pillars — **Sovereignty** (user-owned, local-first, un-takeable), **Continuity** (memory that compounds, never starts from zero), **Adaptive** (modular via MCP, grows new capacities). Build philosophy: **own the soul** (presence, memory, trust, UX), **borrow the scar tissue** (hard-won lessons). Open source, MIT-compatible.
 
@@ -127,9 +127,9 @@ Pi (~113k stars, v1.0.4, TypeScript) yields less total capability but a cleaner 
 
 ---
 
-## Repo 2: Hermes Agent — `github.com/NousResearch/hermes-agent`
+## Repo 2: Hermes Agent — `github.com/NousRetrieval/hermes-agent`
 
-**Identity:** "The self-improving AI agent" by Nous Research. Python, MIT, released Feb 2026, ~249k stars. Surveyed at commit `0e37a439`. Note: despite the modern README, the codebase shows clear OpenClaw lineage (file names, config shapes, gateway design) — Hermes is a fork/evolution of OpenClaw with Nous infrastructure layered on. **Strategic frame:** Hermes is AImy's closest conceptual rival ("the agent that grows with you"). Directive applied: decompose for KNOWLEDGE; do not adopt the runtime as AImy's core.
+**Identity:** "The self-improving AI agent" by Nous Retrieval. Python, MIT, released Feb 2026, ~249k stars. Surveyed at commit `0e37a439`. Note: despite the modern README, the codebase shows clear OpenClaw lineage (file names, config shapes, gateway design) — Hermes is a fork/evolution of OpenClaw with Nous infrastructure layered on. **Strategic frame:** Hermes is AImy's closest conceptual rival ("the agent that grows with you"). Directive applied: decompose for KNOWLEDGE; do not adopt the runtime as AImy's core.
 
 ### a. Architecture map
 
@@ -213,8 +213,8 @@ Pi (~113k stars, v1.0.4, TypeScript) yields less total capability but a cleaner 
 
 ### d. License, dependencies, telemetry
 
-- **MIT** (LICENSE "Copyright (c) 2025 Nous Research"; `pyproject.toml` `license = "MIT"`). Direct deps permissive (openai, httpx, pydantic, fastapi, uvicorn, rich…). Flags for a full audit before vendoring: `browser-harness==0.1.13` and `nemo-relay` licenses unverified; the vendored `optional-mcps/`/`optional-skills/` tree not individually audited. `iron-proxy` is Apache-2.0 (fine).
-- **No hidden product analytics found** in the runtime path, but documented network edges that violate local-first defaults: managed tool gateway defaults to `nousresearch.com` passthroughs (documented opt-in); `web.keyless_fallback` (**default ON**) sends web-search queries to free-tier third parties (Exa, Parallel, Firecrawl, Keenable) — queries are user data; Nous provider free tier + guest auth prominent; session-trace upload to Hugging Face is explicit user action, private-by-default, secret-redacted (fine). **Sovereignty verdict: code is honest about its network edges, but defaults assume a cloud-connected user. AImy must invert the defaults — local-only out of the box, every egress an explicit opt-in with stated data flow.** The `managed_nous_tools_enabled` gate pattern is a good model for structuring such opt-ins — study it, build AImy's with the opposite default.
+- **MIT** (LICENSE "Copyright (c) 2025 Nous Retrieval"; `pyproject.toml` `license = "MIT"`). Direct deps permissive (openai, httpx, pydantic, fastapi, uvicorn, rich…). Flags for a full audit before vendoring: `browser-harness==0.1.13` and `nemo-relay` licenses unverified; the vendored `optional-mcps/`/`optional-skills/` tree not individually audited. `iron-proxy` is Apache-2.0 (fine).
+- **No hidden product analytics found** in the runtime path, but documented network edges that violate local-first defaults: managed tool gateway defaults to `nousretrieval.com` passthroughs (documented opt-in); `web.keyless_fallback` (**default ON**) sends web-search queries to free-tier third parties (Exa, Parallel, Firecrawl, Keenable) — queries are user data; Nous provider free tier + guest auth prominent; session-trace upload to Hugging Face is explicit user action, private-by-default, secret-redacted (fine). **Sovereignty verdict: code is honest about its network edges, but defaults assume a cloud-connected user. AImy must invert the defaults — local-only out of the box, every egress an explicit opt-in with stated data flow.** The `managed_nous_tools_enabled` gate pattern is a good model for structuring such opt-ins — study it, build AImy's with the opposite default.
 
 ---
 
@@ -284,7 +284,7 @@ Organized by theme. Every item is a scar someone else already earned — design 
 
 ## License & dependency summary
 
-| | Pi (`earendil-works/pi`) | Hermes (`NousResearch/hermes-agent`) |
+| | Pi (`earendil-works/pi`) | Hermes (`NousRetrieval/hermes-agent`) |
 |---|---|---|
 | License | MIT (all packages; `pi-evals` has no license field — check before use) | MIT |
 | Direct deps | All permissive; one Apache-2.0 (`photon-node`, droppable); no GPL/AGPL found | All permissive; `iron-proxy` Apache-2.0 (fine) |

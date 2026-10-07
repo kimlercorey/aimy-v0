@@ -36,8 +36,8 @@ describe("packager", () => {
       Effect.gen(function* () {
         yield* writePkg(dir, SKILL_MD_V1)
         const pkg = yield* packageModule(dir)
-        expect(pkg.moduleId).toBe("web-research")
-        expect(pkg.skillMd).toContain("name: web-research")
+        expect(pkg.moduleId).toBe("web-retrieval")
+        expect(pkg.skillMd).toContain("name: web-retrieval")
         expect(pkg.tier).toBe("T0") // default tier
         const t2 = yield* packageModule(dir, { tier: "T2" })
         expect(t2.tier).toBe("T2")
@@ -78,7 +78,7 @@ describe("packager", () => {
   it.effect("missing required field is rejected", () =>
     withTempDir((dir) =>
       Effect.gen(function* () {
-        const noDesc = SKILL_MD_V1.replace("description: Web research reference module.\n", "")
+        const noDesc = SKILL_MD_V1.replace("description: Web retrieval reference module.\n", "")
         yield* writePkg(dir, noDesc)
         yield* expectModuleError(packageModule(dir))
       })
@@ -88,7 +88,7 @@ describe("packager", () => {
   it.effect("invalid module name is rejected", () =>
     withTempDir((dir) =>
       Effect.gen(function* () {
-        yield* writePkg(dir, SKILL_MD_V1.replace("name: web-research", "name: Web Research!"))
+        yield* writePkg(dir, SKILL_MD_V1.replace("name: web-retrieval", "name: Web Retrieval!"))
         const reason = yield* expectModuleError(packageModule(dir))
         expect(reason).toContain("invalid module name")
       })
@@ -112,7 +112,7 @@ describe("packager", () => {
   it.effect("relative filesystem path is rejected", () =>
     withTempDir((dir) =>
       Effect.gen(function* () {
-        yield* writePkg(dir, SKILL_MD_V1.replace("read: [/data/research]", "read: [data/research]"))
+        yield* writePkg(dir, SKILL_MD_V1.replace("read: [/data/retrieval]", "read: [data/retrieval]"))
         const reason = yield* expectModuleError(packageModule(dir))
         expect(reason).toContain("absolute path")
       })
@@ -132,11 +132,11 @@ describe("packager", () => {
   it.effect("validateModulePackage re-validates an already-built package", () =>
     Effect.gen(function* () {
       const parsed = yield* validateModulePackage({
-        moduleId: "web-research",
+        moduleId: "web-retrieval",
         skillMd: SKILL_MD_V1,
         tier: "T0"
       })
-      expect(parsed.name).toBe("web-research")
+      expect(parsed.name).toBe("web-retrieval")
       expect(parsed.capability.tools).toContain("web_fetch")
       const reason = yield* expectModuleError(
         validateModulePackage({ moduleId: "bad", skillMd: "no frontmatter", tier: "T0" })

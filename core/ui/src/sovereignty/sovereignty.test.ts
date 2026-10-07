@@ -16,7 +16,7 @@ const snapshotWith = (overrides: Partial<ToggleSnapshot>): ToggleSnapshot => ({
   offlineMode: false,
   localInference: true,
   cloudEndpoints: [{ id: "cloud-endpoint-1", enabled: false }],
-  webResearch: [{ moduleId: "web-research", enabled: false }],
+  webRetrieval: [{ moduleId: "web-retrieval", enabled: false }],
   updateChecks: false,
   trustedBroadcast: false,
   telemetry: false,
@@ -38,7 +38,7 @@ describe("sovereignty defaults", () => {
     expect(model.telemetry).toBe(false)
     expect(model.lanDiscoverability).toBe(false)
     expect(model.cloudEndpoints.every((e) => !e.enabled)).toBe(true)
-    expect(model.webResearch.every((m) => !m.enabled)).toBe(true)
+    expect(model.webRetrieval.every((m) => !m.enabled)).toBe(true)
     expect(model.pairSyncScopes).toEqual([])
     expect(model.optInLedger).toEqual([])
   })
@@ -48,7 +48,7 @@ describe("sovereignty defaults", () => {
     for (const id of [
       "localInference",
       "cloudEndpoint",
-      "webResearch",
+      "webRetrieval",
       "updateChecks",
       "trustedBroadcast",
       "telemetry",
@@ -107,11 +107,11 @@ describe("toggle flips and the opt-in ledger", () => {
 
   it("an interrupted in-flight egress is recorded once", () => {
     const model = initialModel()
-    const once = update(model, Message.EgressInterruptCompleted({ classId: "webResearch", outcome: "Interrupted" })).model
-    expect(once.inflightCancelled).toEqual(["webResearch"])
-    const twice = update(once, Message.EgressInterruptCompleted({ classId: "webResearch", outcome: "Interrupted" })).model
-    expect(twice.inflightCancelled).toEqual(["webResearch"])
-    const notFound = update(model, Message.EgressInterruptCompleted({ classId: "webResearch", outcome: "NotFound" })).model
+    const once = update(model, Message.EgressInterruptCompleted({ classId: "webRetrieval", outcome: "Interrupted" })).model
+    expect(once.inflightCancelled).toEqual(["webRetrieval"])
+    const twice = update(once, Message.EgressInterruptCompleted({ classId: "webRetrieval", outcome: "Interrupted" })).model
+    expect(twice.inflightCancelled).toEqual(["webRetrieval"])
+    const notFound = update(model, Message.EgressInterruptCompleted({ classId: "webRetrieval", outcome: "NotFound" })).model
     expect(notFound.inflightCancelled).toEqual([])
   })
 
@@ -132,7 +132,7 @@ describe("toggle flips and the opt-in ledger", () => {
     )
     expect(keys).toEqual([
       "NetworkEgress:egress:cloudEndpoint",
-      "NetworkEgress:egress:webResearch",
+      "NetworkEgress:egress:webRetrieval",
       "NetworkEgress:egress:updateChecks",
       "NetworkEgress:egress:trustedBroadcast",
       "NetworkEgress:egress:telemetry"
@@ -146,7 +146,7 @@ describe("the egress boundary interpreter", () => {
     const snapshot = snapshotWith({})
     for (const [classId, targetId] of [
       ["cloudEndpoint", "cloud-endpoint-1"],
-      ["webResearch", "web-research"],
+      ["webRetrieval", "web-retrieval"],
       ["updateChecks", undefined],
       ["trustedBroadcast", undefined],
       ["telemetry", undefined],
@@ -176,7 +176,7 @@ describe("the egress boundary interpreter", () => {
     for (const [classId, targetId] of [
       ["totallyBogus", undefined],
       ["cloudEndpoint", "evil-endpoint"],
-      ["webResearch", "evil-module"],
+      ["webRetrieval", "evil-module"],
       ["pairSync", "stranger"]
     ] as const) {
       const decision = await runDecision(snapshot, classId, targetId)

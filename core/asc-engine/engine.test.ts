@@ -71,7 +71,7 @@ describe("ASCEngine frozen boundary (INTERFACE.md v1)", () => {
       const engine = yield* ASCEngine
       yield* engine.recordEvidence({
         kind: "surprise",
-        domain: "research",
+        domain: "retrieval",
         payload: { epistemicDisruption: 0.8, note: "unexpected API behavior" },
       })
       const notes = yield* engine.narrative()

@@ -122,8 +122,8 @@ export const view = (model: Model, h: H): Html =>
             h.section([h.Class("toggle-group")], [
               h.h3([], [row.label]),
               dataFlow(h, row.statedDataFlow),
-              ...model.webResearch.map((m) =>
-                perItemRow(h, m.moduleLabel, "per-module toggle", "webResearch", m.moduleId, m.enabled)
+              ...model.webRetrieval.map((m) =>
+                perItemRow(h, m.moduleLabel, "per-module toggle", "webRetrieval", m.moduleId, m.enabled)
               )
             ])
           ]

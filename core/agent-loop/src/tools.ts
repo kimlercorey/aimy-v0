@@ -11,7 +11,7 @@
  * tools via layer opts (`extraTools`). Built-ins stay network-free by rule;
  * registered tools declare their own capabilities through their module
  * manifests and are gated at their declared tier like everything else.
- * (M4 follow-up: the model could not see module tools — `research.query`
+ * (M4 follow-up: the model could not see module tools — `retrieval.query`
  * existed but was only reachable via a CLI prefix command. Fixed here.)
  */
 import { Effect } from "effect"

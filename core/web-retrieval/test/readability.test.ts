@@ -104,7 +104,7 @@ describe("extractMainContent — article pages", () => {
 
   it("keeps a node matching both unlikely and maybe-content patterns", () => {
     const html = `<html><body>
-      <div class="article-sidebar"><p>The research team published its findings after a three-year longitudinal study of urban heat islands and their effect on night-time temperatures.</p></div>
+      <div class="article-sidebar"><p>The retrieval team published its findings after a three-year longitudinal study of urban heat islands and their effect on night-time temperatures.</p></div>
       <div class="sidebar"><p>Advertisement: click here now.</p></div>
     </body></html>`
     const { text, mainContent } = extractMainContent(html)

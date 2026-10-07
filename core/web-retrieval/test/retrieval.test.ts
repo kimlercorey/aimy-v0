@@ -1,5 +1,5 @@
 /**
- * research.test.ts — the honesty pillar, end to end (mocked HTTP).
+ * retrieval.test.ts — the honesty pillar, end to end (mocked HTTP).
  *
  * Sourced claims must badge "verified"; unsourced claims (coverage,
  * synthesis) must badge "unverified" — asserted through HonestyService
@@ -10,7 +10,7 @@ import { Effect, Layer } from "effect"
 import { HonestyService, HonestyServiceInMemory } from "../../honesty/src/service.js"
 import { HttpClient, makeMockHttpClient } from "../src/http.js"
 import { makeDuckDuckGoHtmlProvider } from "../src/provider.js"
-import { makeResearchTool, researchHookImpls, RESEARCH_QUERY_TOOL, researchToolCall } from "../src/tools.js"
+import { makeRetrievalTool, retrievalHookImpls, RETRIEVAL_QUERY_TOOL, retrievalToolCall } from "../src/tools.js"
 import { Allow } from "../../module-seam/src/kernel-seam.js"
 import { DDG_HTML_FIXTURE, ok, SOURCE_HTML_FIXTURE } from "./fixtures.js"
 
@@ -40,11 +40,11 @@ const TestLive = Layer.merge(
   }),
 )
 
-const runResearch = (sessionId: string, turnId: string, maxSources = 3) =>
+const runRetrieval = (sessionId: string, turnId: string, maxSources = 3) =>
   Effect.gen(function* () {
     const honesty = yield* HonestyService
     const http = yield* HttpClient
-    const tool = makeResearchTool({
+    const tool = makeRetrievalTool({
       provider: makeDuckDuckGoHtmlProvider({ http }),
       http,
       honesty,
@@ -53,9 +53,9 @@ const runResearch = (sessionId: string, turnId: string, maxSources = 3) =>
     return { report, honesty }
   }).pipe(Effect.provide(TestLive))
 
-describe("research honesty flow", () => {
+describe("retrieval honesty flow", () => {
   it("badges sourced claims verified and unsourced claims unverified", async () => {
-    const { report, honesty } = await run(runResearch("s1", "t1"))
+    const { report, honesty } = await run(runRetrieval("s1", "t1"))
     // 3 results; the http:// one is egress-denied; 2 fetched.
     expect(report.resultCount).toBe(3)
     expect(report.fetchedCount).toBe(2)
@@ -93,7 +93,7 @@ describe("research honesty flow", () => {
 
   it("tolerates fetch failures: failed sources contribute no claims", async () => {
     // maxSources=1 fetches only example.com/first -> 1 sourced claim + 2 unsourced.
-    const { report } = await run(runResearch("s2", "t2", 1))
+    const { report } = await run(runRetrieval("s2", "t2", 1))
     expect(report.fetchedCount).toBe(1)
     expect(report.claims).toHaveLength(3)
     expect(report.claims.filter((c) => c.badge.status === "verified")).toHaveLength(1)
@@ -107,7 +107,7 @@ describe("research honesty flow", () => {
     const program = Effect.gen(function* () {
       const honesty = yield* HonestyService
       const http = yield* HttpClient
-      const tool = makeResearchTool({ provider: makeDuckDuckGoHtmlProvider({ http }), http, honesty })
+      const tool = makeRetrievalTool({ provider: makeDuckDuckGoHtmlProvider({ http }), http, honesty })
       return yield* tool.invoke({ query: "test query", sessionId: "s3", turnId: "t3" })
     }).pipe(Effect.provide(badLive))
     const err = await run(Effect.flip(program))
@@ -115,26 +115,26 @@ describe("research honesty flow", () => {
   })
 })
 
-describe("research.query tool + hook participation", () => {
-  it("researchToolCall builds a dispatchable ToolCall", () => {
-    const call = researchToolCall("call-1", { query: "q", sessionId: "s", turnId: "t" })
-    expect(call.tool).toBe(RESEARCH_QUERY_TOOL)
+describe("retrieval.query tool + hook participation", () => {
+  it("retrievalToolCall builds a dispatchable ToolCall", () => {
+    const call = retrievalToolCall("call-1", { query: "q", sessionId: "s", turnId: "t" })
+    expect(call.tool).toBe(RETRIEVAL_QUERY_TOOL)
     expect(call.tier).toBe("T1")
     expect(call.truncated).toBe(false)
   })
 
-  it("beforeToolCall allows well-formed research.query calls", async () => {
-    const hooks = researchHookImpls()
+  it("beforeToolCall allows well-formed retrieval.query calls", async () => {
+    const hooks = retrievalHookImpls()
     const verdict = await run(
-      hooks.beforeToolCall!(researchToolCall("c1", { query: "q", sessionId: "s", turnId: "t" })),
+      hooks.beforeToolCall!(retrievalToolCall("c1", { query: "q", sessionId: "s", turnId: "t" })),
     )
     expect(verdict).toEqual(Allow)
   })
 
   it("beforeToolCall denies empty queries (block, not terminate)", async () => {
-    const hooks = researchHookImpls()
+    const hooks = retrievalHookImpls()
     const verdict = await run(
-      hooks.beforeToolCall!(researchToolCall("c2", { query: "  ", sessionId: "s", turnId: "t" })),
+      hooks.beforeToolCall!(retrievalToolCall("c2", { query: "  ", sessionId: "s", turnId: "t" })),
     )
     expect(verdict._tag).toBe("Deny")
     if (verdict._tag === "Deny") {
@@ -144,7 +144,7 @@ describe("research.query tool + hook participation", () => {
   })
 
   it("beforeToolCall ignores other tools", async () => {
-    const hooks = researchHookImpls()
+    const hooks = retrievalHookImpls()
     const verdict = await run(
       hooks.beforeToolCall!({ id: "x", tool: "other.tool", args: {}, tier: "T0", truncated: false }),
     )
@@ -152,9 +152,9 @@ describe("research.query tool + hook participation", () => {
   })
 
   it("afterToolCall passes outcomes through unchanged", async () => {
-    const hooks = researchHookImpls()
+    const hooks = retrievalHookImpls()
     const outcome = { _tag: "Ok", value: 42 } as const
-    const out = await run(hooks.afterToolCall!(researchToolCall("c3", { query: "q", sessionId: "s", turnId: "t" }), outcome))
+    const out = await run(hooks.afterToolCall!(retrievalToolCall("c3", { query: "q", sessionId: "s", turnId: "t" }), outcome))
     expect(out).toEqual(outcome)
   })
 })

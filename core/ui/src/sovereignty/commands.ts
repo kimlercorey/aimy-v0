@@ -21,7 +21,7 @@ export const ToggleSnapshotSchema: Schema.Schema<ToggleSnapshot> = Schema.Struct
   cloudEndpoints: Schema.Array(
     Schema.Struct({ id: Schema.String, enabled: Schema.Boolean })
   ),
-  webResearch: Schema.Array(
+  webRetrieval: Schema.Array(
     Schema.Struct({ moduleId: Schema.String, enabled: Schema.Boolean })
   ),
   updateChecks: Schema.Boolean,

@@ -1,6 +1,6 @@
-# @aimy/web-research
+# @aimy/web-retrieval
 
-M4 Track 2 — the web-research reference domain module. Exercises the full
+M4 Track 2 — the web-retrieval reference domain module. Exercises the full
 module seam end to end: hook participation, capability-manifested network
 egress, a contributed tool, and the honesty pillar (answers ship with
 verification evidence feeding the `HonestyService` ledger).
@@ -8,29 +8,29 @@ verification evidence feeding the `HonestyService` ledger).
 ## Layout
 
 ```
-web-research/
+web-retrieval/
   SKILL.md            # package: AImy capability manifest + egress policy doc
   README.md           # this file
   src/
     index.ts          # public surface
     errors.ts         # typed failures (no untyped throws across the boundary)
-    types.ts          # SearchResult, FetchedSource, AnswerClaim, ResearchReport
+    types.ts          # SearchResult, FetchedSource, AnswerClaim, RetrievalReport
     http.ts           # HttpClient Effect service + live/mock impls + egress gate
     provider.ts       # SearchProvider interface + DuckDuckGo HTML default
     fetcher.ts        # fetch (egress-checked) + honest text extractor
-    research.ts       # research() flow wiring HonestyService
-    tools.ts          # research.query tool + beforeToolCall/afterToolCall hooks
+    retrieval.ts       # retrieval() flow wiring HonestyService
+    tools.ts          # retrieval.query tool + beforeToolCall/afterToolCall hooks
   test/
     fixtures.ts       # DuckDuckGo HTML + source-page fixtures (no live network)
     provider.test.ts  # parsing, unwrapping, malformed responses
     fetcher.test.ts   # extraction, egress policy, typed fetch failures
-    research.test.ts  # claim/evidence recording, badge derivation
+    retrieval.test.ts  # claim/evidence recording, badge derivation
     manifest.test.ts  # SKILL.md parses; manifest declares exactly the egress used
 ```
 
 ## Honesty contract
 
-`research(query)` records **every** claim it makes in `HonestyService`:
+`retrieval(query)` records **every** claim it makes in `HonestyService`:
 
 | claim | evidence | badge |
 |---|---|---|
@@ -56,7 +56,7 @@ From `~/workspace/aimy/core`:
 
 ```sh
 npx tsc -b --force   # clean compile
-npx vitest run web-research
+npx vitest run web-retrieval
 ```
 
 Unit tests never touch the network: the HTTP layer is injected
@@ -65,9 +65,9 @@ Unit tests never touch the network: the HTTP layer is injected
 ## Demo
 
 `DEMO.md` is a real transcript of the M4 Track 3 acceptance demo: the chat
-harness's `research <query>` command against the **live** DuckDuckGo endpoint
+harness's `retrieval <query>` command against the **live** DuckDuckGo endpoint
 (the only place live network is used), including a true mid-run
-`/research-off` — the in-flight research completes but its trailing
+`/retrieval-off` — the in-flight retrieval completes but its trailing
 `afterToolCall` hook never fires (counter-proven), the runtime registry
-empties, and a research while disabled fails with a clean typed
+empties, and a retrieval while disabled fails with a clean typed
 `ModuleError`.

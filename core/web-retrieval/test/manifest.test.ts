@@ -21,25 +21,25 @@ const run = <A, E>(eff: Effect.Effect<A, E>) => Effect.runPromise(eff as Effect.
 const here = dirname(fileURLToPath(import.meta.url))
 const SKILL_MD = readFileSync(join(here, "..", "SKILL.md"), "utf8")
 
-describe("web-research SKILL.md manifest", () => {
+describe("web-retrieval SKILL.md manifest", () => {
   it("parses cleanly through the module-seam validator", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
-    expect(parsed.name).toBe("web-research")
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
+    expect(parsed.name).toBe("web-retrieval")
     expect(parsed.version).toBe("1.0.0")
   })
 
   it("declares exactly the hooks it participates in", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
     expect(parsed.capability.hooks).toEqual(["beforeToolCall", "afterToolCall"])
   })
 
   it("declares exactly the tool it contributes", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
-    expect(parsed.capability.tools).toEqual(["research.query"])
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
+    expect(parsed.capability.tools).toEqual(["retrieval.query"])
   })
 
   it("declares exactly the egress used: the search host, nothing else", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
     const net = parsed.capability.network
     expect(net).toEqual({ vendorHosts: ["html.duckduckgo.com"] })
     // The manifest host and the provider's host are the same value.
@@ -52,14 +52,14 @@ describe("web-research SKILL.md manifest", () => {
   })
 
   it("declares no filesystem, no subprocess, no memory writes", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
     expect(parsed.capability.filesystem).toEqual({ read: [], write: [] })
     expect(parsed.capability.subprocess).toBe(false)
     expect(parsed.capability.memory).toEqual({ stores: [], write: false })
   })
 
   it("canEgress admits the search host and denies everything else", async () => {
-    const parsed = await run(parseModuleManifest(SKILL_MD, "web-research"))
+    const parsed = await run(parseModuleManifest(SKILL_MD, "web-retrieval"))
     const m = parsed.capability
     expect(canEgress(m, "html.duckduckgo.com", [])).toBe(true)
     expect(canEgress(m, "example.com", [])).toBe(false)
@@ -85,7 +85,7 @@ describe("web-research SKILL.md manifest", () => {
       "vendorHosts: [html.duckduckgo.com]",
       "vendorHosts: [html.duckduckgo.com, example.com]",
     )
-    const parsed = await run(parseModuleManifest(widened, "web-research"))
+    const parsed = await run(parseModuleManifest(widened, "web-retrieval"))
     // The parser accepts it (valid shape) — but the module's own contract
     // pins the allowlist to exactly one host.
     if (typeof parsed.capability.network !== "string") {

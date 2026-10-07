@@ -2,7 +2,7 @@
  * desktop/src/main/engine.ts — boots the AImy Effect engine for the desktop app.
  *
  * M10 Track 1. ZERO ENGINE FORK: this file reuses `core/chat/src/stack.ts`
- * `buildChatStack` and `core/chat/src/research.ts` `bootResearchModule`
+ * `buildChatStack` and `core/chat/src/retrieval.ts` `bootRetrievalModule`
  * verbatim — the same layer composition the CLI chat (`npm run chat`) boots.
  * Anything the desktop needs that the chat stack doesn't provide is a
  * *consumer* of this file's `DesktopEngine` interface (Track 2's IPC
@@ -15,7 +15,7 @@
  *   2. `buildChatStack({ baseUrl, model })`, then `ManagedRuntime.make` —
  *      the layer builds ONCE here, lazily on first `runPromise`.
  *   3. Register the `LocalHttpProvider` with the `InferencePool`; boot the
- *      web-research module on the stack's `ModuleHost` (install + enable +
+ *      web-retrieval module on the stack's `ModuleHost` (install + enable +
  *      start, tier T1, from its real SKILL.md — same as the CLI).
  *
  * The preflight check from the CLI is NOT repeated here: the CLI warns and
@@ -29,16 +29,16 @@ import * as path from "node:path"
 import { AgentLoop, type ChatChunk } from "../../../agent-loop/src/index.js"
 import { buildChatStack, type ChatStack } from "../../../chat/src/stack.js"
 import {
-  bootResearchModule,
-  makeResearchAgentTool,
-  makeResearchToolForChat,
-  type ResearchTool
-} from "../../../chat/src/research.js"
+  bootRetrievalModule,
+  makeRetrievalAgentTool,
+  makeRetrievalToolForChat,
+  type RetrievalTool
+} from "../../../chat/src/retrieval.js"
 import { HonestyService } from "../../../honesty/index.js"
 import { InferencePool } from "../../../inference-pool/index.js"
 import { MemoryService } from "../../../memory/index.js"
 import { ModuleHost } from "../../../module-seam/src/index.js"
-import { HttpClient } from "../../../web-research/src/http.js"
+import { HttpClient } from "../../../web-retrieval/src/http.js"
 
 /**
  * The exact service union `ChatStack`'s layer provides
@@ -107,7 +107,7 @@ const writeDesktopConfig = (config: DesktopConfig, configFile: string): void => 
 
 /**
  * Boot the desktop engine. Builds the layer ONCE (via `ManagedRuntime`),
- * registers the provider, boots the research module — then hands back the
+ * registers the provider, boots the retrieval module — then hands back the
  * runner surface. Any boot failure rejects the returned promise.
  */
 export const bootDesktopEngine = async (opts?: {
@@ -124,17 +124,17 @@ export const bootDesktopEngine = async (opts?: {
   // Create on first run; onboarding (Track 3) collects the real model name.
   writeDesktopConfig(config, configFile)
 
-  // The research tool as a MODEL-CALLABLE agent tool — the same factory the
-  // CLI chat uses, so the desktop model sees the identical `research.query`
+  // The retrieval tool as a MODEL-CALLABLE agent tool — the same factory the
+  // CLI chat uses, so the desktop model sees the identical `retrieval.query`
   // contract. Closes over the boot-stashed tool ref (set below); the loop
   // only runs tools during chat, after boot.
-  let researchTool: ResearchTool | undefined
-  const researchAgentTool = makeResearchAgentTool(() => researchTool)
+  let retrievalTool: RetrievalTool | undefined
+  const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
 
   const stack: ChatStack = buildChatStack({
     baseUrl: config.baseUrl,
     model: config.model,
-    extraTools: [researchAgentTool]
+    extraTools: [retrievalAgentTool]
   })
   const { layer, provider } = stack
 
@@ -142,7 +142,7 @@ export const bootDesktopEngine = async (opts?: {
   // `chatStream` below shares it — the same build the boot step uses.
   const runtime = ManagedRuntime.make(layer)
 
-  // Boot step (mirrors chat/src/index.ts): register once, boot research.
+  // Boot step (mirrors chat/src/index.ts): register once, boot retrieval.
   await runtime.runPromise(
     Effect.gen(function* () {
       const pool = yield* InferencePool
@@ -150,8 +150,8 @@ export const bootDesktopEngine = async (opts?: {
       const host = yield* ModuleHost
       const honesty = yield* HonestyService
       const http = yield* HttpClient
-      yield* bootResearchModule(host)
-      researchTool = makeResearchToolForChat(http, honesty)
+      yield* bootRetrievalModule(host)
+      retrievalTool = makeRetrievalToolForChat(http, honesty)
     })
   )
 

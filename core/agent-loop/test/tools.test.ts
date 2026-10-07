@@ -1,7 +1,7 @@
 /**
  * tools.test.ts — the extensible tool registry.
  *
- * Built-ins stay fixed; hosts register module tools (e.g. research.query)
+ * Built-ins stay fixed; hosts register module tools (e.g. retrieval.query)
  * via layer opts. These tests prove: extras appear in the system prompt,
  * route through runTool at their declared tier, and unknown names still
  * fail as IoError-shaped Errors (never a crash).
@@ -21,7 +21,7 @@ import {
 const ctx: BuiltinToolContext = { sessionId: "s1", turnCount: 0, turnId: "t1" }
 
 const extra: AgentToolDef = {
-  name: "research.query",
+  name: "retrieval.query",
   tier: "T1",
   description: "Search the public web.",
   argsHint: '{ "query": "..." }',
@@ -33,12 +33,12 @@ describe("extensible tool registry", () => {
     expect(builtinToolNames).toEqual(["clock.now", "session.info"])
     expect(SYSTEM_PROMPT).toContain("clock.now")
     expect(SYSTEM_PROMPT).toContain("session.info")
-    expect(SYSTEM_PROMPT).not.toContain("research.query")
+    expect(SYSTEM_PROMPT).not.toContain("retrieval.query")
   })
 
   it("registered tools appear in the built prompt with description and args", () => {
     const prompt = buildSystemPrompt([extra])
-    expect(prompt).toContain("research.query")
+    expect(prompt).toContain("retrieval.query")
     expect(prompt).toContain("Search the public web.")
     expect(prompt).toContain('{ "query": "..." }')
     // built-ins still listed
@@ -46,10 +46,10 @@ describe("extensible tool registry", () => {
   })
 
   it("registered tools route at their declared tier", async () => {
-    expect(resolveToolTier("research.query", [extra])).toBe("T1")
+    expect(resolveToolTier("retrieval.query", [extra])).toBe("T1")
     expect(resolveToolTier("clock.now", [extra])).toBe("T0")
     expect(resolveToolTier("nope.nope", [extra])).toBe("T0")
-    const out = await Effect.runPromise(runTool("research.query", { query: "q" }, ctx, [extra]))
+    const out = await Effect.runPromise(runTool("retrieval.query", { query: "q" }, ctx, [extra]))
     expect(out).toEqual({ query: "q" })
   })
 
@@ -64,11 +64,11 @@ describe("extensible tool registry", () => {
   it("unknown tool fails with a listing, never throws synchronously", async () => {
     const err = await Effect.runPromise(Effect.flip(runTool("nope.nope", {}, ctx, [extra])))
     expect(String(err)).toContain('unknown tool "nope.nope"')
-    expect(String(err)).toContain("research.query")
+    expect(String(err)).toContain("retrieval.query")
   })
 
   it("a failing extra tool's typed error flows through untouched", async () => {
-    const tagged = { _tag: "ResearchFailed", reason: "boom" }
+    const tagged = { _tag: "RetrievalFailed", reason: "boom" }
     const failing: AgentToolDef = { ...extra, name: "x.fail", run: () => Effect.fail(tagged) }
     const err = await Effect.runPromise(Effect.flip(runTool("x.fail", {}, ctx, [failing])))
     expect(err).toBe(tagged)

@@ -1,5 +1,5 @@
 /**
- * web-research/readability.ts — main-content extraction for fetched pages.
+ * web-retrieval/readability.ts — main-content extraction for fetched pages.
  *
  * THE PROBLEM: fetcher.extractText returns a page's full visible text —
  * nav, headers, footers, sidebars, cookie banners and all. On modern pages

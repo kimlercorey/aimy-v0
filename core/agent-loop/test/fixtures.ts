@@ -190,7 +190,7 @@ export interface StackOpts {
   readonly asc?: boolean
   /**
    * Registered module tools (additive): forwarded to the loop layer so the
-   * model can call module tools (e.g. research.query) through the same
+   * model can call module tools (e.g. retrieval.query) through the same
    * gated path as built-ins.
    */
   readonly extraTools?: ReadonlyArray<AgentToolDef>

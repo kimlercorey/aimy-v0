@@ -49,7 +49,7 @@ export interface ToolIntent {
   readonly tool: ToolName
   readonly tier: Tier
   readonly args: JsonValue
-  /** Who/why this intent exists, e.g. "agent-loop:turn-42" or "module:web-research". */
+  /** Who/why this intent exists, e.g. "agent-loop:turn-42" or "module:web-retrieval". */
   readonly provenance: string
 }
 
