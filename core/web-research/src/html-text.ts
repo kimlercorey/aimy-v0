@@ -74,8 +74,11 @@ const isValidCodePoint = (cp: number): boolean =>
  * Decode the single entity starting at `i` (where html[i] === "&").
  * Returns the decoded text and the index just past the entity. A non-entity
  * `&` (or unknown entity) is returned literally — never destroyed.
+ *
+ * Exported for readability.ts, which decodes text during tree construction
+ * (single pass, same no-double-decode guarantee as htmlToText).
  */
-const decodeEntityAt = (html: string, i: number): { text: string; next: number } => {
+export const decodeEntityAt = (html: string, i: number): { text: string; next: number } => {
   ENTITY_RE.lastIndex = i
   const m = ENTITY_RE.exec(html)
   if (m === null || m[1] === undefined) return { text: "&", next: i + 1 }
@@ -108,8 +111,11 @@ const indexOfAsciiCI = (haystack: string, needle: string, from: number): number 
  * Find the closing tag `</name>` at or after `from` (case-insensitive,
  * tolerates whitespace before `>`). Returns the span of the close tag,
  * or null if absent.
+ *
+ * Exported for readability.ts, which skips raw-text subtrees (script/style)
+ * with the same tolerant close-tag search.
  */
-const findCloseTag = (html: string, from: number, name: string): { start: number; end: number } | null => {
+export const findCloseTag = (html: string, from: number, name: string): { start: number; end: number } | null => {
   const needle = "</" + name
   let idx = from
   while (true) {

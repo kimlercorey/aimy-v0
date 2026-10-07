@@ -19,6 +19,13 @@ export interface FetchedSource {
   readonly title: string
   /** Readable text extracted from the page (see fetcher.extractText limits). */
   readonly text: string
+  /**
+   * True when `text` is the page's main content (nav/boilerplate removed by
+   * the readability pass). False when extraction fell back to full-page
+   * text — boilerplate included — because nothing scored as an article.
+   * Consumers must not present a `false` source as clean article text.
+   */
+  readonly mainContent: boolean
 }
 
 /** One excerpt backing a claim. `ref` is the source URL; this is what the HonestyService ledger stores as evidence. */
