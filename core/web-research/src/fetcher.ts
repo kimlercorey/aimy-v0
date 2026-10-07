@@ -18,52 +18,31 @@
 import { Effect } from "effect"
 import { FetchError, type ResearchError } from "./errors.js"
 import { checkFetchEgress, HttpClient } from "./http.js"
+import { extractRawElementText, htmlToText } from "./html-text.js"
 import type { FetchedSource } from "./types.js"
 
 export const FETCH_TIMEOUT_MS = 20_000
 export const FETCH_MAX_BYTES = 512 * 1024
 export const MAX_TEXT_CHARS = 20_000
 
-const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i
-
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0*39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n: string) => {
-      const cp = Number.parseInt(n, 10)
-      return Number.isSafeInteger(cp) && cp > 0 ? String.fromCodePoint(cp) : ""
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n: string) => {
-      const cp = Number.parseInt(n, 16)
-      return Number.isSafeInteger(cp) && cp > 0 ? String.fromCodePoint(cp) : ""
-    })
-    .replace(/&nbsp;/g, " ")
-
 /**
- * Extract readable text from HTML. Pure and unit-testable. LIMITS (by
- * design, documented here): no main-content detection — nav, footers and
- * boilerplate are included; no JS execution — SPA shells yield almost
- * nothing; no language detection; output truncated to MAX_TEXT_CHARS.
+ * Extract readable text from HTML. Pure and unit-testable. Single-pass
+ * scanner (see html-text.ts) — no regex tag filtering, each entity decoded
+ * exactly once. LIMITS (by design, documented here): no main-content
+ * detection — nav, footers and boilerplate are included; no JS execution —
+ * SPA shells yield almost nothing; no language detection; output truncated
+ * to MAX_TEXT_CHARS.
  */
 export const extractText = (html: string): string => {
-  const text = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<template[\s\S]*?<\/template>/gi, " ")
-    .replace(/<[^>]*>/g, " ")
-  return decodeEntities(text).replace(/[ \t\f\v\u00a0]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_TEXT_CHARS)
+  const text = htmlToText(html)
+  return text.replace(/[ \t\f\v\u00a0]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_TEXT_CHARS)
 };
 
 export const extractTitle = (html: string): string => {
-  const m = TITLE_RE.exec(html)
-  if (m?.[1] === undefined) return ""
-  return decodeEntities(m[1].replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 300)
+  // RCDATA semantics: title content is text (tags not parsed), entities decoded.
+  const raw = extractRawElementText(html, "title")
+  if (raw === "") return ""
+  return raw.replace(/\s+/g, " ").trim().slice(0, 300)
 };
 
 export interface FetchDeps {

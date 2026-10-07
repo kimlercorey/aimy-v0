@@ -18,6 +18,7 @@
 import { Effect } from "effect"
 import { MalformedSearchResponse, SearchError, type ResearchError } from "./errors.js"
 import { HttpClient } from "./http.js"
+import { htmlToText } from "./html-text.js"
 import type { SearchResult } from "./types.js"
 
 export interface SearchProvider {
@@ -32,18 +33,11 @@ export const DUCKDUCKGO_HOST = "html.duckduckgo.com"
 const SEARCH_TIMEOUT_MS = 15_000
 const SEARCH_MAX_BYTES = 512 * 1024
 
-const stripTags = (s: string): string =>
-  s
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0*39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
+/**
+ * Strip markup to plain text via the single-pass scanner (html-text.ts).
+ * No regex tag filtering — see that module for why.
+ */
+const stripTags = (s: string): string => htmlToText(s).replace(/\s+/g, " ").trim()
 
 /**
  * DuckDuckGo wraps outbound links as //duckduckgo.com/l/?uddg=<urlencoded>.

@@ -15,6 +15,7 @@
 export * from "./errors.js"
 export * from "./types.js"
 export * from "./http.js"
+export * from "./html-text.js"
 export * from "./provider.js"
 export * from "./fetcher.js"
 export * from "./research.js"

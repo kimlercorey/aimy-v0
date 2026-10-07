@@ -112,3 +112,48 @@ describe("fetchSource", () => {
     expect(err._tag).toBe("FetchError")
   })
 })
+
+describe("html-text scanner (CodeQL hardening, 2026-10-07)", () => {
+  it("decodes each entity exactly once: &amp;lt; stays &lt; (no double-unescape)", () => {
+    expect(extractText("<p>&amp;lt;script&amp;gt;</p>")).toBe("&lt;script&gt;")
+  })
+
+  it("still decodes single-level entities correctly", () => {
+    expect(extractText("<p>&lt;div&gt; &amp; &quot;q&quot; &#65; &#x42;</p>")).toBe('<div> & "q" A B')
+  })
+
+  it("excludes script/style/noscript/template content", () => {
+    const t = extractText("<script>evil()</script><style>.x{color:red}</style><noscript>ns</noscript><p>hi</p>")
+    expect(t).toBe("hi")
+    expect(t).not.toContain("evil()")
+  })
+
+  it("skips comments", () => {
+    expect(extractText("<p>a</p><!-- secret --><p>b</p>")).toBe("a b")
+  })
+
+  it("handles malformed/nested tags without leaking markup", () => {
+    const t = extractText("<scr<script>ipt>alert(1)</scr</script>ipt><p>ok</p>")
+    expect(t).toContain("ok")
+    expect(t).not.toContain("<script")
+    expect(t).not.toContain("<scr")
+  })
+
+  it("handles > inside quoted attributes", () => {
+    expect(extractText('<a title="a>b" href="x">link</a>')).toBe("link")
+  })
+
+  it("leaves unknown entities literal instead of destroying them", () => {
+    expect(extractText("<p>&bogus; &;</p>")).toContain("&bogus;")
+  })
+
+  it("rejects out-of-range numeric entities without throwing", () => {
+    expect(() => extractText("<p>&#x110000; &#xD800;</p>")).not.toThrow()
+    expect(extractText("<p>&#x110000;</p>")).toContain("&#x110000;")
+  })
+
+  it("title uses RCDATA semantics: tags literal, entities decoded", () => {
+    expect(extractTitle("<title>A &amp; <b>B</b></title>")).toBe("A & <b>B</b>")
+    expect(extractTitle("<TITLE>Upper</TITLE>")).toBe("Upper")
+  })
+})

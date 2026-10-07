@@ -59,6 +59,13 @@ describe("parseDuckHtml", () => {
     const err = await run(Effect.flip(parseDuckHtml(DDG_GARBAGE_FIXTURE)))
     expect(err._tag).toBe("MalformedSearchResponse")
   })
+
+  it("decodes entities exactly once in titles (no double-unescape)", async () => {
+    const html = `<div class="result"><a class="result__a" href="https://example.com/">A &amp;lt;tag&amp;gt; test</a></div>`
+    const results = await run(parseDuckHtml(html))
+    expect(results).toHaveLength(1)
+    expect(results[0]!.title).toBe("A &lt;tag&gt; test")
+  })
 })
 
 describe("makeDuckDuckGoHtmlProvider", () => {
