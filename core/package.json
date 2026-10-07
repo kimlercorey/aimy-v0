@@ -25,5 +25,9 @@
   "devDependencies": {
     "@types/node": "^26.6.4",
     "tsx": "^4.19.0"
+  },
+  "overrides": {
+    "@effect/platform-browser": "$@effect/platform-browser",
+    "effect": "$effect"
   }
 }

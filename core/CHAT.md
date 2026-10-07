@@ -52,7 +52,7 @@ Conversations persist across restarts in `~/.aimy/memory/sessions/`.
 ## 4. Verify the build (optional)
 
 ```sh
-npm test        # 373 tests, all green
+npm test        # 919 tests, all green
 npm run build   # typecheck, clean
 ```
 
