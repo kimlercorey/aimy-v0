@@ -40,7 +40,11 @@ afterEach(() => {
   // keep the tmp dir for the whole file (sessions accumulate across tests is fine)
 })
 
-const runP = <A, E>(eff: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(Effect.provide(eff, layer))
+// The layer provides exactly MemoryService (and cannot fail at build),
+// so after provide the requirement channel is empty. The cast bridges the
+// generic R, which TypeScript cannot narrow through Effect.provide.
+const runP = <A, E, R>(eff: Effect.Effect<A, E, R>): Promise<A> =>
+  Effect.runPromise(Effect.provide(eff, layer) as Effect.Effect<A, E, never>)
 
 const summarize = (entries: ReadonlyArray<SessionEntry>): string =>
   `summary of ${String(entries.length)} entries: ${entries.map((e) => e.kind).join(",")}`
@@ -52,7 +56,7 @@ const seedSession = async (sessionId: string, n: number): Promise<string[]> => {
   const ids: string[] = []
   let parent: string | null = null
   for (let i = 0; i < n; i++) {
-    const e = await runP(mem.append(sessionId, { parentId: parent, kind: "message", payload: { i } }))
+    const e: SessionEntry = await runP(mem.append(sessionId, { parentId: parent, kind: "message", payload: { i } }))
     ids.push(e.id)
     parent = e.id
   }

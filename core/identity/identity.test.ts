@@ -171,13 +171,13 @@ describe("Ed25519 signing", () => {
             )
           )
           const valid = yield* Effect.promise(() =>
-            webcrypto.subtle.verify({ name: "Ed25519" }, publicKey, signature, message)
+            webcrypto.subtle.verify({ name: "Ed25519" }, publicKey, new Uint8Array(signature), message)
           )
           const tampered = yield* Effect.promise(() =>
             webcrypto.subtle.verify(
               { name: "Ed25519" },
               publicKey,
-              signature,
+              new Uint8Array(signature),
               new TextEncoder().encode("tampered")
             )
           )

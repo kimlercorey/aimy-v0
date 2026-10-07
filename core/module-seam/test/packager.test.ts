@@ -13,7 +13,7 @@ const writePkg = (dir: string, skillMd: string) =>
     catch: (e) => new Error(String(e))
   })
 
-const withTempDir = <A, E>(program: (dir: string) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
+const withTempDir = <A, E>(program: (dir: string) => Effect.Effect<A, E>): Effect.Effect<A, E | Error> =>
   Effect.acquireUseRelease(
     Effect.tryPromise({
       try: () => mkdtemp(join(tmpdir(), "aimy-pkg-")),

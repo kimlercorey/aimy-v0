@@ -242,7 +242,7 @@ describe("LocalHttpProvider", () => {
       const originalFetch = globalThis.fetch
       globalThis.fetch = ((input: unknown, init?: unknown) => {
         calls.push(String(input))
-        return originalFetch(input as RequestInfo | URL, init as RequestInit)
+        return originalFetch(input as Parameters<typeof fetch>[0], init as RequestInit)
       }) as typeof fetch
       try {
         const pool = yield* InferencePool

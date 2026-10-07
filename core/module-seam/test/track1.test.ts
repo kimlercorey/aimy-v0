@@ -13,7 +13,10 @@ import {
   Allow,
   HookError,
   ModuleError,
+  PermissionDenied,
+  SandboxViolation,
   TrustDecisionRequired,
+  TurnTerminated,
   makeModuleHooks,
   withActiveCheck,
   allowAllKernel
@@ -26,7 +29,8 @@ const installEnable = (host: ModuleHostApi, moduleId = "web-research") =>
     yield* host.enable(moduleId)
   })
 
-const expectModuleError = (eff: Effect.Effect<unknown, ModuleError>) =>
+type HostError = ModuleError | TrustDecisionRequired | SandboxViolation | HookError | PermissionDenied | TurnTerminated
+const expectModuleError = (eff: Effect.Effect<unknown, HostError>) =>
   Effect.gen(function* () {
     const err = yield* Effect.flip(eff)
     expect(err).toBeInstanceOf(ModuleError)

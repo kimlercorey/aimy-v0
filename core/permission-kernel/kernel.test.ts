@@ -6,10 +6,10 @@
  * fail-closed sandbox selection, and fail-closed layer construction.
  */
 import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { Context, Effect, Layer, Scope } from "effect"
 
 import { ToolName, type JsonValue } from "../substrate/types.js"
-import type { Tier } from "../substrate/errors.js"
+import type { ConfigError, Tier } from "../substrate/errors.js"
 import {
   SafetyKernel,
   SafetyKernelConfig,
@@ -74,6 +74,7 @@ describe("SafetyKernel", () => {
             ),
           )
           assert.strictEqual(error._tag, "PermissionDenied")
+          if (error._tag !== "PermissionDenied") assert.fail("expected PermissionDenied")
           assert.strictEqual(error.tool, "shell_rm")
           assert.strictEqual(error.tier, "T3")
           assert.strictEqual(error.reason, "too dangerous")
@@ -284,17 +285,23 @@ describe("SafetyKernel", () => {
 
   it.effect("missing policy file fails the layer build closed (never fail-open)", () =>
     Effect.gen(function* () {
-      const kernel = yield* SafetyKernel
-      yield* kernel.check(intent("read_file", "T0", {}))
-    }).pipe(
-      Effect.provide(SafetyKernel.layer),
-      Effect.provideService(SafetyKernelConfig, {
+      // Build the kernel layer directly against a nonexistent config dir:
+      // the build itself must fail with ConfigError (never fail-open).
+      // NOTE: SafetyKernelConfig is a Context.Reference. Effect 4's types do
+      // not eliminate a Reference requirement via Context.add/Layer.succeed
+      // (the provided identifier collapses to `never`), but the runtime
+      // override is honored — verified: the build below fails with ConfigError.
+      // The cast bridges the type-level gap only.
+      const configCtx = Context.add(Context.empty(), SafetyKernelConfig, {
         configDir: "/nonexistent-aimy-policy-dir",
-      }),
-      Effect.flip,
-      Effect.map((error) => {
-        assert.strictEqual(error._tag, "ConfigError")
-      }),
-    ),
+      })
+      const build = Effect.provide(Layer.build(SafetyKernel.layer), configCtx) as Effect.Effect<
+        Context.Context<SafetyKernel>,
+        ConfigError,
+        Scope.Scope
+      >
+      const error = yield* Effect.flip(build)
+      assert.strictEqual(error._tag, "ConfigError")
+    }),
   )
 })

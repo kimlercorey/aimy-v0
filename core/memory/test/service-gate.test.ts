@@ -38,11 +38,11 @@ afterEach(() => {
 const withGate = (gate: Layer.Layer<import("../service.js").PermissionGate>) =>
   Layer.provide(MemoryServiceLive, Layer.mergeAll(gate, testPathsLayer()))
 
-const runP = <A, E>(eff: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(eff)
+const runP = <A, E, R>(eff: Effect.Effect<A, E, R>): Promise<A> => Effect.runPromise(eff as Effect.Effect<A, E, never>)
 
 describe("DenyAllGate: every op fails with PermissionDenied", () => {
   const layer = withGate(DenyAllGate)
-  const expectDenied = async (eff: Effect.Effect<unknown, unknown>, op: string) => {
+  const expectDenied = async <R>(eff: Effect.Effect<unknown, unknown, R>, op: string) => {
     const err = await runP(Effect.flip(Effect.provide(eff, layer)))
     expect(err, op).toBeInstanceOf(PermissionDenied)
     expect((err as PermissionDenied)._tag).toBe("PermissionDenied")

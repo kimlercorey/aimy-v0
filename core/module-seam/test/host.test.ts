@@ -65,7 +65,7 @@ describe("ModuleHost", () => {
         yield* installAndEnable(host)
         const ran = yield* Ref.make(false)
         const err = yield* Effect.flip(
-          host.callTool("web-research", testCall({ tool: "code_exec" }), Effect.sync(() => { ran = true }))
+          host.callTool("web-research", testCall({ tool: "code_exec" }), Ref.set(ran, true))
         )
         expect(err).toBeInstanceOf(PermissionDenied)
         expect((err as PermissionDenied).reason).toContain("undeclared")

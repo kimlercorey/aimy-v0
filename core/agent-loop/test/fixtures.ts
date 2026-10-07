@@ -54,7 +54,7 @@ import {
   type TurnReport
 } from "../src/index.js"
 import { HonestyService, HonestyServiceInMemory } from "../../honesty/src/index.js"
-import { AscSelfMonitor, AscError } from "../../asc-engine/index.js"
+import { AscSelfMonitor, AscSelfNarration, DialState, AscError } from "../../asc-engine/index.js"
 import { freshMonitorStack } from "../../asc-engine/test-layers.js"
 
 // ---------------------------------------------------------------------------
@@ -192,7 +192,10 @@ export interface StackOpts {
 export const buildStack = (
   dir: string,
   opts: StackOpts = {}
-): Layer.Layer<AgentLoop | InferencePool | MemoryService | HonestyService | AscSelfMonitor, AscError> => {
+): Layer.Layer<
+  AgentLoop | InferencePool | MemoryService | HonestyService | AscSelfMonitor | DialState | AscSelfNarration,
+  AscError
+> => {
   const kernelLayer = SafetyKernel.layerFromPolicy(opts.policy ?? openPolicy)
   const memoryStack = Layer.provide(
     Layer.provide(MemoryServiceLive, Layer.mergeAll(kernelBackedGate, pathsLayer(dir))),
