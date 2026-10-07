@@ -25,7 +25,7 @@
 15. ✅ **In-app comms banner infrastructure** — the channel by which the system alerts the user (long-running job done, cron status). Product-owner broadcast reuses this channel (see Should, with conditions).
 16. ✅ **One-click full data export** — memory, skills, identity, locker manifest. "No one can take it from you" requires *you* can take all of you, trivially.
 17. ✅ **Desktop app shell, graphically polished** — beauty is a pillar, not a coat of paint. *(M8 complete 2026-10-07: Foldkit shell, ASC panel with read-only dials, FACS engine, sovereignty toggles default-off-except-local-inference, timeline/jobs/banners views, export wizard, onboarding, DevTools gated; 871/871 tests green.)*
-18. ✅ **Compaction treated as adversarial** — the buggiest subsystem in both repos gets its own test/quarantine discipline from day one. *(Discipline in place; full adversarial suite = M9.)*
+18. ✅ **Compaction treated as adversarial** — the buggiest subsystem in both repos gets its own test/quarantine discipline from day one. *(M9 complete 2026-10-07: reasoning-token-aware accounting with Pi #9409 auto-tightening, cache-prefix contract, PinRegistry byte-identity, lifecycle/outcome audit, property tests; the discipline caught real bugs — O(n³)→O(n) invariant check, missing budget relief, timestamp carry-through; 10k-turn demo: 13 compactions, cache-hit 1.00×13, max pressure 70.1%, pins byte-identical; 919/919 tests green.)*
 
 ## SHOULD — high value, not MVP-blocking
 
