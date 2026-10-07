@@ -1,8 +1,8 @@
 # AImy
 
-**The elephant in the room:** yes, another AI assistant. The market is drowning in chat UIs wrapped around someone else's API with a clever system prompt. AImy is the opposite bet.
+**The elephant in the room:** yes, another AI assistant — and the local-first premise isn't unique anymore. OpenClaw runs local. Hermes ran local. The idea that the model is interchangeable plumbing and the value is everything around it is shared with the best open projects.
 
-Most AI products rent you intelligence. Your data lives on their servers, the model changes under you without warning, and when you leave, you leave with nothing. AImy starts from the premise that the model is interchangeable plumbing — the value is everything around it: memory that persists, claims that carry evidence, a presence that isn't performed, and data you can actually take with you.
+AImy exists because those projects keep failing at the same things: agents that hallucinate without consequence, self-improvement loops that grade their own homework, personalities that are performed rather than computed, memory that silently corrupts. We spent the teardown phase studying exactly how Pi and Hermes failed — and built the mechanisms that answer each failure. That's the bet: not a different premise, different machinery.
 
 ## Who cares, and why
 
