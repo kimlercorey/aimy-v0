@@ -13,6 +13,7 @@
  *   (tested via serializeHtml in rendering.test.ts).
  */
 import type { Document, HtmlBuilder } from "foldkit/html"
+import { Option } from "effect"
 import type { ChatMessage, ContextMeter, SessionSlice } from "../model.js"
 import { sanitizeTerminalOutput, visibleWindow } from "../rendering.js"
 import { Message } from "../messages.js"
@@ -67,6 +68,28 @@ const streamingView = (h: H, text: string) => {
   ])
 }
 
+/**
+ * Enter-to-submit decision for the composer. Pure: the view wires it to
+ * OnKeyDownPreventDefault; tests exercise it directly. Shift+Enter, other
+ * keys, streaming, and empty drafts all decline (None).
+ */
+export const composerKeySubmit = (
+  draft: string,
+  streaming: boolean,
+  key: string,
+  shiftKey: boolean,
+): Option.Option<Message> => {
+  const submittable = !streaming && draft.trim().length > 0
+  if (key !== "Enter" || shiftKey || !submittable) return Option.none()
+  return Option.some(
+    Message.UserSentMessage({
+      id: `msg-${Date.now()}`,
+      text: draft,
+      at: Date.now(),
+    }),
+  )
+}
+
 const composerView = (h: H, draft: string, streaming: boolean) =>
   h.div([h.Class("composer")], [
     h.input([
@@ -75,6 +98,9 @@ const composerView = (h: H, draft: string, streaming: boolean) =>
       h.Disabled(streaming),
       h.Placeholder("Message AImy…"),
       h.OnInput((value) => Message.ComposerDraftChanged({ text: value })),
+      h.OnKeyDownPreventDefault((key, modifiers) =>
+        composerKeySubmit(draft, streaming, key, modifiers.shiftKey),
+      ),
     ]),
     h.button(
       [

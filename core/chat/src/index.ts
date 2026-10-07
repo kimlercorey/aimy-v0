@@ -21,12 +21,12 @@ import { buildChatStack } from "./stack.js"
 import { DEFAULT_SESSION, USAGE, parseArgs } from "./args.js"
 import {
   bootResearchModule,
+  makeResearchAgentTool,
   makeResearchToolForChat,
   researchViaSeam,
   RESEARCH_MODULE,
   type ResearchTool
 } from "./research.js"
-import { RESEARCH_QUERY_TOOL, RESEARCH_TOOL_TIER } from "../../web-research/src/tools.js"
 import {
   formatHonestySummary,
   formatToolResult,
@@ -155,27 +155,9 @@ const main = async (): Promise<void> => {
   // The research tool as a MODEL-CALLABLE agent tool (not just the CLI
   // `research <query>` prefix). It closes over the same mutable ref the
   // boot build stashes — the loop only runs tools during chat, after boot.
-  // invoke() is called directly, NOT via host.callTool: the loop's runTurn
-  // already dispatches beforeToolCall/afterToolCall hooks, and double
-  // dispatch would double-fire the module's hooks.
+  // Shared factory with the desktop engine: one definition, one description.
   let researchTool: ResearchTool | undefined
-  const researchAgentTool: AgentToolDef = {
-    name: RESEARCH_QUERY_TOOL,
-    tier: RESEARCH_TOOL_TIER,
-    description:
-      "Search the public web and return a sourced answer where every factual claim carries a verification badge ([verified]/[unverified]/[failed]). Use this when the user asks about current events, facts beyond training data, or anything needing up-to-date or external information — never claim you lack web access while this tool is listed.",
-    argsHint: '{ "query": "<search query>", "maxSources": 3 }',
-    run: (args, ctx) => {
-      const tool = researchTool
-      if (tool === undefined) return Effect.fail(new Error("research module is not booted"))
-      const query = typeof args["query"] === "string" ? args["query"] : ""
-      const maxSources = typeof args["maxSources"] === "number" ? args["maxSources"] : undefined
-      return Effect.map(
-        tool.invoke({ query, sessionId: ctx.sessionId, turnId: ctx.turnId, maxSources }),
-        (report) => report.answer
-      )
-    }
-  }
+  const researchAgentTool = makeResearchAgentTool(() => researchTool)
   const { layer, provider, researchHookCounts } = buildChatStack({
     baseUrl: args.baseUrl,
     model,

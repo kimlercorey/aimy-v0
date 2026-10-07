@@ -16,6 +16,7 @@ import { Effect } from "effect"
 import { fileURLToPath } from "node:url"
 import type { HonestyError } from "../../honesty/src/errors.js"
 import type { HonestyServiceShape } from "../../honesty/src/service.js"
+import type { AgentToolDef } from "../../agent-loop/src/tools.js"
 import {
   type HookError,
   type ModuleError,
@@ -28,6 +29,7 @@ import {
 } from "../../module-seam/src/index.js"
 import type { SandboxViolation } from "../../substrate/errors.js"
 import type { HttpClientShape } from "../../web-research/src/http.js"
+import { RESEARCH_QUERY_TOOL, RESEARCH_TOOL_TIER } from "../../web-research/src/tools.js"
 import {
   RESEARCH_MODULE,
   makeDuckDuckGoHtmlProvider,
@@ -68,6 +70,36 @@ export const makeResearchToolForChat = (
   honesty: HonestyServiceShape
 ): ResearchTool =>
   makeResearchTool({ provider: makeDuckDuckGoHtmlProvider({ http }), http, honesty })
+
+/**
+ * The research tool as a MODEL-CALLABLE agent tool (not just the CLI
+ * `research <query>` prefix). Shared by the CLI chat and the desktop engine:
+ * one tool definition, one description, so the model sees the same contract
+ * everywhere. `getTool` closes over the boot-stashed tool ref — the loop only
+ * runs tools during chat, after boot. invoke() is called directly, NOT via
+ * host.callTool: the loop's runTurn already dispatches
+ * beforeToolCall/afterToolCall hooks, and double dispatch would double-fire
+ * the module's hooks.
+ */
+export const makeResearchAgentTool = (
+  getTool: () => ResearchTool | undefined
+): AgentToolDef => ({
+  name: RESEARCH_QUERY_TOOL,
+  tier: RESEARCH_TOOL_TIER,
+  description:
+    "Search the public web and return a sourced answer where every factual claim carries a verification badge ([verified]/[unverified]/[failed]). Use this when the user asks about current events, facts beyond training data, or anything needing up-to-date or external information — never claim you lack web access while this tool is listed.",
+  argsHint: '{ "query": "<search query>", "maxSources": 3 }',
+  run: (args, ctx) => {
+    const tool = getTool()
+    if (tool === undefined) return Effect.fail(new Error("research module is not booted"))
+    const query = typeof args["query"] === "string" ? args["query"] : ""
+    const maxSources = typeof args["maxSources"] === "number" ? args["maxSources"] : undefined
+    return Effect.map(
+      tool.invoke({ query, sessionId: ctx.sessionId, turnId: ctx.turnId, maxSources }),
+      (report) => report.answer
+    )
+  }
+})
 
 /** Every typed failure one research pass can produce. */
 export type ResearchViaSeamError =

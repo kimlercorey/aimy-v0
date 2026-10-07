@@ -28,7 +28,12 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { AgentLoop, type ChatChunk } from "../../../agent-loop/src/index.js"
 import { buildChatStack, type ChatStack } from "../../../chat/src/stack.js"
-import { bootResearchModule } from "../../../chat/src/research.js"
+import {
+  bootResearchModule,
+  makeResearchAgentTool,
+  makeResearchToolForChat,
+  type ResearchTool
+} from "../../../chat/src/research.js"
 import { HonestyService } from "../../../honesty/index.js"
 import { InferencePool } from "../../../inference-pool/index.js"
 import { MemoryService } from "../../../memory/index.js"
@@ -119,7 +124,18 @@ export const bootDesktopEngine = async (opts?: {
   // Create on first run; onboarding (Track 3) collects the real model name.
   writeDesktopConfig(config, configFile)
 
-  const stack: ChatStack = buildChatStack({ baseUrl: config.baseUrl, model: config.model })
+  // The research tool as a MODEL-CALLABLE agent tool — the same factory the
+  // CLI chat uses, so the desktop model sees the identical `research.query`
+  // contract. Closes over the boot-stashed tool ref (set below); the loop
+  // only runs tools during chat, after boot.
+  let researchTool: ResearchTool | undefined
+  const researchAgentTool = makeResearchAgentTool(() => researchTool)
+
+  const stack: ChatStack = buildChatStack({
+    baseUrl: config.baseUrl,
+    model: config.model,
+    extraTools: [researchAgentTool]
+  })
   const { layer, provider } = stack
 
   // The layer builds ONCE here (memoized by the runtime); every `run` and
@@ -132,7 +148,10 @@ export const bootDesktopEngine = async (opts?: {
       const pool = yield* InferencePool
       yield* pool.register(provider)
       const host = yield* ModuleHost
+      const honesty = yield* HonestyService
+      const http = yield* HttpClient
       yield* bootResearchModule(host)
+      researchTool = makeResearchToolForChat(http, honesty)
     })
   )
 
