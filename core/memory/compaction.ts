@@ -49,6 +49,14 @@ export interface TokenUsage {
 const CHARS_PER_TOKEN = 4
 const REASONING_ESTIMATE_RATIO = 2
 
+/**
+ * Summary text cap (Pi #9512 — the summary-caps corner of the compaction bug
+ * farm). The quarantine gate rejects staged summaries exceeding this; the
+ * summarizer must restage with a tighter window instead of emitting an
+ * unbounded summary.
+ */
+export const MAX_SUMMARY_CHARS = 4096
+
 /** Conservative token estimate for text. Never pretends to be a measurement. */
 export const estimateTokens = (text: string): number => Math.ceil(text.length / CHARS_PER_TOKEN)
 
@@ -190,6 +198,16 @@ export const verifyStaged = (
         new SessionTreeError({ reason: "quarantine: summary entry is not the branch leaf" }),
       )
     }
+    // 5. summary text is bounded (Pi #9512): unbounded summaries fail quarantine
+    const summaryText = staged.summaryEntry.payload["summary"] as unknown
+    if (typeof summaryText !== "string" || summaryText.length > MAX_SUMMARY_CHARS) {
+      return yield* Effect.fail(
+        new SessionTreeError({
+          reason: `quarantine: summary exceeds ${String(MAX_SUMMARY_CHARS)} chars (restage with a tighter window)`,
+          entryId: staged.summaryEntry.id,
+        }),
+      )
+    }
     return { ...staged, verified: true }
   })
 
@@ -230,6 +248,10 @@ export const commitCompaction = (
       parentId: staged.summaryInput.parentId,
       kind: "summary",
       payload: staged.summaryInput.payload as unknown as Readonly<Record<string, unknown>>,
+      // the committed entry is byte-identical to the verified candidate:
+      // same ts -> same content-fingerprinted id, so a lifecycle record links
+      // to its outcome by exact id (the audit in audit.ts depends on this).
+      ts: staged.summaryEntry.ts,
     })
   })
 
@@ -251,3 +273,53 @@ export const compactBranch = (
     const verified = yield* verifyStaged(tree, staged)
     return yield* commitCompaction(verified)
   })
+
+/**
+ * Compaction lifecycle state machine (Pi #9340 — teardown ordering).
+ *
+ * Cancellation must never trigger post-cancel side effects: abort() during
+ * compaction moves staged → aborted, and from aborted neither commit nor a
+ * new stage is legal. The ONLY way out of aborted/committed is an explicit
+ * reset, which starts a fresh cycle — it never replays the cancelled one.
+ *
+ * Transition table:
+ *   idle      + stage  → staged        idle      + abort → aborted
+ *   staged    + commit → committed     staged    + abort → aborted
+ *   committed + abort  → committed (no-op: abort after commit changes nothing)
+ *   committed + reset  → idle          aborted   + reset → idle
+ *   everything else → CompactionTransitionError (fail loud, no silent transition)
+ */
+export type CompactionPhase = "idle" | "staged" | "committed" | "aborted"
+export type CompactionEvent = "stage" | "commit" | "abort" | "reset"
+
+export class CompactionTransitionError extends Data.TaggedError("CompactionTransitionError")<{
+  readonly from: CompactionPhase
+  readonly event: CompactionEvent
+  readonly reason: string
+}> {}
+
+const COMPACTION_TRANSITIONS: Readonly<
+  Record<CompactionPhase, Readonly<Partial<Record<CompactionEvent, CompactionPhase>>>>
+> = {
+  idle: { stage: "staged", abort: "aborted" },
+  staged: { commit: "committed", abort: "aborted" },
+  committed: { abort: "committed", reset: "idle" },
+  aborted: { reset: "idle" },
+}
+
+export const transitionCompaction = (
+  phase: CompactionPhase,
+  event: CompactionEvent,
+): Effect.Effect<CompactionPhase, CompactionTransitionError> => {
+  const next = COMPACTION_TRANSITIONS[phase][event]
+  if (next === undefined) {
+    return Effect.fail(
+      new CompactionTransitionError({
+        from: phase,
+        event,
+        reason: `illegal compaction transition: ${event} from ${phase} (no post-cancel side effects allowed)`,
+      }),
+    )
+  }
+  return Effect.succeed(next)
+}

@@ -139,6 +139,10 @@ export const getBranch = (
 ): Effect.Effect<ReadonlyArray<SessionEntry>, SessionTreeError> =>
   Effect.gen(function* () {
     const index = byId(tree)
+    // NOTE (M9): built leaf-first with push + a single reverse. The previous
+    // `unshift` per step made this O(depth²) per call and checkInvariants
+    // O(n³) — the quarantine gate could not run on a 10k-entry session.
+    // Order of the returned path is unchanged (root-to-entry).
     const path: SessionEntry[] = []
     const seen = new Set<string>()
     let cursor: string | null = entryId
@@ -150,11 +154,11 @@ export const getBranch = (
       }
       seen.add(cursor)
       const entry = index.get(cursor)
-      if (entry === undefined) return path.length === 0 ? path : path
-      path.unshift(entry)
+      if (entry === undefined) return path.reverse()
+      path.push(entry)
       cursor = entry.parentId
     }
-    return path
+    return path.reverse()
   })
 
 /** Entries with no children — the candidate heads of active branches. */
@@ -170,11 +174,16 @@ export const roots = (tree: SessionTree): ReadonlyArray<SessionEntry> =>
 /**
  * Validate the tree invariants. Used after every mutation and by the
  * compaction quarantine gate before a session pointer advances.
+ *
+ * M9: single memoized pass, O(n). The previous per-entry getBranch loop was
+ * O(n²) with a large constant (43s on a 10k-entry session) — the quarantine
+ * gate could not run at production scale. Same checks, same error messages,
+ * linear time.
  */
 export const checkInvariants = (tree: SessionTree): Effect.Effect<void, SessionTreeError> =>
   Effect.gen(function* () {
     const index = byId(tree)
-    // every parent exists
+    // 1. every parent exists
     for (const e of tree.entries) {
       if (e.parentId !== null && !index.has(e.parentId)) {
         return yield* Effect.fail(
@@ -182,16 +191,34 @@ export const checkInvariants = (tree: SessionTree): Effect.Effect<void, SessionT
         )
       }
     }
-    // acyclic: every root-to-entry walk terminates at a root
+    // 2. acyclic, and every chain reaches a root. Each entry is walked at
+    //    most once: once an id is known to reach a root, later walks stop
+    //    there (amortized O(n) total).
+    const reachesRoot = new Set<string>()
     for (const e of tree.entries) {
-      const path = yield* getBranch(tree, e.id)
-      if (path.length === 0 || path[0]?.parentId !== null) {
-        return yield* Effect.fail(
-          new SessionTreeError({ reason: "parentId chain does not reach a root", entryId: e.id }),
-        )
+      let cursor: string | null = e.id
+      const chain: string[] = []
+      const seenLocal = new Set<string>()
+      while (cursor !== null && !reachesRoot.has(cursor)) {
+        if (seenLocal.has(cursor)) {
+          return yield* Effect.fail(
+            new SessionTreeError({ reason: "parentId cycle detected", entryId: cursor }),
+          )
+        }
+        seenLocal.add(cursor)
+        const node = index.get(cursor)
+        if (node === undefined) {
+          // unreachable: parents verified in step 1 — fail loudly, never silently
+          return yield* Effect.fail(
+            new SessionTreeError({ reason: "entry references missing parent", entryId: cursor }),
+          )
+        }
+        chain.push(cursor)
+        cursor = node.parentId
       }
+      for (const id of chain) reachesRoot.add(id)
     }
-    // ids are content-fingerprinted: recompute and compare
+    // 3. ids are content-fingerprinted: recompute and compare
     for (const e of tree.entries) {
       const expected = makeEntryId(e.parentId, e.payload, e.ts)
       if (expected !== e.id) {
