@@ -48,6 +48,7 @@ import {
   type ModuleHooksApi,
   type ToolCall,
   type ToolOutcome,
+  type TurnReport as SeamTurnReport,
   type TurnSpec
 } from "../../module-seam/src/index.js"
 import { SandboxViolation } from "../../substrate/errors.js"
@@ -115,6 +116,8 @@ export interface TurnReport {
   readonly executed: ReadonlyArray<ExecutedToolCall>
   readonly blocked: ReadonlyArray<BlockedToolCall>
   readonly terminated: boolean
+  /** Tool rounds used this turn (1 = first pass called tools and got a synthesis; 0 = no tools). */
+  readonly toolRounds: number
   /** Malformed ```aimy-tool blocks: typed, surfaced, never a crash. */
   readonly parseFailures: ReadonlyArray<ToolBlockParseFailure>
   readonly steeringMessages: ReadonlyArray<ChatMessage>
@@ -203,6 +206,13 @@ interface Deps {
    * through the same `runTurn` hook dispatch as built-ins.
    */
   readonly extraTools: ReadonlyArray<AgentToolDef>
+  /**
+   * Tool-result feedback (additive): after tools execute, their results feed
+   * back to the model for a follow-up synthesis pass, so the turn's answer
+   * actually uses what the tools returned. Capped at this many tool rounds
+   * (a round = parse + gate + execute + synthesize). Default 3.
+   */
+  readonly maxToolRounds: number
 }
 
 /**
@@ -230,7 +240,8 @@ const makeAgentLoop = ({
   honestyOpts,
   asc,
   ascOpts,
-  extraTools
+  extraTools,
+  maxToolRounds
 }: Deps): AgentLoopService => {
   const streamSource = makeStreamSource(streamProviders)
 
@@ -247,7 +258,10 @@ const makeAgentLoop = ({
           kind: "message",
           payload: { role: "user", text: input }
         } satisfies NewEntry)
-        const turnCount = history.filter((m) => m.role === "assistant").length
+        // Turns, not messages: a multi-round turn persists several assistant
+        // messages (one per synthesis pass), but every turn begins with
+        // exactly one user message.
+        const turnCount = history.filter((m) => m.role === "user").length
         const turnNumber = turnCount + 1
 
         // M5 ASC prepareRequest point (additive, Track 4). Runs after the
@@ -292,12 +306,41 @@ const makeAgentLoop = ({
         )
 
         // 3–5. Parse, gate + execute through hooks, persist, report.
+        //
+        // Multi-round tool feedback: after a round's tools execute, their
+        // results feed back to the model for a follow-up synthesis pass, so
+        // the turn's answer actually uses what the tools returned. Without
+        // this the model emits a tool call, the results land in the ledger,
+        // and the user never gets an answer built from them. Capped at
+        // maxToolRounds; a round with no tool calls ends the loop.
         const tailPart: Stream.Stream<ChatChunk, AgentLoopError> = Stream.unwrap(
           Effect.gen(function* () {
-            const text = yield* Ref.get(acc)
-            const { calls, failures } = parseToolBlocks(text)
             const turnId = randomUUID()
             const toolCtx: BuiltinToolContext = { sessionId, turnCount, turnId }
+            const out: Array<ChatChunk> = []
+            const executed: Array<ExecutedToolCall> = []
+            const blocked: Array<BlockedToolCall> = []
+            const parseFailures: Array<ToolBlockParseFailure> = []
+            let terminated = false
+            let toolRounds = 0
+            // Neutral hook report when the loop never reaches runTurn
+            // (round 0 emitted no tool calls) — mirrors a clean dispatch.
+            let hookReport: SeamTurnReport = {
+              turnId,
+              executed: 0,
+              blocked: 0,
+              terminated: false,
+              steeringMessages: [],
+              followUpMessages: []
+            }
+
+            // Persistence chain for this turn.
+            let parent: string | null = userEntry.id
+            const appendEntry = (entry: NewEntry) =>
+              Effect.gen(function* () {
+                const written = yield* memory.append(sessionId, { ...entry, parentId: parent })
+                parent = written.id
+              })
 
             // Raw executor for the hooks dispatcher. Results are recorded
             // here so the loop can report them; the gate decision itself
@@ -313,79 +356,128 @@ const makeAgentLoop = ({
                 )
               )
 
-            const spec: TurnSpec = {
-              turn: { turnId, module: MODULE },
-              contextMessages: request.messages.map((m) => ({
-                role: m.role,
-                content: m.content
-              })),
-              toolCalls: calls.map((c, i) => ({
-                id: `${turnId}:call:${i}`,
-                tool: c.tool,
-                args: c.args,
-                tier: resolveToolTier(c.tool, extraTools),
-                truncated: false
-              })),
-              executeTool
-            }
-            const hookReport = yield* hooks.runTurn(spec)
-            const outcomes = yield* Ref.get(results)
-
-            const executed: Array<ExecutedToolCall> = []
-            const blocked: Array<BlockedToolCall> = []
-            let terminatorSeen = false
-            calls.forEach((c, i) => {
-              const id = `${turnId}:call:${i}`
-              const outcome = outcomes.get(id)
-              if (outcome !== undefined) {
-                executed.push({ id, tool: c.tool, result: outcomeToJson(outcome) })
-                return
-              }
-              if (hookReport.terminated && terminatorSeen) {
-                blocked.push({ tool: c.tool, reason: "not reached: turn terminated" })
-              } else if (hookReport.terminated) {
-                terminatorSeen = true
-                blocked.push({ tool: c.tool, reason: "denied by gate; turn terminated" })
-              } else {
-                blocked.push({ tool: c.tool, reason: "denied by gate" })
-              }
-            })
-
-            // 5. Persist the turn: assistant message, then tool-call/result entries.
-            let parent: string | null = userEntry.id
-            const appendEntry = (entry: NewEntry) =>
-              Effect.gen(function* () {
-                const written = yield* memory.append(sessionId, { ...entry, parentId: parent })
-                parent = written.id
-              })
-            yield* appendEntry({
-              parentId: parent,
-              kind: "message",
-              payload: { role: "assistant", text }
-            })
-            for (let i = 0; i < calls.length; i++) {
-              const c = calls[i]!
-              const id = `${turnId}:call:${i}`
-              const outcome = outcomes.get(id)
+            // Round 0 text is the streamed first pass; later rounds stream
+            // their own Token chunks into `out` as they generate.
+            let text = yield* Ref.get(acc)
+            let conversation: ReadonlyArray<Message> = request.messages
+            let round = 0
+            for (;;) {
+              // Persist this round's assistant text first, so the session
+              // tree reads in the order the user experienced it.
               yield* appendEntry({
                 parentId: parent,
-                kind: "tool-call",
-                payload: { tool: c.tool, args: c.args, id }
+                kind: "message",
+                payload: { role: "assistant", text }
               })
-              yield* appendEntry({
-                parentId: parent,
-                kind: "tool-result",
-                payload:
-                  outcome !== undefined
-                    ? { tool: c.tool, id, outcome: outcomeToJson(outcome) }
-                    : {
-                        tool: c.tool,
-                        id,
-                        blocked: true,
-                        reason:
-                          blocked.find((b) => b.tool === c.tool)?.reason ?? "denied by gate"
-                      }
-              })
+
+              const { calls, failures } = parseToolBlocks(text)
+              parseFailures.push(...failures)
+              if (calls.length === 0 || terminated || round >= maxToolRounds) break
+
+              const spec: TurnSpec = {
+                turn: { turnId, module: MODULE },
+                contextMessages: conversation.map((m) => ({
+                  role: m.role,
+                  content: m.content
+                })),
+                toolCalls: calls.map((c, i) => ({
+                  id: `${turnId}:r${round}:${i}`,
+                  tool: c.tool,
+                  args: c.args,
+                  tier: resolveToolTier(c.tool, extraTools),
+                  truncated: false
+                })),
+                executeTool
+              }
+              hookReport = yield* hooks.runTurn(spec)
+              const outcomes = yield* Ref.get(results)
+              if (hookReport.terminated) terminated = true
+
+              let terminatorSeen = false
+              const resultLines: Array<string> = []
+              for (let i = 0; i < calls.length; i++) {
+                const c = calls[i]!
+                const id = `${turnId}:r${round}:${i}`
+                const outcome = outcomes.get(id)
+                if (outcome !== undefined) {
+                  const resultJson = outcomeToJson(outcome)
+                  executed.push({ id, tool: c.tool, result: resultJson })
+                  out.push({ _tag: "ToolCall", tool: c.tool, result: resultJson })
+                  resultLines.push(
+                    `- ${c.tool}(${JSON.stringify(c.args)}) → ${JSON.stringify(resultJson).slice(0, 4000)}`
+                  )
+                } else {
+                  const reason =
+                    hookReport.terminated && terminatorSeen
+                      ? "not reached: turn terminated"
+                      : hookReport.terminated
+                        ? "denied by gate; turn terminated"
+                        : "denied by gate"
+                  if (hookReport.terminated) terminatorSeen = true
+                  blocked.push({ tool: c.tool, reason })
+                  resultLines.push(
+                    `- ${c.tool}(${JSON.stringify(c.args)}) → BLOCKED: ${reason} (do not retry this call)`
+                  )
+                }
+                yield* appendEntry({
+                  parentId: parent,
+                  kind: "tool-call",
+                  payload: { tool: c.tool, args: c.args, id }
+                })
+                yield* appendEntry({
+                  parentId: parent,
+                  kind: "tool-result",
+                  payload:
+                    outcome !== undefined
+                      ? { tool: c.tool, id, outcome: outcomeToJson(outcome) }
+                      : {
+                          tool: c.tool,
+                          id,
+                          blocked: true,
+                          reason:
+                            blocked.find((b) => b.tool === c.tool)?.reason ?? "denied by gate"
+                        }
+                })
+              }
+              toolRounds++
+              round++
+              if (terminated || round >= maxToolRounds) break
+
+              // Follow-up synthesis: the model sees what its tools returned
+              // and answers the user. This is the pass that was missing —
+              // without it, tool results land in the ledger but the reply
+              // never uses them.
+              const followMessages: ReadonlyArray<Message> = [
+                ...conversation,
+                { role: "assistant", content: text },
+                {
+                  role: "user",
+                  content:
+                    `Tool results for your last message. Answer the user's original question directly using these results — do not re-call a tool that already returned, and do not claim you lack a capability these results prove you have:\n${resultLines.join("\n")}`
+                }
+              ]
+              const followRequest: GenerateRequest = {
+                messages: followMessages,
+                params: {},
+                maxTokens: 2048
+              }
+              const followStreamed = streamSource(followRequest)
+              const followDeltas: Stream.Stream<string, InferenceError> =
+                followStreamed ??
+                Stream.fromEffect(
+                  pool.generate(followRequest, { mode: "powerhouse" }).pipe(Effect.map((r) => r.text))
+                )
+              const followAcc = yield* Ref.make("")
+              yield* followDeltas.pipe(
+                Stream.runForEach((delta) =>
+                  Effect.gen(function* () {
+                    yield* Ref.update(followAcc, (s) => s + delta)
+                    out.push({ _tag: "Token", delta })
+                  })
+                )
+              )
+              text = yield* Ref.get(followAcc)
+              conversation = followMessages
             }
 
             const report: TurnReport = {
@@ -393,8 +485,9 @@ const makeAgentLoop = ({
               text,
               executed,
               blocked,
-              terminated: hookReport.terminated,
-              parseFailures: failures,
+              terminated,
+              toolRounds,
+              parseFailures,
               steeringMessages: hookReport.steeringMessages,
               followUpMessages: hookReport.followUpMessages
             }
@@ -437,13 +530,11 @@ const makeAgentLoop = ({
             }
             const fullReport: TurnReport =
               ascReport === undefined ? honestReport : { ...honestReport, asc: ascReport }
-            const chunks: Array<ChatChunk> = executed.map((e) => ({
-              _tag: "ToolCall",
-              tool: e.tool,
-              result: e.result
-            }))
-            chunks.push({ _tag: "Done", report: fullReport })
-            return Stream.fromIterable(chunks)
+            // `out` carries the turn's chunks in experience order: each
+            // round's ToolCall chunks, then the follow-up synthesis Token
+            // chunks, ending here with Done.
+            out.push({ _tag: "Done", report: fullReport })
+            return Stream.fromIterable(out)
           })
         )
 
@@ -500,6 +591,7 @@ export const layerAgentLoop = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly honesty?: AgentLoopHonestyOpts | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
+  readonly maxToolRounds?: number | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService> =>
   Layer.effect(
     AgentLoop,
@@ -517,7 +609,8 @@ export const layerAgentLoop = (opts?: {
         honestyOpts: opts?.honesty,
         asc: Option.none(),
         ascOpts: undefined,
-        extraTools: opts?.extraTools ?? []
+        extraTools: opts?.extraTools ?? [],
+        maxToolRounds: opts?.maxToolRounds ?? 3
       })
     })
   )
@@ -533,6 +626,7 @@ export const layerAgentLoopWithHonesty = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly honesty?: AgentLoopHonestyOpts | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
+  readonly maxToolRounds?: number | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | HonestyService> =>
   Layer.effect(
     AgentLoop,
@@ -550,7 +644,8 @@ export const layerAgentLoopWithHonesty = (opts?: {
         honestyOpts: opts?.honesty,
         asc: Option.none(),
         ascOpts: undefined,
-        extraTools: opts?.extraTools ?? []
+        extraTools: opts?.extraTools ?? [],
+        maxToolRounds: opts?.maxToolRounds ?? 3
       })
     })
   )
@@ -569,6 +664,7 @@ export const layerAgentLoopWithAsc = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly asc?: AgentLoopAscOpts | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
+  readonly maxToolRounds?: number | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | AscSelfMonitor> =>
   Layer.effect(
     AgentLoop,
@@ -586,7 +682,8 @@ export const layerAgentLoopWithAsc = (opts?: {
         honestyOpts: undefined,
         asc: Option.some(ascMonitor),
         ascOpts: opts?.asc,
-        extraTools: opts?.extraTools ?? []
+        extraTools: opts?.extraTools ?? [],
+        maxToolRounds: opts?.maxToolRounds ?? 3
       })
     })
   )

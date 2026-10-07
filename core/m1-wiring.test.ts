@@ -399,7 +399,11 @@ describe("m1 wiring: tool call through hooks", () => {
           })
       }
     ]
-    const mock = await scriptedMock(() => `Checking the time:\n${toolBlock("clock.now")}\nDone.`)
+    let calls = 0
+    const mock = await scriptedMock(() => {
+      calls++
+      return calls === 1 ? `Checking the time:\n${toolBlock("clock.now")}\nDone.` : "It is noon."
+    })
     try {
       const provider = makeProvider(mock.url)
       const chunks = await collectChat(
@@ -559,7 +563,12 @@ describe("m1 wiring: demo", () => {
     const dir = tmpRoot()
 
     // Beat 1 + 2: streaming chat whose reply emits a clock.now tool call.
-    const mock = await scriptedMock(() => `The current time is:\n${toolBlock("clock.now")}`)
+    // First response carries the tool block; the follow-up synthesis is plain.
+    let beatCalls = 0
+    const mock = await scriptedMock(() => {
+      beatCalls++
+      return beatCalls === 1 ? `The current time is:\n${toolBlock("clock.now")}` : "It is noon."
+    })
     let beat1: Array<ChatChunk>
     let hookTrace: Array<string>
     let toolResult: unknown

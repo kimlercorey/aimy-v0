@@ -77,7 +77,8 @@ describe("AgentLoop tool calls", () => {
           })
       }
     ]
-    const stub = new StubProvider("tools", `The time:\n${toolBlock("clock.now")}\ndone.`)
+    const stub = new StubProvider("tools")
+    stub.queueTexts(`The time:\n${toolBlock("clock.now")}\ndone.`, "It is noon.")
     const chunks = await collectChat(buildStack(tmpRoot(), { impls }), stub, "s1", "what time is it")
 
     // The recording hook observed the full gate lifecycle around the call.
@@ -97,9 +98,10 @@ describe("AgentLoop tool calls", () => {
   })
 
   it("executes multiple tool blocks in order", async () => {
-    const stub = new StubProvider(
-      "multi",
-      `${toolBlock("clock.now")}\n${toolBlock("session.info")}`
+    const stub = new StubProvider("multi")
+    stub.queueTexts(
+      `${toolBlock("clock.now")}\n${toolBlock("session.info")}`,
+      "Both done."
     )
     const chunks = await collectChat(buildStack(tmpRoot()), stub, "s1", "both")
     const report = doneReport(chunks)
@@ -119,10 +121,8 @@ describe("AgentLoop tool calls", () => {
   })
 
   it("malformed block does not stop valid blocks from executing", async () => {
-    const stub = new StubProvider(
-      "mixed",
-      "```aimy-tool\n{broken}\n```\n" + toolBlock("clock.now")
-    )
+    const stub = new StubProvider("mixed")
+    stub.queueTexts("```aimy-tool\n{broken}\n```\n" + toolBlock("clock.now"), "Recovered.")
     const chunks = await collectChat(buildStack(tmpRoot()), stub, "s1", "hi")
     const report = doneReport(chunks)
     expect(report.parseFailures.length).toBe(1)
@@ -131,7 +131,8 @@ describe("AgentLoop tool calls", () => {
   })
 
   it("unknown tool becomes an IoError outcome, never a crash", async () => {
-    const stub = new StubProvider("unknown", toolBlock("nope.nope"))
+    const stub = new StubProvider("unknown")
+    stub.queueTexts(toolBlock("nope.nope"), "That tool does not exist.")
     const chunks = await collectChat(buildStack(tmpRoot()), stub, "s1", "hi")
     const report = doneReport(chunks)
     expect(report.executed.length).toBe(1)
@@ -140,9 +141,55 @@ describe("AgentLoop tool calls", () => {
     expect(result.reason).toContain('unknown tool "nope.nope"')
   })
 
+  it("feeds tool results back for a synthesis pass that answers the user", async () => {
+    const stub = new StubProvider("synth")
+    stub.queueTexts(
+      `Let me check.\n${toolBlock("clock.now")}\n`,
+      "The clock says it is noon."
+    )
+    const chunks = await collectChat(buildStack(tmpRoot()), stub, "s1", "what time is it")
+    const report = doneReport(chunks)
+    // One tool round: the follow-up synthesis used the result.
+    expect(report.toolRounds).toBe(1)
+    expect(report.executed.length).toBe(1)
+    // The turn's text is the SYNTHESIS, not the throat-clearing first pass.
+    expect(report.text).toBe("The clock says it is noon.")
+    // The synthesis streamed as Token chunks after the ToolCall chunk.
+    const tags = chunks.map((c) => c._tag)
+    expect(tags[0]).toBe("Token") // round-0 first-pass token
+    const toolIdx = tags.indexOf("ToolCall")
+    expect(toolIdx).toBeGreaterThan(0)
+    expect(tags.slice(toolIdx + 1)).toContain("Token") // synthesis tokens
+    expect(tags[tags.length - 1]).toBe("Done")
+  })
+
+  it("stops after maxToolRounds when the model keeps calling tools", async () => {
+    const stub = new StubProvider("loopy")
+    // Every response re-emits the tool call: the loop must cap itself.
+    stub.queueTexts(
+      toolBlock("clock.now"),
+      toolBlock("clock.now"),
+      toolBlock("clock.now"),
+      toolBlock("clock.now"),
+      "finally answering"
+    )
+    const chunks = await collectChat(
+      buildStack(tmpRoot(), { maxToolRounds: 2 }),
+      stub,
+      "s1",
+      "time?"
+    )
+    const report = doneReport(chunks)
+    expect(report.toolRounds).toBe(2)
+    expect(report.executed.length).toBe(2)
+    // Text is the last synthesis available (round cap hit, no 3rd synthesis).
+    expect(report.text).toBe(toolBlock("clock.now"))
+  })
+
   it("persists tool-call and tool-result entries in the session", async () => {
     const dir = tmpRoot()
-    const stub = new StubProvider("persist-tools", toolBlock("clock.now"))
+    const stub = new StubProvider("persist-tools")
+    stub.queueTexts(toolBlock("clock.now"), "The time is noon.")
     const program = Effect.gen(function* () {
       const pool = yield* InferencePool
       yield* pool.register(stub)
@@ -154,7 +201,7 @@ describe("AgentLoop tool calls", () => {
     })
     const { chunks, kinds } = await Effect.runPromise(Effect.provide(program, buildStack(dir)))
     expect(doneReport(chunks).executed.length).toBe(1)
-    expect(kinds).toEqual(["message", "message", "tool-call", "tool-result"])
+    expect(kinds).toEqual(["message", "message", "tool-call", "tool-result", "message"])
   })
 
   it("a registered module tool is callable by the model and gated at its tier", async () => {
@@ -177,9 +224,10 @@ describe("AgentLoop tool calls", () => {
       run: (args, ctx) =>
         Effect.succeed(`[verified] stubbed answer for "${String(args["query"])}" (turn ${ctx.turnId})`)
     }
-    const stub = new StubProvider(
-      "research-model",
-      `Let me look that up:\n${toolBlock("research.query", { query: "tucson weather" })}\ndone.`
+    const stub = new StubProvider("research-model")
+    stub.queueTexts(
+      `Let me look that up:\n${toolBlock("research.query", { query: "tucson weather" })}\ndone.`,
+      "Based on the research: sunny."
     )
     const chunks = await collectChat(
       buildStack(tmpRoot(), { impls, extraTools: [researchStub] }),
@@ -200,7 +248,13 @@ describe("AgentLoop tool calls", () => {
 describe("AgentLoop permission gating", () => {
   it("denied tool: intent killed, reported in TurnReport.blocked, loop does not crash", async () => {
     const dir = tmpRoot()
-    const stub = new StubProvider("denied", `info:\n${toolBlock("session.info")}`)
+    const stub = new StubProvider("denied")
+    stub.queueTexts(
+      `info:\n${toolBlock("session.info")}`,
+      "I cannot access that.",
+      `info:\n${toolBlock("session.info")}`,
+      "Still cannot."
+    )
     const program = Effect.gen(function* () {
       const pool = yield* InferencePool
       yield* pool.register(stub)
@@ -226,7 +280,13 @@ describe("AgentLoop permission gating", () => {
 
   it("session.info reports the session id and completed turn count", async () => {
     const dir = tmpRoot()
-    const stub = new StubProvider("info", toolBlock("session.info"))
+    const stub = new StubProvider("info")
+    stub.queueTexts(
+      toolBlock("session.info"),
+      "First answer.",
+      toolBlock("session.info"),
+      "Second answer."
+    )
     const program = Effect.gen(function* () {
       const pool = yield* InferencePool
       yield* pool.register(stub)

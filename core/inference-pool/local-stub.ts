@@ -37,6 +37,8 @@ export class StubProvider implements Provider {
   readonly calls: Array<StubCall> = []
 
   private armedFailure: InferenceError | undefined = undefined
+  /** Queued follow-up texts: each generate consumes one before falling back to cannedText. */
+  private readonly queuedTexts: Array<string> = []
 
   constructor(
     readonly name: string,
@@ -44,6 +46,15 @@ export class StubProvider implements Provider {
     private readonly cannedThought = `[${name}] canned reasoning trace`,
     private readonly latencyMs = 0
   ) {}
+
+  /**
+   * Queue texts for the next generate calls, in order. Powers multi-round
+   * loop tests: the first response can carry a tool block while the
+   * follow-up synthesis returns plain text.
+   */
+  queueTexts(...texts: Array<string>): void {
+    this.queuedTexts.push(...texts)
+  }
 
   /** Arm the next `generate` call to fail with a typed `InferenceError`. */
   failNextWith(reason: string): void {
@@ -67,7 +78,8 @@ export class StubProvider implements Provider {
         // Honestly counted: the stub "thinks" the canned trace.
         reasoningTokens: countTokens(this.cannedThought)
       }
-      return Effect.succeed({ text: this.cannedText, usage })
+      const text = this.queuedTexts.length > 0 ? this.queuedTexts.shift()! : this.cannedText
+      return Effect.succeed({ text, usage })
     })
     return this.latencyMs > 0 ? Effect.delay(run, Duration.millis(this.latencyMs)) : run
   }

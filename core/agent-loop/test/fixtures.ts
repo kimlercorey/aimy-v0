@@ -194,6 +194,8 @@ export interface StackOpts {
    * gated path as built-ins.
    */
   readonly extraTools?: ReadonlyArray<AgentToolDef>
+  /** Cap on tool rounds per turn (test override; default 3). */
+  readonly maxToolRounds?: number
 }
 
 export const buildStack = (
@@ -225,14 +227,19 @@ export const buildStack = (
       ? Layer.provide(layerAgentLoopWithAsc(), Layer.mergeAll(base, ascLayers))
       : opts.honesty === undefined
         ? Layer.provide(
-          layerAgentLoop({ streamProviders: opts.streamProviders ?? [], extraTools: opts.extraTools }),
+          layerAgentLoop({
+            streamProviders: opts.streamProviders ?? [],
+            extraTools: opts.extraTools,
+            maxToolRounds: opts.maxToolRounds
+          }),
           base
         )
         : Layer.provide(
             layerAgentLoopWithHonesty({
               streamProviders: opts.streamProviders ?? [],
               honesty: opts.honesty,
-              extraTools: opts.extraTools
+              extraTools: opts.extraTools,
+              maxToolRounds: opts.maxToolRounds
             }),
             Layer.mergeAll(base, HonestyServiceInMemory)
           )

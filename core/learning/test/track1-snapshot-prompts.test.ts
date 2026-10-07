@@ -16,6 +16,7 @@ const testReport = (): TurnReport => ({
   executed: [{ id: "t-1:call:0", tool: "clock.now", result: "2026-10-07T06:30:00Z" }],
   blocked: [{ tool: "shell.exec", reason: "denied by gate" }],
   terminated: false,
+    toolRounds: 0,
   parseFailures: [],
   steeringMessages: [],
   followUpMessages: []

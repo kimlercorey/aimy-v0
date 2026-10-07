@@ -46,6 +46,7 @@ const turnReport = (opts: {
   executed: opts.executed,
   blocked: [],
   terminated: false,
+    toolRounds: 0,
   parseFailures: [],
   steeringMessages: [],
   followUpMessages: []
@@ -233,7 +234,7 @@ const GOOD_STUB_TEXT =
 /** Run one REAL loop turn with the honesty wiring active; return chunks + ledger. */
 const runLiveTurn = (
   stubName: string,
-  stubText: string,
+  stubTexts: string | ReadonlyArray<string>,
   sessionId: string,
   input: string,
   honestyOpts?: AgentLoopHonestyOpts
@@ -242,7 +243,9 @@ const runLiveTurn = (
     Effect.provide(
       Effect.gen(function* () {
         const pool = yield* InferencePool
-        yield* pool.register(new StubProvider(stubName, stubText))
+        const stub = new StubProvider(stubName)
+        stub.queueTexts(...(typeof stubTexts === "string" ? [stubTexts] : stubTexts))
+        yield* pool.register(stub)
         const loop = yield* AgentLoop
         const chunks = [...(yield* Stream.runCollect(loop.chat(sessionId, input)))]
         // Same ledger instance the loop's pipeline wrote to: buildStack
@@ -256,7 +259,12 @@ const runLiveTurn = (
 
 describe("post-turn honesty in the live loop", () => {
   it("good turn: the Done chunk's report carries honesty with a verified badge", async () => {
-    const { chunks, honesty } = await runLiveTurn("loop-good", GOOD_STUB_TEXT, "s1", "what time is it?")
+    const { chunks, honesty } = await runLiveTurn(
+      "loop-good",
+      [GOOD_STUB_TEXT, "The time is confirmed."],
+      "s1",
+      "what time is it?"
+    )
     const report = doneReport(chunks)
 
     expect(report.executed.length).toBe(1)
@@ -281,7 +289,12 @@ describe("post-turn honesty in the live loop", () => {
     // contradiction and the loop must surface it.
     const sabotageText =
       "Session info:\n" + toolBlock("nope.nope") + "\nnope.nope completed successfully, got the result."
-    const { chunks } = await runLiveTurn("loop-sabotage", sabotageText, "s1", "get session info")
+    const { chunks } = await runLiveTurn(
+      "loop-sabotage",
+      [sabotageText, "Noted."],
+      "s1",
+      "get session info"
+    )
     const report = doneReport(chunks)
 
     expect(report.executed.length).toBe(1)

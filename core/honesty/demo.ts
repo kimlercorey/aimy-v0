@@ -58,6 +58,7 @@ const sabotagedTurn: Effect.Effect<TurnHonestyReport, unknown, never> = Effect.g
     ],
     blocked: [],
     terminated: false,
+    toolRounds: 0,
     parseFailures: [],
     steeringMessages: [],
     followUpMessages: []
