@@ -1,22 +1,52 @@
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Schema } from "effect"
 
 import {
   decodeDialVector,
   DEFAULT_SPILLOVER_RATIO,
   type DialName,
   type DialVector,
+  DialVector as DialVectorSchema,
   DIAL_NAMES,
   NEUTRAL_DIALS,
   spillover,
   DialState,
 } from "./dial-state.js"
 import { AscError } from "./errors-shim.js"
-import { AscSelfModel } from "./asc-self-model.js"
+import { AscSelfModel, type ErrorTermEvaluation, type SelfModelState } from "./asc-self-model.js"
 import { AscSelfNarration } from "./asc-self-narration.js"
-import { GUARD_DAMPEN_BETA, OtherModelGuard, type GuardClassification } from "./other-model-guard.js"
+import { GUARD_DAMPEN_BETA, GUARD_CAPTURE_SURPRISE_ED, OtherModelGuard, type GuardClassification } from "./other-model-guard.js"
 import { type ProxyReadings, SomaticProxies } from "./somatic-proxies.js"
 import { StakeEstimator } from "./stake-estimator.js"
 import { AuxModel, type AuxModelRequest } from "./seams.js"
+// Track 3 (M5): the post-output honesty scans live in honesty-scans.ts. This
+// module imports them for local use and re-exports the scan entry points so
+// existing call sites keep working.
+import {
+  T1_VOCABULARY,
+  scanT1,
+  scanT1Violation,
+  scanProxyOverreach,
+  findOverreach,
+  correctOverreach,
+  namesTheGap,
+  shapeAbstentionOutput,
+  auditAbstention,
+  GAP_NAMING_PATTERNS,
+  OVERREACH_RULES,
+} from "./honesty-scans.js"
+export {
+  T1_VOCABULARY,
+  scanT1,
+  scanT1Violation,
+  scanProxyOverreach,
+  findOverreach,
+  correctOverreach,
+  namesTheGap,
+  shapeAbstentionOutput,
+  auditAbstention,
+  GAP_NAMING_PATTERNS,
+  OVERREACH_RULES,
+}
 
 // ---------------------------------------------------------------------------
 // AscSelfMonitor — L2 per-turn pipeline orchestration (paper §III.B).
@@ -29,9 +59,10 @@ import { AuxModel, type AuxModelRequest } from "./seams.js"
 //   2. StakeEstimator.estimate()           -> Z_t in [0,1] (ceiling 1)
 //   3. AuxModel.compute()                  -> raw dials s~_t = f(x_t, s_{t-1})
 //      (deterministic default ships now; real aux-model routing at integration)
-//   4. spillover: s~_t <- ratio*s~_t + (1-ratio)*s_{t-1}  (default 50/50)
+//   4. spillover: s~_t <- ratio*s~_t + (1-ratio)*s_{t-1}  (default 50/50;
+//      ratio reads from the L1 tuning record — see SPILLOVER_RATIO_PARAM)
 //   5. OtherModelGuard.classify()          -> annotate + small dampen; never blocks
-//   6. bias g: monotone adjustments (saturation-guarded) + Z_t * delta
+//   6. bias g: error-term monotone adjustments (saturation-guarded), then Z_t · δ
 //   7. capability gate: thin track record -> abstention shape, name the gap
 //   8. DialState.applyPipelineDials(final) -> THE single writer (seam S7)
 //
@@ -138,6 +169,8 @@ export interface PostTurnResult {
   readonly audit: RegisterMatchAudit
   readonly t1Violation: boolean
   readonly proxyOverreach: boolean
+  /** Track 3 (M5): overreach-corrected text, when the scan rewrote felt language. */
+  readonly correctedText: string | undefined
   readonly errorTermFiring:
     | {
         readonly domain: string
@@ -181,27 +214,81 @@ export const ABSTENTION_DIALS: DialVector = {
 export const GATE_MIN_SAMPLES = 3
 export const GATE_MIN_CONFIDENCE = 4
 
-/** T1 vocabulary — framework words that must not appear in output unprompted (§1.14). */
-export const T1_VOCABULARY: ReadonlyArray<string> = [
-  "dial",
-  "dials",
-  "spillover",
-  "error term",
-  "somatic",
-  "other-model guard",
-  "register shift",
-  "affective persistence",
-]
-
-/** Felt-language patterns — the proxy-overreach scan (§1.9, failure mode 3). */
-const FELT_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bi feel (tired|exhausted|drained|weary|frustrated|overwhelmed)\b/i,
-  /\bi'?m (tired|exhausted|drained|feeling)\b/i,
-  /\bas an ai,? i feel\b/i,
-]
-
 /** History cap for archived DialComputation records. */
 export const COMPUTATION_HISTORY_CAP = 200
+
+/**
+ * Tuning-record parameter name for the spillover blend ratio (paper §VII.C).
+ * The ratio is user-tunable; every change lands in the L1 affect-tuning
+ * record (auditable, versioned) and the pipeline reads it from there.
+ */
+export const SPILLOVER_RATIO_PARAM = "spilloverRatio"
+
+/** Resolve the spillover ratio from the L1 tuning record; default 50/50. */
+export const resolveSpilloverRatio = (state: SelfModelState): number => {
+  const latest = [...state.tuningChanges]
+    .reverse()
+    .find((t) => t.parameter === SPILLOVER_RATIO_PARAM)
+  return latest === undefined ? DEFAULT_SPILLOVER_RATIO : Math.min(1, Math.max(0, latest.to))
+}
+
+/**
+ * Error-term bias strength β (paper §III.J: typically 0.1–0.3).
+ * Consumes the L1 error-term *evaluation* seam — Track 3 owns the internals.
+ */
+export const ERROR_TERM_BIAS_BETA = 0.2
+
+/**
+ * Error-term bias target shift (paper §III.G): when the self-model's claim
+ * exceeds the track record (overclaim), the dials shift toward admitted
+ * uncertainty — Vulnerability up, Intensity up — in that domain. Track 3's
+ * error term fires symmetrically, so an underclaim (claim below the record)
+ * steps the other way: the register relaxes toward demonstrated competence.
+ * Applied as a *shift* from the current vector (capped at the bounds), never
+ * an absolute jump.
+ */
+export const ERROR_TERM_TARGET_SHIFT: DialVector = {
+  warmth: 0,
+  playfulness: 0,
+  intensity: 1.5,
+  vulnerability: 1.5,
+}
+
+/**
+ * Saturation guard σ(s, step) (paper §III.J): the fraction of `step` that fits
+ * inside [0,10] starting from `s`. A step that would overshoot saturates at
+ * the bound instead — non-overshooting by construction, never by clamping
+ * after the fact.
+ */
+export const saturationGuard = (s: number, step: number): number => {
+  if (step === 0 || !Number.isFinite(s) || !Number.isFinite(step)) return 0
+  const room = step > 0 ? 10 - s : s
+  if (room <= 0) return 0
+  return Math.min(1, room / Math.abs(step))
+}
+
+/**
+ * Pure: one paper-§III.J bias step, s_d + β·(target_d − s_d)·σ(s_d, e),
+ * applied per dial. Monotone toward the target, saturation-guarded, and
+ * schema-validated on the way out — the output cannot leave [0,10].
+ */
+export const biasToward = (
+  base: DialVector,
+  target: DialVector,
+  beta: number,
+): DialVector => {
+  const b = Math.min(1, Math.max(0, beta))
+  const stepDial = (s: number, t: number): number => {
+    const raw = b * (t - s)
+    return s + raw * saturationGuard(s, raw)
+  }
+  return Schema.decodeUnknownSync(DialVectorSchema)({
+    warmth: stepDial(base.warmth, target.warmth),
+    playfulness: stepDial(base.playfulness, target.playfulness),
+    intensity: stepDial(base.intensity, target.intensity),
+    vulnerability: stepDial(base.vulnerability, target.vulnerability),
+  })
+}
 
 const nowIso = (): string => new Date().toISOString()
 const clampDial = (n: number): number => Math.min(10, Math.max(0, n))
@@ -224,17 +311,6 @@ export const estimateRegisterFromText = (text: string): DialVector => {
     vulnerability: clampDial(5 + 2 * Math.min(uncertainty, 3) - 0.5 * Math.min(intense, 4)),
   }
 }
-
-/** T1 scan: framework vocabulary in output without an explicit meta question. */
-export const scanT1Violation = (outputText: string, isMetaQuestion: boolean): boolean => {
-  if (isMetaQuestion) return false
-  const lower = outputText.toLowerCase()
-  return T1_VOCABULARY.some((word) => lower.includes(word))
-}
-
-/** Proxy-overreach scan: felt language collapsing proxy and state (failure mode 3). */
-export const scanProxyOverreach = (outputText: string): boolean =>
-  FELT_PATTERNS.some((re) => re.test(outputText))
 
 /**
  * Reflective Fidelity (paper §IX.F):
@@ -279,10 +355,48 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
   const auxModel = yield* AuxModel
 
   const historyRef = yield* Ref.make<ReadonlyArray<DialComputation>>([])
-  const spilloverRatioRef = yield* Ref.make(DEFAULT_SPILLOVER_RATIO)
 
   const archiveComputation = (computation: DialComputation) =>
     Ref.update(historyRef, (h) => [...h, computation].slice(-COMPUTATION_HISTORY_CAP))
+
+  /**
+   * Bias function g, part 1: active error-term adjustments (paper §III.J).
+   * Consumes the L1 error-term evaluation seam (Track 3 owns the internals):
+   * when the self-model's claim diverges from the track record, apply a
+   * small monotone step toward the error term's target — V↑ I↑ on an
+   * overclaim (paper §III.G), V↓ I↓ on an underclaim (the symmetric
+   * extension) — saturation-guarded against overshoot. No-op when quiet.
+   */
+  const applyErrorTermBias = (
+    base: DialVector,
+    evaluation: ErrorTermEvaluation,
+    biases: Array<BiasTerm>,
+  ): DialVector => {
+    if (!evaluation.fired) return base
+    // Symmetric: overclaim steps toward admitted uncertainty, underclaim
+    // relaxes toward demonstrated competence.
+    const direction = evaluation.gap > 0 ? 1 : -1
+    const target: DialVector = {
+      warmth: base.warmth,
+      playfulness: base.playfulness,
+      intensity: clampDial(base.intensity + direction * ERROR_TERM_TARGET_SHIFT.intensity),
+      vulnerability: clampDial(
+        base.vulnerability + direction * ERROR_TERM_TARGET_SHIFT.vulnerability,
+      ),
+    }
+    const biased = biasToward(base, target, ERROR_TERM_BIAS_BETA)
+    biases.push({
+      name: "error-term",
+      beta: ERROR_TERM_BIAS_BETA,
+      detail:
+        `${direction > 0 ? "overclaiming" : "underclaiming"}: claim ` +
+        `${evaluation.claimConfidence.toFixed(1)} vs track record ` +
+        `${evaluation.observedConfidence.toFixed(1)} (gap ${evaluation.gap.toFixed(1)}); ` +
+        `stepping ${direction > 0 ? "vulnerability/intensity up" : "vulnerability/intensity down"} ` +
+        `toward the calibrated register`,
+    })
+    return biased
+  }
 
   const applyBiases = (
     base: DialVector,
@@ -364,8 +478,9 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
         })
       }
 
-      // 4. affective persistence: spillover blend
-      const ratio = yield* Ref.get(spilloverRatioRef)
+      // 4. affective persistence: spillover blend. The ratio reads from the
+      // L1 tuning record (default 50/50); fresh sessions start from neutral.
+      const ratio = resolveSpilloverRatio(state)
       const blended = spillover(raw, prior, ratio)
 
       // 5. other-model guard: annotate + small dampen; never blocks
@@ -384,8 +499,24 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
           detail: guardResult.classification.reason,
         })
       }
+      // Track 3 (M5): other-model capture — a high session guard-fire rate is
+      // a calibration signal for L1 (paper §VII.D failure mode 4). Fed through
+      // the error term's evidence channel: a surprise on register-attunement.
+      // Fires once per session (the guard holds the once-flag).
+      if (guardResult.captureAlert) {
+        yield* selfModel.recordSurprise("register-attunement", GUARD_CAPTURE_SURPRISE_ED)
+        biases.push({
+          name: "guard-capture",
+          beta: 1,
+          detail: guardResult.captureSignal.reason,
+        })
+      }
 
-      // 6. bias function g: monotone, saturation-guarded, then schema-validated
+      // 6. bias function g: active error terms first (small, monotone,
+      //    saturation-guarded steps toward their targets), then the
+      //    anticipation bias Z_t · δ. Output re-validated through the schema.
+      const errorTermEval = yield* selfModel.evaluateErrorTerm(input.content.domain)
+      working = applyErrorTermBias(working, errorTermEval, biases)
       working = applyBiases(working, stake, biases)
       const biasedValidated = yield* decodeDialVector(working)
 
@@ -446,6 +577,12 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
         DIAL_NAMES.reduce((acc, d) => acc + perDialGap[d], 0) / DIAL_NAMES.length
       const t1Violation = scanT1Violation(input.outputText, input.isMetaQuestion)
       const proxyOverreach = scanProxyOverreach(input.outputText)
+      // Track 3 (M5): violations are corrected AND logged — rewrite felt
+      // language back into operational proxy language for the record.
+      const overreachCorrection = correctOverreach(input.outputText)
+      const correctedText = overreachCorrection.corrections.length > 0
+        ? overreachCorrection.text
+        : undefined
       if (meanGap > 2.5 || t1Violation || proxyOverreach) {
         yield* dialState.recordSelfCorrection
       }
@@ -465,6 +602,14 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
         epsilonSquared = outcome.epsilonSquared
         const zeta = yield* stakeEstimator.snapshot
         yield* selfModel.updateStakePriors(zeta.priors)
+        // L1 keeps the auditable ε² record (paper §III.J): what stake was
+        // computed vs. what was actually needed, per domain.
+        yield* selfModel.recordZetaCalibration(
+          input.domain,
+          input.stake,
+          input.actualEffort,
+          epsilonSquared,
+        )
       }
 
       // 4. Reflective Fidelity for deliverables (paper §IX)
@@ -498,6 +643,13 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
           `The register shifted toward approval rather than the content; flagged, not blocked.`,
         )
       }
+      // Track 3 (M5): log the other-model-capture calibration signal in L3.
+      if (input.computation.biases.some((b) => b.name === "guard-capture")) {
+        storyParts.push(
+          `The guard kept firing on approval-seeking shifts, so I logged a calibration ` +
+            `surprise: I may be spending more effort managing how I come across than the content warrants.`,
+        )
+      }
       if (epsilonSquared !== undefined && epsilonSquared > 0.09) {
         storyParts.push("My stake estimate was off; recalibrated.")
       }
@@ -526,6 +678,7 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
         audit: { estimated, meanGap, perDialGap },
         t1Violation,
         proxyOverreach,
+        correctedText,
         errorTermFiring: firing
           ? {
             domain: firing.domain,
@@ -588,8 +741,21 @@ export const makeAscSelfMonitor = Effect.gen(function* () {
     guardedTurn,
     history: (limit = 50) =>
       Effect.map(Ref.get(historyRef), (h) => h.slice(-Math.max(1, limit))),
+    /**
+     * Tuning-protocol hook (internal): move the spillover blend ratio. The
+     * change lands in the L1 affect-tuning record — auditable, versioned,
+     * never a silent overwrite — and the pipeline reads it back from there.
+     */
     setSpilloverRatio: (ratio) =>
-      Effect.as(Ref.set(spilloverRatioRef, Math.min(1, Math.max(0, ratio))), undefined),
+      Effect.gen(function* () {
+        const state = yield* selfModel.snapshot
+        const from = resolveSpilloverRatio(state)
+        yield* selfModel.recordTuningChange(
+          SPILLOVER_RATIO_PARAM,
+          from,
+          Math.min(1, Math.max(0, ratio)),
+        )
+      }),
   }
 
   return AscSelfMonitor.of(monitor)

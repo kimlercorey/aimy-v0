@@ -10,20 +10,27 @@ import { L1_STORAGE_KEY, MemoryReader } from "./seams.js"
 // here keyed under L1_STORAGE_KEY via the MemoryReader seam. Holds:
 //   - capability map: domain -> { confidence 0-10, sampleCount, lastUpdated, lastSurprise }
 //   - track record: domain -> task outcomes (the error term's input, §III.G)
-//   - domain freshness: subject -> { confidence, freshness, halfLife }
-//   - stake-estimator parameters: per-domain stake priors + ζ calibration
-//   - affect-tuning record: user tuning choices + history (auditable)
+//   - domain freshness: subject -> { confidence, freshness, halfLifeDays,
+//     lastTouched } — freshness decays exponentially between touches
+//   - stake-estimator parameters: per-domain stake priors + the ζ calibration
+//     record (the ε² correction audit trail, §III.J / §VIII.C)
+//   - affect-tuning record: user tuning choices + history (auditable) AND the
+//     live tuning targets (parameter -> value) the tuning seam writes through
+//     recordEvidence({ kind: "tuningChange" })
 //   - guard-fire frequency (other-model capture calibration signal, §VII.D.4)
 //
 // Update discipline: error-term firings adjust the model toward the track
-// record, weighted by recency and confidence (paper §III.G). Updates are
-// VERSIONED — the prior value is retained in the revision log, never
-// silently overwritten (unattended-write discipline: autonomous updates may
-// add, never replace without provenance).
-//
-// Over-calibration guard (paper §VII.D failure mode 2): corrections are
-// weighted by sample size — a thin track record must not collapse confidence
-// to uniform uncertainty.
+// record, weighted by recency, confidence, and SAMPLE SIZE (paper §VII.D
+// failure mode 2): a thin track record must not collapse confidence — the
+// correction weight n/(n+k) keeps thin-record corrections small. The error
+// term is a correction signal, not a punishment: it fires SYMMETRICALLY,
+// whether the claim overshoots or undershoots the track record, moving the
+// claim toward the observed value without overshooting (rate < 1 by
+// construction). The tuning-seam λ (default 0.3, paper §VII.C) scales the
+// effective learning rate: α·(1−λ)·w — the user's "corrects too slowly /
+// too fast" dial. Updates are VERSIONED — the prior value is retained in
+// the revision log, never silently overwritten (unattended-write discipline:
+// autonomous updates may add, never replace without provenance).
 // ---------------------------------------------------------------------------
 
 const Confidence = Schema.Number.pipe(
@@ -65,9 +72,12 @@ export type TrackRecordEntry = Schema.Schema.Type<typeof TrackRecordEntry>
 
 const DomainFreshness = Schema.Struct({
   confidence: Confidence,
+  /** Stored freshness at lastTouched; decays exponentially on read. */
   freshness: UnitInterval,
   halfLifeDays: Schema.Number,
+  lastTouched: Schema.optional(Schema.String),
 })
+export type DomainFreshness = Schema.Schema.Type<typeof DomainFreshness>
 
 const TuningChange = Schema.Struct({
   at: Schema.String,
@@ -75,6 +85,22 @@ const TuningChange = Schema.Struct({
   from: Schema.Number,
   to: Schema.Number,
 })
+export type TuningChange = Schema.Schema.Type<typeof TuningChange>
+
+/**
+ * ζ calibration record (paper §III.J, §VIII.C): the second-order error ε²
+ * audit trail — what stake was computed vs. what was actually needed, per
+ * domain. The ζ parameters themselves live in the StakeEstimator service;
+ * L1 keeps this record so the calibration is auditable.
+ */
+const ZetaCalibrationRecord = Schema.Struct({
+  at: Schema.String,
+  domain: Schema.String,
+  computed: UnitInterval,
+  actual: UnitInterval,
+  epsilonSquared: Schema.Number,
+})
+export type ZetaCalibrationRecord = Schema.Schema.Type<typeof ZetaCalibrationRecord>
 
 const Revision = Schema.Struct({
   version: NonNegativeInt,
@@ -89,7 +115,11 @@ const SelfModelState = Schema.Struct({
   trackRecord: Schema.Record(Schema.String, TrackRecordEntry),
   freshness: Schema.Record(Schema.String, DomainFreshness),
   stakePriors: Schema.Record(Schema.String, UnitInterval),
+  /** ε² calibration audit trail (second-order stake error, §III.J). */
+  zetaCalibration: Schema.Array(ZetaCalibrationRecord),
   tuningChanges: Schema.Array(TuningChange),
+  /** Live tuning targets: parameter -> value (the tuning seam's current state). */
+  tuningTargets: Schema.Record(Schema.String, Schema.Number),
   guardFireCount: NonNegativeInt,
   revisions: Schema.Array(Revision),
 })
@@ -111,12 +141,29 @@ export interface ErrorTermFiring {
 export const ERROR_TERM_ALPHA = 0.15
 /** Sample-size constant for the over-calibration guard weight n/(n+k). */
 export const ERROR_TERM_SAMPLE_K = 5
-/** Gap (claim − observed) above which the error term fires. */
+/** Gap |claim − observed| above which the error term fires (symmetric). */
 export const ERROR_TERM_FIRE_THRESHOLD = 1.5
 /** Recency half-life in days for correction weighting. */
 export const ERROR_TERM_RECENCY_HALFLIFE_DAYS = 30
+/**
+ * Tuning-seam key for the error-term decay λ (paper §VII.C: "Error term
+ * decay: Exponential, λ=0.3"). The effective correction rate is
+ * α·(1−λ)·sampleWeight·recencyWeight — the user's "corrects too slowly /
+ * too fast" dial. Tunable via recordEvidence({ kind: "tuningChange" }).
+ */
+export const ERROR_TERM_LAMBDA_KEY = "errorTermLambda"
+/** Paper default λ = 0.3 (VII.C). */
+export const ERROR_TERM_LAMBDA_DEFAULT = 0.3
+/** Hard ceiling: λ < 1 always leaves a non-zero correction rate. */
+export const ERROR_TERM_LAMBDA_MAX = 0.9
 /** Revision log cap (bounded growth). */
 export const REVISION_CAP = 50
+/** Tuning-history cap (bounded growth; the record is audit, not archive). */
+export const TUNING_HISTORY_CAP = 200
+/** ζ calibration-record cap (bounded growth). */
+export const ZETA_CALIBRATION_CAP = 50
+/** Default knowledge-freshness half-life in days when a subject is first touched. */
+export const DEFAULT_FRESHNESS_HALFLIFE_DAYS = 30
 
 const nowIso = (): string => new Date().toISOString()
 
@@ -126,7 +173,9 @@ const emptyState = (): SelfModelState => ({
   trackRecord: {},
   freshness: {},
   stakePriors: {},
+  zetaCalibration: [],
   tuningChanges: [],
+  tuningTargets: {},
   guardFireCount: 0,
   revisions: [],
 })
@@ -159,12 +208,34 @@ export interface ErrorTermEvaluation {
   readonly sampleWeight: number
   readonly recencyWeight: number
   readonly gap: number
+  /** Live λ from the tuning targets (paper §VII.C). */
+  readonly lambda: number
+  /** Effective correction rate: α·(1−λ)·sampleWeight·recencyWeight (< 1, no overshoot). */
+  readonly rate: number
 }
 
 const recencyWeight = (lastUpdatedIso: string): number => {
   const ageMs = Date.now() - Date.parse(lastUpdatedIso)
   const ageDays = Math.max(0, ageMs / 86_400_000)
   return Math.max(0.25, Math.pow(0.5, ageDays / ERROR_TERM_RECENCY_HALFLIFE_DAYS))
+}
+
+/** Live λ from the tuning targets, clamped to [0, λ_max]. */
+const errorTermLambda = (state: SelfModelState): number => {
+  const raw = state.tuningTargets[ERROR_TERM_LAMBDA_KEY] ?? ERROR_TERM_LAMBDA_DEFAULT
+  return Math.min(ERROR_TERM_LAMBDA_MAX, Math.max(0, raw))
+}
+
+export interface FreshnessInput {
+  readonly confidence?: number | undefined
+  readonly halfLifeDays?: number | undefined
+}
+
+export interface FreshnessReading {
+  readonly confidence: number
+  /** Freshness decayed by 2^(−ageDays/halfLifeDays) since last touch. */
+  readonly freshness: number
+  readonly halfLifeDays: number
 }
 
 export interface AscSelfModelShape {
@@ -191,8 +262,11 @@ export interface AscSelfModelShape {
   readonly evaluateErrorTerm: (domain: string) => Effect.Effect<ErrorTermEvaluation, AscError>
   /**
    * Apply an error-term correction: move confidence toward the observed
-   * track-record value, weighted by sample size (over-calibration guard)
-   * and recency. Returns the firing record; no-op when the term doesn't fire.
+   * track-record value (from either side — the term fires on over- AND
+   * under-confidence), weighted by sample size (over-calibration guard),
+   * recency, and the tuning-seam λ. Returns the firing record; no-op when
+   * the term doesn't fire. The rate is < 1 by construction: the claim can
+   * never overshoot the track record in a single step.
    */
   readonly applyErrorTermCorrection: (
     domain: string,
@@ -201,12 +275,48 @@ export interface AscSelfModelShape {
   /** Other-model guard fired this turn — persistent calibration signal. */
   readonly recordGuardFire: Effect.Effect<void, AscError>
   readonly guardFireCount: Effect.Effect<number, AscError>
-  /** User tuning choice (paper §VII.C) — auditable, versioned. */
+  /**
+   * User tuning choice (paper §VII.C) — auditable, versioned. Appends to the
+   * tuning history AND sets the live tuning target (never a silent overwrite:
+   * the previous target is captured in the revision log). Live targets drive
+   * the error term (errorTermLambda), spillover (via the L2 pipeline), etc.
+   */
   readonly recordTuningChange: (
     parameter: string,
     from: number,
     to: number,
   ) => Effect.Effect<void, AscError>
+  /** Auditable tuning history, newest last. */
+  readonly tuningHistory: (limit?: number) => Effect.Effect<ReadonlyArray<TuningChange>, AscError>
+  /** Live tuning targets (parameter -> value), as set by the tuning seam. */
+  readonly tuningTargets: Effect.Effect<Readonly<Record<string, number>>, AscError>
+  /**
+   * Touch domain knowledge: refresh a subject's freshness (paper §III.A).
+   * Freshness decays exponentially (half-life per subject) between touches.
+   */
+  readonly touchFreshness: (
+    subject: string,
+    input: FreshnessInput,
+  ) => Effect.Effect<void, AscError>
+  /** Freshness reading with time-decayed freshness, or undefined. */
+  readonly getFreshness: (
+    subject: string,
+  ) => Effect.Effect<FreshnessReading | undefined, AscError>
+  /**
+   * Record a ζ (stake-estimation) calibration — the second-order error ε²
+   * audit trail (paper §III.J, §VIII.C). The ζ parameters themselves live in
+   * the StakeEstimator service; L1 keeps the auditable record.
+   */
+  readonly recordZetaCalibration: (
+    domain: string,
+    computed: number,
+    actual: number,
+    epsilonSquared: number,
+  ) => Effect.Effect<void, AscError>
+  /** ζ calibration records, newest last. */
+  readonly zetaCalibration: (
+    limit?: number,
+  ) => Effect.Effect<ReadonlyArray<ZetaCalibrationRecord>, AscError>
   readonly getStakePriors: Effect.Effect<Readonly<Record<string, number>>, AscError>
   readonly updateStakePriors: (priors: Readonly<Record<string, number>>) => Effect.Effect<void, AscError>
   readonly errorTermFirings: (limit?: number) => Effect.Effect<ReadonlyArray<ErrorTermFiring>, AscError>
@@ -220,6 +330,8 @@ export const makeAscSelfModel = Effect.gen(function* () {
   const memory = yield* MemoryReader
   const stateRef = yield* Ref.make<SelfModelState>(emptyState())
   const firingsRef = yield* Ref.make<ReadonlyArray<ErrorTermFiring>>([])
+  /** Monotonic firing sequence — firing ids are unique, not just per-turn. */
+  const firingSeqRef = yield* Ref.make(0)
 
   const bump = (
     state: SelfModelState,
@@ -254,6 +366,7 @@ export const makeAscSelfModel = Effect.gen(function* () {
     const cap = state.capabilities[domain]
     const tr = state.trackRecord[domain]
     const n = tr ? tr.successes + tr.misses : 0
+    const lambda = errorTermLambda(state)
     if (!cap || !tr || n === 0) {
       return {
         fired: false,
@@ -263,18 +376,27 @@ export const makeAscSelfModel = Effect.gen(function* () {
         sampleWeight: 0,
         recencyWeight: 0,
         gap: 0,
+        lambda,
+        rate: 0,
       }
     }
     const observed = (10 * tr.successes) / n
     const gap = cap.confidence - observed
+    const sampleWeight = n / (n + ERROR_TERM_SAMPLE_K)
+    const wRecency = recencyWeight(cap.lastUpdated)
+    // Symmetric firing: the term corrects overconfidence AND underconfidence.
+    // The correction rate stays < 1 by construction, so the claim can never
+    // overshoot the track record in a single step.
     return {
-      fired: gap > ERROR_TERM_FIRE_THRESHOLD,
+      fired: Math.abs(gap) > ERROR_TERM_FIRE_THRESHOLD,
       domain,
       claimConfidence: cap.confidence,
       observedConfidence: observed,
-      sampleWeight: n / (n + ERROR_TERM_SAMPLE_K),
-      recencyWeight: recencyWeight(cap.lastUpdated),
+      sampleWeight,
+      recencyWeight: wRecency,
       gap,
+      lambda,
+      rate: ERROR_TERM_ALPHA * (1 - lambda) * sampleWeight * wRecency,
     }
   }
 
@@ -375,10 +497,12 @@ export const makeAscSelfModel = Effect.gen(function* () {
         if (!ev.fired) return undefined
         const cap = state.capabilities[domain]
         if (!cap) return undefined
-        const weight = ev.sampleWeight * ev.recencyWeight
+        // rate < 1 by construction: the claim moves toward the observed
+        // value but can never overshoot it in a single step. Correction is a
+        // signal, not a punishment — the model is calibrated, not penalized.
         const correctedTo = Math.min(
           10,
-          Math.max(0, cap.confidence + ERROR_TERM_ALPHA * weight * (ev.observedConfidence - cap.confidence)),
+          Math.max(0, cap.confidence + ev.rate * (ev.observedConfidence - cap.confidence)),
         )
         const previous = JSON.stringify(cap)
         const nextCap: CapabilityEntry = { ...cap, confidence: correctedTo, lastUpdated: nowIso() }
@@ -389,12 +513,13 @@ export const makeAscSelfModel = Effect.gen(function* () {
               ...state,
               capabilities: { ...state.capabilities, [domain]: nextCap },
             },
-            `errorTerm correction(${domain}): ${cap.confidence.toFixed(2)} -> ${correctedTo.toFixed(2)} (w=${weight.toFixed(3)})`,
+            `errorTerm correction(${domain}): ${cap.confidence.toFixed(2)} -> ${correctedTo.toFixed(2)} (rate=${ev.rate.toFixed(4)}, λ=${ev.lambda.toFixed(2)})`,
             previous,
           ),
         )
+        const seq = yield* Ref.getAndUpdate(firingSeqRef, (n) => n + 1)
         const firing: ErrorTermFiring = {
-          id: `err-${turn}-${domain}`,
+          id: `err-t${turn}-${domain}-s${seq}`,
           turn,
           at: nowIso(),
           domain,
@@ -423,15 +548,90 @@ export const makeAscSelfModel = Effect.gen(function* () {
       Effect.gen(function* () {
         const state = yield* Ref.get(stateRef)
         const change = { at: nowIso(), parameter, from, to }
+        const previousTarget = state.tuningTargets[parameter]
         yield* Ref.set(
           stateRef,
           bump(
-            { ...state, tuningChanges: [...state.tuningChanges, change] },
+            {
+              ...state,
+              tuningChanges: [...state.tuningChanges, change].slice(-TUNING_HISTORY_CAP),
+              // The live target moves WITH the history entry — auditable,
+              // never a silent overwrite. The revision log captures the
+              // previous target, so every change has provenance.
+              tuningTargets: { ...state.tuningTargets, [parameter]: to },
+            },
             `tuningChange(${parameter}: ${from} -> ${to})`,
-            JSON.stringify(state.tuningChanges[state.tuningChanges.length - 1] ?? null),
+            JSON.stringify({
+              previousTarget: previousTarget ?? null,
+              lastChange: state.tuningChanges[state.tuningChanges.length - 1] ?? null,
+            }),
           ),
         )
       }),
+    tuningHistory: (limit = 50) =>
+      Effect.map(Ref.get(stateRef), (s) => s.tuningChanges.slice(-Math.max(1, limit))),
+    tuningTargets: Effect.map(Ref.get(stateRef), (s) => s.tuningTargets),
+    touchFreshness: (subject, input) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stateRef)
+        const prev = state.freshness[subject]
+        const confidence = Math.min(
+          10,
+          Math.max(0, input.confidence ?? prev?.confidence ?? 5),
+        )
+        const next: DomainFreshness = {
+          confidence,
+          freshness: 1,
+          halfLifeDays: Math.max(
+            1,
+            input.halfLifeDays ?? prev?.halfLifeDays ?? DEFAULT_FRESHNESS_HALFLIFE_DAYS,
+          ),
+          lastTouched: nowIso(),
+        }
+        yield* Ref.set(
+          stateRef,
+          bump(
+            { ...state, freshness: { ...state.freshness, [subject]: next } },
+            `touchFreshness(${subject})`,
+            JSON.stringify(prev ?? null),
+          ),
+        )
+      }),
+    getFreshness: (subject) =>
+      Effect.map(Ref.get(stateRef), (state): FreshnessReading | undefined => {
+        const f = state.freshness[subject]
+        if (!f) return undefined
+        let decayed = f.freshness
+        if (f.lastTouched) {
+          const ageDays = Math.max(0, (Date.now() - Date.parse(f.lastTouched)) / 86_400_000)
+          decayed = f.freshness * Math.pow(0.5, ageDays / f.halfLifeDays)
+        }
+        return { confidence: f.confidence, freshness: decayed, halfLifeDays: f.halfLifeDays }
+      }),
+    recordZetaCalibration: (domain, computed, actual, epsilonSquared) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stateRef)
+        const entry: ZetaCalibrationRecord = {
+          at: nowIso(),
+          domain,
+          computed: Math.min(1, Math.max(0, computed)),
+          actual: Math.min(1, Math.max(0, actual)),
+          epsilonSquared: Math.max(0, epsilonSquared),
+        }
+        yield* Ref.set(
+          stateRef,
+          bump(
+            {
+              ...state,
+              zetaCalibration: [...state.zetaCalibration, entry].slice(-ZETA_CALIBRATION_CAP),
+            },
+            `zetaCalibration(${domain}): computed=${entry.computed.toFixed(2)} actual=${entry.actual.toFixed(2)} ε²=${entry.epsilonSquared.toFixed(4)}`,
+            `records=${state.zetaCalibration.length}`,
+          ),
+        )
+      }),
+    zetaCalibration: (limit = 50) =>
+      Effect.map(Ref.get(stateRef), (s) => s.zetaCalibration.slice(-Math.max(1, limit))),
     getStakePriors: Effect.map(Ref.get(stateRef), (s) => s.stakePriors),
     updateStakePriors: (priors) =>
       Effect.gen(function* () {

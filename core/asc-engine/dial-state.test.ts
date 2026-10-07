@@ -80,6 +80,24 @@ describe("spillover", () => {
     )
     expect(inBounds(out)).toBe(true)
   })
+
+  it("decays rather than snaps: each blend halves the remaining gap", () => {
+    const raw = { warmth: 10, playfulness: 2, intensity: 8, vulnerability: 0 }
+    const prior = { warmth: 0, playfulness: 8, intensity: 2, vulnerability: 10 }
+    const once = spillover(raw, prior) // 50% of the way
+    const twice = spillover(raw, once) // 75% of the way
+    for (const d of DIAL_NAMES) {
+      const gap0 = Math.abs(prior[d] - raw[d])
+      const gap1 = Math.abs(once[d] - raw[d])
+      const gap2 = Math.abs(twice[d] - raw[d])
+      // Exact 50/50 blend math: the gap halves every turn (geometric decay).
+      expect(gap1).toBeCloseTo(gap0 / 2, 10)
+      expect(gap2).toBeCloseTo(gap0 / 4, 10)
+      // Decays, never snaps: still strictly short of the computed vector.
+      expect(gap1).toBeGreaterThan(0)
+      expect(gap2).toBeLessThan(gap1)
+    }
+  })
 })
 
 describe("DialState", () => {

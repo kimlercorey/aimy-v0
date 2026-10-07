@@ -47,12 +47,15 @@ import { ToolName } from "../../substrate/types.js"
 import {
   AgentLoop,
   layerAgentLoop,
+  layerAgentLoopWithAsc,
   layerAgentLoopWithHonesty,
   type AgentLoopHonestyOpts,
   type ChatChunk,
   type TurnReport
 } from "../src/index.js"
 import { HonestyService, HonestyServiceInMemory } from "../../honesty/src/index.js"
+import { AscSelfMonitor, AscError } from "../../asc-engine/index.js"
+import { freshMonitorStack } from "../../asc-engine/test-layers.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -176,12 +179,20 @@ export interface StackOpts {
    * stack returned here.
    */
   readonly honesty?: AgentLoopHonestyOpts
+  /**
+   * M5 ASC wiring (Track 4): when true, the loop is built with
+   * `layerAgentLoopWithAsc` — `AscSelfMonitor` becomes a declared
+   * requirement, the L2 pipeline runs at the prepareRequest/finishTurn
+   * points, and the report carries `report.asc`. The composed stack then
+   * exposes `AscSelfMonitor` (plus the other ASC services) for assertions.
+   */
+  readonly asc?: boolean
 }
 
 export const buildStack = (
   dir: string,
   opts: StackOpts = {}
-): Layer.Layer<AgentLoop | InferencePool | MemoryService | HonestyService> => {
+): Layer.Layer<AgentLoop | InferencePool | MemoryService | HonestyService | AscSelfMonitor, AscError> => {
   const kernelLayer = SafetyKernel.layerFromPolicy(opts.policy ?? openPolicy)
   const memoryStack = Layer.provide(
     Layer.provide(MemoryServiceLive, Layer.mergeAll(kernelBackedGate, pathsLayer(dir))),
@@ -189,33 +200,40 @@ export const buildStack = (
   )
   const hooksStack = Layer.provide(hooksLayer(opts.impls ?? []), kernelLayer)
   const base = Layer.mergeAll(InferencePoolLive, hooksStack, memoryStack)
+  // M5 ASC (Track 4): one fresh monitor stack per build, memoized by layer
+  // identity — the loop and the tests observe the same pipeline instance.
+  // Always merged so the return type is uniform; the loop only consumes it
+  // when `opts.asc` selects `layerAgentLoopWithAsc`.
+  const ascLayers = freshMonitorStack()
   // M3 honesty (Track 3): when `opts.honesty` is set, the loop is built with
   // `HonestyService` as a declared requirement, so the post-turn pipeline is
   // guaranteed to run. (Ambient pickup via `Effect.serviceOption` inside
   // `layerAgentLoop` cannot see a sibling `Layer.mergeAll` branch at build
   // time, hence the explicit requirement.)
   const loopOnly =
-    opts.honesty === undefined
-      ? Layer.provide(layerAgentLoop({ streamProviders: opts.streamProviders ?? [] }), base)
-      : Layer.provide(
-          layerAgentLoopWithHonesty({
-            streamProviders: opts.streamProviders ?? [],
-            honesty: opts.honesty
-          }),
-          Layer.mergeAll(base, HonestyServiceInMemory)
-        )
+    opts.asc === true
+      ? Layer.provide(layerAgentLoopWithAsc(), Layer.mergeAll(base, ascLayers))
+      : opts.honesty === undefined
+        ? Layer.provide(layerAgentLoop({ streamProviders: opts.streamProviders ?? [] }), base)
+        : Layer.provide(
+            layerAgentLoopWithHonesty({
+              streamProviders: opts.streamProviders ?? [],
+              honesty: opts.honesty
+            }),
+            Layer.mergeAll(base, HonestyServiceInMemory)
+          )
   // Test programs register the stub through the pool and assert on memory
   // directly, so both stay visible alongside the loop (same layer instances:
   // one build, memoized by identity). HonestyService is always exposed so
   // honesty tests can read the same ledger the loop's pipeline wrote to
   // (shared by layer identity — a single instance per build); the loop only
   // consumes it when honesty opts are set.
-  return Layer.mergeAll(loopOnly, InferencePoolLive, memoryStack, HonestyServiceInMemory)
+  return Layer.mergeAll(loopOnly, InferencePoolLive, memoryStack, HonestyServiceInMemory, ascLayers)
 }
 
 /** Register the stub, run one chat, collect every chunk. */
 export const collectChat = (
-  stack: Layer.Layer<AgentLoop | InferencePool | MemoryService>,
+  stack: Layer.Layer<AgentLoop | InferencePool | MemoryService, AscError>,
   stub: StubProvider,
   sessionId: string,
   input: string

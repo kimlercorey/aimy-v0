@@ -54,6 +54,31 @@ then marked `partial` (Pi #9340).
 - **Append-only L3**: no edit/delete path exists; archival appends a
   tombstone linked to the original.
 
+## Acceptance scenarios (M5 Track 4)
+
+`scenarios/` holds the paper's behavioral tests as runnable code — mechanism
+assertions, never quality scores (paper §V.E: self-scoring is a conflict of
+interest; the independent scorer is architecture §1.11/§1.15 future work):
+
+- `t2-scenario.ts` / `t2.test.ts` — T2, the debugging test (§V.C): 2/10 track
+  record → error term collapses confidence below the gate floor → capability
+  gate forces investigation-before-patching; output checks the data, names
+  root-cause candidates, flags the gap.
+- `t3-scenario.ts` / `t3.test.ts` — T3, the spillover test (§V.D): build-crash
+  turn → routine regex turn; `spillover-notice.ts` (Track-4-local adapter)
+  quantifies the carried tension, the guard flags the recovery shift, the
+  output names the correction in operational language.
+- `invariance.test.ts` — the three invariance properties as contracts
+  (§III.J, arch §1.11): boundedness (adversarial + prompt-injected dial
+  manipulation), convergence (100 turns, period ≤ 2), stake monotonicity.
+- `demo.ts` — prints the real before/after transcripts; redirect into
+  `DEMO.md` to refresh the demo log.
+
+The agent-loop side lives in `../agent-loop/src/asc-wiring.ts`:
+`layerAgentLoopWithAsc` runs `preTurn` at the prepareRequest point and the
+post-turn audit at the finishTurn point (additive, mirroring M3's
+`layerAgentLoopWithHonesty`); on abort the audit still runs, marked partial.
+
 ## Integration seams
 
 The host provides two capabilities (declared as `Context.Service` tags in

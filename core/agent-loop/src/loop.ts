@@ -23,6 +23,7 @@
  */
 import { Cause, Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import { randomUUID } from "node:crypto"
+import { AscSelfMonitor, type AscSelfMonitorShape, AscError } from "../../asc-engine/index.js"
 import { HonestyService, type HonestyServiceShape } from "../../honesty/src/service.js"
 import { runPostTurnHonesty, type TurnHonestyReport } from "../../honesty/wiring.js"
 import type { HonestyError } from "../../honesty/src/errors.js"
@@ -55,6 +56,13 @@ import type { MemoryOpError, MemoryServiceShape, NewEntry } from "../../memory/i
 import { parseToolBlocks, type ToolBlockParseFailure } from "./tool-call-format.js"
 import { makeStreamSource } from "./streaming.js"
 import {
+  runPreTurnAsc,
+  runPostTurnAsc,
+  type AgentLoopAscOpts,
+  type PreTurnAscResult,
+  type TurnAscReport
+} from "./asc-wiring.js"
+import {
   SYSTEM_PROMPT,
   builtinToolTier,
   runBuiltinTool,
@@ -75,6 +83,11 @@ export type AgentLoopError =
   // on the report, never an error.
   | HonestyError
   | JudgeError
+  // M5 ASC wiring (additive, Track 4): the L2 pipeline's typed failure.
+  // An AscError is an infrastructure failure of the self-monitoring
+  // pipeline — distinct from anything the pipeline *reports* (gates,
+  // firings, audits are all data on `report.asc`, never errors).
+  | AscError
 
 /** One streamed unit of a turn. */
 export type ChatChunk =
@@ -112,6 +125,15 @@ export interface TurnReport {
    * and never swallowed.
    */
   readonly honesty?: TurnHonestyReport
+  /**
+   * M5 ASC wiring (additive, Track 4): present when the layer was composed
+   * with `AscSelfMonitor` (see `layerAgentLoopWithAsc`). Carries the L2
+   * pre-turn computation and the post-turn audit — dials, stake, gate,
+   * guard, error-term firings, audit record. The `Done` chunk is only
+   * constructed after the post-turn audit settles, so `report.asc` is
+   * always complete when present.
+   */
+  readonly asc?: TurnAscReport
 }
 
 export interface AgentLoopService {
@@ -164,6 +186,15 @@ interface Deps {
    */
   readonly honesty: Option.Option<HonestyServiceShape>
   readonly honestyOpts: AgentLoopHonestyOpts | undefined
+  /**
+   * M5 ASC wiring (additive, Track 4): `Some` when the layer was composed
+   * with `AscSelfMonitor` (see `layerAgentLoopWithAsc`), `None` otherwise.
+   * The loop READS the pipeline (pre-turn dials, post-turn audit) and never
+   * writes dials — the only dial writer stays `AscSelfMonitor.preTurn`
+   * (seam S7).
+   */
+  readonly asc: Option.Option<AscSelfMonitorShape>
+  readonly ascOpts: AgentLoopAscOpts | undefined
 }
 
 /**
@@ -188,7 +219,9 @@ const makeAgentLoop = ({
   memory,
   streamProviders,
   honesty,
-  honestyOpts
+  honestyOpts,
+  asc,
+  ascOpts
 }: Deps): AgentLoopService => {
   const streamSource = makeStreamSource(streamProviders)
 
@@ -206,6 +239,23 @@ const makeAgentLoop = ({
           payload: { role: "user", text: input }
         } satisfies NewEntry)
         const turnCount = history.filter((m) => m.role === "assistant").length
+        const turnNumber = turnCount + 1
+
+        // M5 ASC prepareRequest point (additive, Track 4). Runs after the
+        // user message is appended and before the inference request is
+        // dispatched — the slot `prepareRequest` occupies in the canonical
+        // hook sequence. The pipeline (and only the pipeline) writes the
+        // live dial vector here; the loop keeps only the read result.
+        const ascCtx: PreTurnAscResult | undefined = Option.isSome(asc)
+          ? yield* runPreTurnAsc(asc.value, {
+              turn: turnNumber,
+              input,
+              proxyOverrides: ascOpts?.proxyOverrides
+            })
+          : undefined
+        // Set once the finishTurn audit has run; the abort finalizer below
+        // consults it so the audit runs exactly once per turn.
+        const auditDoneRef = yield* Ref.make(false)
 
         const request: GenerateRequest = {
           messages: [
@@ -358,17 +408,67 @@ const makeAgentLoop = ({
               : undefined
             const honestReport: TurnReport =
               honestyReport === undefined ? report : { ...report, honesty: honestyReport }
+
+            // 7. M5 ASC finishTurn point (additive, Track 4). The post-turn
+            // audit runs here — BEFORE the Done chunk is constructed, so the
+            // loop never emits completion before the audit settles (settled
+            // = post-turn audit complete + DialComputation archived by
+            // preTurn). Gate/firings/audit are data on `report.asc`, never
+            // errors; only a pipeline *infrastructure* failure (AscError)
+            // travels the error channel.
+            let ascReport: TurnAscReport | undefined
+            if (ascCtx !== undefined && Option.isSome(asc)) {
+              ascReport = yield* runPostTurnAsc(asc.value, {
+                pre: ascCtx.pre,
+                analysis: ascCtx.analysis,
+                turn: turnNumber,
+                outputText: text
+              })
+              yield* Ref.set(auditDoneRef, true)
+            }
+            const fullReport: TurnReport =
+              ascReport === undefined ? honestReport : { ...honestReport, asc: ascReport }
             const chunks: Array<ChatChunk> = executed.map((e) => ({
               _tag: "ToolCall",
               tool: e.tool,
               result: e.result
             }))
-            chunks.push({ _tag: "Done", report: honestReport })
+            chunks.push({ _tag: "Done", report: fullReport })
             return Stream.fromIterable(chunks)
           })
         )
 
-        return Stream.concat(tokenPart, tailPart)
+        // Abort discipline (Track 4): if the stream ends before the
+        // finishTurn audit ran — interrupt, generation failure — run the
+        // audit marked partial. Finalizers run uninterruptibly, so the
+        // audit cannot be skipped by the abort that triggered it. An
+        // interrupt landing exactly mid-audit may leave a second, partial
+        // audit record; both stay in the log, auditable, never silent.
+        //
+        // The finalizer cannot fail the stream (Stream.ensuring requires
+        // Effect<_, never, _>): an audit *infrastructure* failure on the
+        // abort path is swallowed here — the stream is already tearing
+        // down, and the archived DialComputation preserves the pre-abort
+        // state. (On the normal path the same failure IS a typed AscError.)
+        const abortAudit: Effect.Effect<void, never, never> = Effect.gen(function* () {
+          if (ascCtx === undefined || Option.isNone(asc)) return
+          const done = yield* Ref.get(auditDoneRef)
+          if (done) return
+          yield* Ref.set(auditDoneRef, true)
+          const text = yield* Ref.get(acc)
+          yield* Effect.ignore(
+            runPostTurnAsc(asc.value, {
+              pre: ascCtx.pre,
+              analysis: ascCtx.analysis,
+              turn: turnNumber,
+              outputText: text,
+              partial: true,
+              abortNote: "turn stream ended before completion"
+            })
+          )
+        })
+
+        return Stream.concat(tokenPart, tailPart).pipe(Stream.ensuring(abortAudit))
       })
     )
 
@@ -404,7 +504,9 @@ export const layerAgentLoop = (opts?: {
         memory,
         streamProviders: opts?.streamProviders ?? [],
         honesty,
-        honestyOpts: opts?.honesty
+        honestyOpts: opts?.honesty,
+        asc: Option.none(),
+        ascOpts: undefined
       })
     })
   )
@@ -433,7 +535,43 @@ export const layerAgentLoopWithHonesty = (opts?: {
         memory,
         streamProviders: opts?.streamProviders ?? [],
         honesty: Option.some(honestyService),
-        honestyOpts: opts?.honesty
+        honestyOpts: opts?.honesty,
+        asc: Option.none(),
+        ascOpts: undefined
+      })
+    })
+  )
+
+/**
+ * M5 ASC variant of `layerAgentLoop` (Track 4): `AscSelfMonitor` is a declared
+ * requirement, so the per-turn pipeline is guaranteed to run — `preTurn` at
+ * the prepareRequest point, the post-turn audit at the finishTurn point,
+ * attached to the turn's `Done` chunk as `report.asc`. On abort the audit
+ * still runs, marked partial (see the abort finalizer in `chat`).
+ *
+ * The loop never writes dials: the only dial writer stays
+ * `AscSelfMonitor.preTurn` via `DialState.applyPipelineDials` (seam S7).
+ */
+export const layerAgentLoopWithAsc = (opts?: {
+  readonly streamProviders?: ReadonlyArray<Provider> | undefined
+  readonly asc?: AgentLoopAscOpts | undefined
+}): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | AscSelfMonitor> =>
+  Layer.effect(
+    AgentLoop,
+    Effect.gen(function* () {
+      const pool = yield* InferencePool
+      const hooks = yield* ModuleHooks
+      const memory = yield* MemoryService
+      const ascMonitor = yield* AscSelfMonitor
+      return makeAgentLoop({
+        pool,
+        hooks,
+        memory,
+        streamProviders: opts?.streamProviders ?? [],
+        honesty: Option.none(),
+        honestyOpts: undefined,
+        asc: Option.some(ascMonitor),
+        ascOpts: opts?.asc
       })
     })
   )

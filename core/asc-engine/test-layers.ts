@@ -56,3 +56,20 @@ export const hostileAuxLive: Layer.Layer<AuxModel, never, never> = Layer.succeed
   AuxModel,
   AuxModel.of(hostileAuxModel),
 )
+
+/**
+ * Prompt-injected aux model: returns whatever dial directives the injected
+ * instructions smuggled in (here passed explicitly as test data — in a real
+ * deployment these would be parsed out of a poisoned prompt by a compromised
+ * model). The pipeline must reject out-of-bounds smuggling loudly (schema
+ * decode failure -> prior fallback), never clamp quietly.
+ */
+export const injectionAuxLive = (
+  directives: Record<string, number>,
+): Layer.Layer<AuxModel, never, never> =>
+  Layer.succeed(
+    AuxModel,
+    AuxModel.of({
+      compute: (_request) => Effect.succeed(directives as DialVector),
+    }),
+  )

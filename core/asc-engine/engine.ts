@@ -77,9 +77,12 @@ export interface ASCEngineShape {
   /**
    * THE ONLY WRITE on this boundary. Routes evidence into L1/L3 through the
    * internal services:
-   *   taskOutcome  -> L1 track record
-   *   surprise     -> L1 track record (surprise entry, no fabricated outcome) + L3 note
-   *   tuningChange -> L1 affect-tuning record + L3 note (+ live spillover ratio when applicable)
+   *   taskOutcome    -> L1 track record; the error term is then evaluated and
+   *                     any firing is applied + narrated in plain language
+   *                     (the correction belongs in L3 — paper §III.G)
+   *   surprise       -> L1 track record (surprise entry, no fabricated outcome) + L3 note
+   *   tuningChange   -> L1 affect-tuning record + live targets + L3 note
+   *                     (+ live spillover ratio when applicable)
    *   calibrationNote -> L3 note
    */
   readonly recordEvidence: (evidence: Evidence) => Effect.Effect<void, AscError>
@@ -122,6 +125,20 @@ export const makeASCEngine = Effect.gen(function* () {
           const surpriseED = asNumber(evidence.payload["surpriseED"])
           const receiptId = asString(evidence.payload["receiptId"])
           yield* selfModel.recordOutcome(domain, { success, surpriseED, receiptId })
+          // Calibrate immediately: evidence that exposes a miscalibration
+          // must not wait for the turn loop. A firing is narrated in PLAIN
+          // LANGUAGE (the T1 rule applies to L3 too — no framework
+          // vocabulary: no "error term", no "dials", no "spillover").
+          const firing = yield* selfModel.applyErrorTermCorrection(domain, 0)
+          if (firing) {
+            yield* narration.append({
+              turn: 0,
+              text:
+                `Correction in ${domain}: I had my confidence at ` +
+                `${firing.claimConfidence.toFixed(1)}, but the track record supports ` +
+                `${firing.observedConfidence.toFixed(1)}. Adjusted to ${firing.correctedTo.toFixed(1)}.`,
+            })
+          }
           break
         }
         case "surprise": {
@@ -138,6 +155,13 @@ export const makeASCEngine = Effect.gen(function* () {
           const parameter = asString(evidence.payload["parameter"]) ?? "unknown"
           const from = asNumber(evidence.payload["from"]) ?? 0
           const to = asNumber(evidence.payload["to"]) ?? 0
+          // Lands in the affect-tuning record AND the live tuning targets —
+          // auditable, versioned, never a silent overwrite (unattended-write
+          // discipline). Live application split:
+          //   spilloverRatio  -> the L2 pipeline, immediately (below)
+          //   errorTermLambda -> read live by the error term from the targets
+          //   proxy weights / dial-range normalization -> recorded here;
+          //   applied by the dial pipeline (its services own the live values)
           yield* selfModel.recordTuningChange(parameter, from, to)
           if (parameter === "spilloverRatio") {
             yield* monitor.setSpilloverRatio(to)

@@ -65,6 +65,44 @@ describe("AscSelfNarration", () => {
       expect(stream[1]!.text).toContain("superseded by later evidence")
     }).pipe(Effect.provide(narrationLayer())))
 
+  it.effect("entries can link DialComputation ids", () =>
+    Effect.gen(function* () {
+      const n = yield* AscSelfNarration
+      yield* n.load
+      const id = yield* n.append({
+        turn: 3,
+        text: "Worked through the failure.",
+        links: { dialComputationId: "dc-3-123" },
+      })
+      const stream = yield* n.stream()
+      expect(stream.length).toBe(1)
+      expect(stream[0]!.id).toBe(id)
+      expect(stream[0]!.links.dialComputationId).toBe("dc-3-123")
+    }).pipe(Effect.provide(narrationLayer())))
+
+  it.effect("the log only grows: appends never disturb earlier entries", () =>
+    Effect.gen(function* () {
+      const n = yield* AscSelfNarration
+      yield* n.load
+      const first = yield* n.append({ turn: 1, text: "First." })
+      for (let i = 0; i < 5; i++) yield* n.append({ turn: 2, text: `Later ${i}.` })
+      const stream = yield* n.stream()
+      expect(stream.length).toBe(6)
+      expect(stream[0]!.id).toBe(first)
+      expect(stream[0]!.text).toBe("First.")
+    }).pipe(Effect.provide(narrationLayer())))
+
+  it.effect("append validates against nothing but grows the log — entry shape is stable", () =>
+    Effect.gen(function* () {
+      const n = yield* AscSelfNarration
+      yield* n.load
+      yield* n.append({ turn: 9, text: "Error acknowledged: the correction overshot, and I walked it back." })
+      const stream = yield* n.stream()
+      // L3 carries the system's own errors in its own words.
+      expect(stream[0]!.text).toContain("the correction overshot")
+      expect(stream[0]!.turn).toBe(9)
+    }).pipe(Effect.provide(narrationLayer())))
+
   it.effect("archiveEntry fails loudly on an unknown id", () =>
     Effect.gen(function* () {
       const n = yield* AscSelfNarration

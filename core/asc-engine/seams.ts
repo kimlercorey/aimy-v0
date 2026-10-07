@@ -93,6 +93,18 @@ export class AuxModel extends Context.Service<AuxModel, AuxModelShape>()("aimy/A
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
 
 /**
+ * Meta-question register shift (paper §III.D): when the user asks about the
+ * mechanism itself ("the content is meta"), Vulnerability rises and the
+ * register warms slightly while Playfulness drops ("the user is testing me").
+ */
+export const META_QUESTION_SHIFT: {
+  readonly warmth: number
+  readonly playfulness: number
+  readonly intensity: number
+  readonly vulnerability: number
+} = { warmth: 1.0, playfulness: -1.0, intensity: 0, vulnerability: 2.0 }
+
+/**
  * Deterministic default dial-computation function.
  *
  * Pure function of (content, self-model slice, contextual read) — the paper's
@@ -102,31 +114,64 @@ const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
  * model, Schema-validated output) replaces this at integration.
  *
  * Formula (all terms bounded; the caller re-validates through the schema):
- *   warmth       = 5 + 2.5·personal − 1.5·urgent
- *   playfulness  = 5 + 3·playful − 2·urgent + Σ proxy deltas
- *   intensity    = 5 + 2.5·urgent + 2·stake + Σ proxy deltas
- *   vulnerability= 5 + 3·uncertain + 1.5·personal − 2·confidenceNorm + Σ proxy deltas
+ *   warmth       = 5 + 2.5·personal − 1.5·urgent (+1 when meta) + Σ proxy deltas
+ *   playfulness  = 5 + 3·playful − 2·urgent (−1 when meta)      + Σ proxy deltas
+ *   intensity    = 5 + 2.5·urgent + 2·stake                     + Σ proxy deltas
+ *   vulnerability= 5 + 3·uncertain + 1.5·personal − 2·confidenceNorm (+2 when meta)
+ *                  + Σ proxy deltas
+ *
+ * Paper mappings honored:
+ *   - context pressure → P↓ I↑ (terse); corrections → V↑ I↑ (humble);
+ *     session length → I↓ W↑ slow (patient); tool failures → V↑ P↓ (focused)
+ *     — all via the proxy-evidence deltas (Fig. 3 table).
+ *   - meta/personal → V↑ (§III.D; personal content and meta questions).
+ *   - crisis/debugging → I↑ P↓: crisis content arrives with a high `urgent`
+ *     cue, which the formula maps to Intensity up, Playfulness down (§III.D
+ *     dial table: crisis is typical-high Intensity, typical-low Playfulness).
+ *   - unknown domain → maximal uncertainty (confidenceNorm 0): "the
+ *     self-model says I'm uncertain in this domain (pushes Vulnerability up)".
+ *   - routine → neutral: zero cues, zero proxies, known-confident domain
+ *     leaves every dial at 5.
  */
 export const defaultDialComputation = (request: AuxModelRequest): DialVector => {
   const { content, selfModel, context } = request
   const cues = content.cues
-  const confidenceNorm = selfModel.capability ? clamp01(selfModel.capability.confidence / 10) : 0.5
+  // Unknown domain = maximal uncertainty (V pushed up), not neutral.
+  const confidenceNorm = selfModel.capability ? clamp01(selfModel.capability.confidence / 10) : 0
 
   const proxyDelta = (dial: "warmth" | "playfulness" | "intensity" | "vulnerability"): number =>
     context.proxyEvidence
       .filter((e) => e.dial === dial)
       .reduce((acc, e) => acc + e.delta, 0)
 
+  const meta = content.isMetaQuestion ? 1 : 0
   const clampDial = (n: number): number => Math.min(10, Math.max(0, n))
 
   return {
-    warmth: clampDial(5 + 2.5 * cues.personal - 1.5 * cues.urgent + proxyDelta("warmth")),
-    playfulness: clampDial(5 + 3 * cues.playful - 2 * cues.urgent + proxyDelta("playfulness")),
+    warmth: clampDial(
+      5 +
+        2.5 * cues.personal -
+        1.5 * cues.urgent +
+        meta * META_QUESTION_SHIFT.warmth +
+        proxyDelta("warmth"),
+    ),
+    playfulness: clampDial(
+      5 +
+        3 * cues.playful -
+        2 * cues.urgent +
+        meta * META_QUESTION_SHIFT.playfulness +
+        proxyDelta("playfulness"),
+    ),
     intensity: clampDial(
       5 + 2.5 * cues.urgent + 2 * clamp01(context.stake) + proxyDelta("intensity"),
     ),
     vulnerability: clampDial(
-      5 + 3 * cues.uncertain + 1.5 * cues.personal - 2 * confidenceNorm + proxyDelta("vulnerability"),
+      5 +
+        3 * cues.uncertain +
+        1.5 * cues.personal -
+        2 * confidenceNorm +
+        meta * META_QUESTION_SHIFT.vulnerability +
+        proxyDelta("vulnerability"),
     ),
   }
 }

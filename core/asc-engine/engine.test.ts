@@ -5,6 +5,7 @@ import { Effect } from "effect"
 import { AscError } from "./errors-shim.js"
 import { ASCEngine, INTERFACE_VERSION } from "./engine.js"
 import { DIAL_NAMES } from "./dial-state.js"
+import { T1_VOCABULARY } from "./asc-self-monitor.js"
 import { freshEngineLayer } from "./test-layers.js"
 
 /** The frozen v1 surface — exactly these members, no more, no less. */
@@ -60,7 +61,9 @@ describe("ASCEngine frozen boundary (INTERFACE.md v1)", () => {
       const map = yield* engine.capabilityMap
       expect(map["code-review"]).toBeDefined()
       expect(map["code-review"]!.sampleCount).toBe(1)
-      expect(map["code-review"]!.confidence).toBe(5)
+      // Symmetric error term: one success moves the seeded claim 5.0 toward
+      // the observed 10.0 by α·(1−λ)·w = 0.15·0.7·(1/6) — calibrated, not collapsed.
+      expect(map["code-review"]!.confidence).toBeCloseTo(5.0875, 4)
     }).pipe(Effect.provide(freshEngineLayer())))
 
   it.effect("recordEvidence routes surprise without fabricating an outcome", () =>
@@ -94,6 +97,57 @@ describe("ASCEngine frozen boundary (INTERFACE.md v1)", () => {
       )
       expect(err).toBeInstanceOf(AscError)
       expect(err.reason).toContain("unknown evidence kind")
+      // Typed failure: the reason names the offending kind.
+      expect(err.reason).toContain("dropTable")
+    }).pipe(Effect.provide(freshEngineLayer())))
+
+  it.effect("taskOutcome miscalibration is corrected and narrated in plain language", () =>
+    Effect.gen(function* () {
+      const engine = yield* ASCEngine
+      for (let i = 0; i < 3; i++) {
+        yield* engine.recordEvidence({
+          kind: "taskOutcome",
+          domain: "code-review",
+          payload: { success: true },
+        })
+      }
+      for (let i = 0; i < 7; i++) {
+        yield* engine.recordEvidence({
+          kind: "taskOutcome",
+          domain: "code-review",
+          payload: { success: false },
+        })
+      }
+      const firings = yield* engine.errorTermFirings()
+      expect(firings.length).toBeGreaterThanOrEqual(1)
+      expect(firings[0]!.domain).toBe("code-review")
+      const notes = yield* engine.narrative()
+      const correction = notes.find((n) => n.text.startsWith("Correction in code-review:"))
+      expect(correction).toBeDefined()
+      // Plain language per the T1 rule: no framework vocabulary in L3.
+      for (const word of T1_VOCABULARY) {
+        expect(correction!.text.toLowerCase()).not.toContain(word)
+      }
+      expect(correction!.text).toContain("track record")
+      expect(correction!.text).toContain("Adjusted to")
+    }).pipe(Effect.provide(freshEngineLayer())))
+
+  it.effect("recordEvidence routes errorTermLambda into the tuning record + narrative", () =>
+    Effect.gen(function* () {
+      const engine = yield* ASCEngine
+      yield* engine.recordEvidence({
+        kind: "tuningChange",
+        payload: { parameter: "errorTermLambda", from: 0.3, to: 0.6 },
+      })
+      const notes = yield* engine.narrative()
+      expect(
+        notes.some(
+          (n) =>
+            n.text.includes("errorTermLambda") &&
+            n.text.includes("0.3") &&
+            n.text.includes("0.6"),
+        ),
+      ).toBe(true)
     }).pipe(Effect.provide(freshEngineLayer())))
 
   it.effect("reads return snapshots: history, firings, flags, narrative", () =>
