@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc -b",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "chat": "tsx chat/src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,7 @@
     "vitest": "^5.0.3"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4"
+    "@types/node": "^26.6.4",
+    "tsx": "^4.19.0"
   }
 }
