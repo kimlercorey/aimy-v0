@@ -22,7 +22,7 @@
  * - Profile-scoped, fail-closed reads (Hermes #93522): every secret is
  *   keyed by `(profile, name)`. A read under the wrong profile is
  *   indistinguishable from "not found" — no oracle, no inheritance.
- * - `manifest()` returns names + scopes ONLY, never values (one-click
+ * - `manifest()` returns names + scopes + created-at ONLY, never values (one-click
  *   export, MUST #16, needs exactly this).
  */
 
@@ -63,10 +63,12 @@ export const KeychainUnavailable: KeychainBackend = {
   deleteServiceSecret: () => Effect.fail(new IdentityError({ reason: "keychain-unavailable" }))
 }
 
-/** Manifest entry: name + scope ONLY. Values never leave the vault. */
+/** Manifest entry: name + scope + created-at ONLY. Values never leave the vault. */
 export interface SecretManifestEntry {
   readonly name: string
   readonly scope: SecretScope
+  /** Unix-ms when the entry was first stored (preserved across re-stores). */
+  readonly createdAt: number
 }
 
 export interface SecretLockerShape {
@@ -106,6 +108,7 @@ interface VaultEntry {
   readonly name: string
   readonly profile: string
   readonly secret: string // plaintext only inside the sealed envelope
+  readonly createdAt: number // unix-ms of first store; preserved across re-stores
 }
 
 const scopeKey = (name: string, scope: SecretScope): string => `${scope.profile}\u0000${name}`
@@ -250,8 +253,13 @@ export const FileLockerLive = (options: LockerOptions): Layer.Layer<SecretLocker
           Effect.gen(function* () {
             yield* checkName(name)
             yield* checkScope(scope)
+            const key = scopeKey(name, scope)
+            const prior = entries.get(key)
+            // createdAt is set once: a re-store (rotation) keeps the original
+            // timestamp. Entries sealed before this field existed default to 0.
+            const createdAt = prior?.createdAt ?? Date.now()
             // Single auditable reveal: plaintext exists only inside the sealed envelope.
-            entries.set(scopeKey(name, scope), { name, profile: scope.profile, secret: secret.reveal() })
+            entries.set(key, { name, profile: scope.profile, secret: secret.reveal(), createdAt })
             yield* persist
           }),
         retrieve: (name, scope) =>
@@ -276,7 +284,9 @@ export const FileLockerLive = (options: LockerOptions): Layer.Layer<SecretLocker
           Effect.succeed(
             [...entries.values()].map((entry): SecretManifestEntry => ({
               name: entry.name,
-              scope: { profile: entry.profile }
+              scope: { profile: entry.profile },
+              // `?? 0`: entries sealed by older builds carry no timestamp.
+              createdAt: entry.createdAt ?? 0
             }))
           )
       }

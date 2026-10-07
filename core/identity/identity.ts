@@ -44,17 +44,25 @@ export const UuidV4Schema = Schema.String.pipe(
   Schema.refine((s): s is `${string}-${string}-${string}-${string}-${string}` => UUID_V4_RE.test(s))
 )
 
+/** Pairing protocol version this identity document speaks (architecture Part 02 §1.3). */
+export const PAIRING_PROTOCOL_VERSION = 1 as const
+
 /**
  * Versioned identity document. Portable (one-click export, pairing).
  * NEVER contains secrets — the type has no secret-typed fields, by
  * construction. `version` selects the migration path in
  * {@link migrateIdentityDocument}.
+ *
+ * `pairingProtocolVersion` is the pairing-handshake compatibility signal:
+ * two instances pair only when they agree on it. It is stamped 1 at install;
+ * pre-M7 documents (without the field) decode as 1 via the migration stub.
  */
 export const IdentityDocumentSchema = Schema.Struct({
   version: Schema.Literal(1),
   instanceId: UuidV4Schema,
   createdAt: Schema.String, // ISO-8601 UTC, validated at construction
   publicKey: Schema.String, // base64url-encoded 32-byte Ed25519 public key
+  pairingProtocolVersion: Schema.Literal(1), // pairing authentication anchor version (§1.3)
   displayName: Schema.optional(Schema.String)
 })
 
@@ -63,6 +71,10 @@ export interface IdentityDocument extends Schema.Schema.Type<typeof IdentityDocu
 /**
  * Migration stub for future document versions. v1 decodes directly;
  * unknown versions fail typed (fail closed — never guess at the format).
+ *
+ * Pre-M7 v1 documents lack `pairingProtocolVersion`; they normalize to 1
+ * (the only value this build stamps) before decode, so existing installs
+ * keep working after the upgrade.
  */
 export const migrateIdentityDocument = (raw: unknown): Effect.Effect<IdentityDocument, IdentityError> => {
   const version =
@@ -70,10 +82,15 @@ export const migrateIdentityDocument = (raw: unknown): Effect.Effect<IdentityDoc
       ? (raw as { readonly version?: unknown }).version
       : undefined
   switch (version) {
-    case 1:
-      return Schema.decodeUnknownEffect(IdentityDocumentSchema)(raw).pipe(
+    case 1: {
+      const normalized =
+        typeof raw === "object" && raw !== null && !("pairingProtocolVersion" in raw)
+          ? { ...(raw as Record<string, unknown>), pairingProtocolVersion: PAIRING_PROTOCOL_VERSION }
+          : raw
+      return Schema.decodeUnknownEffect(IdentityDocumentSchema)(normalized).pipe(
         Effect.mapError(() => new IdentityError({ reason: "identity-document-invalid" }))
       )
+    }
     case undefined:
       return Effect.fail(new IdentityError({ reason: "identity-document-missing-version" }))
     default:
@@ -230,6 +247,7 @@ const buildIdentity = (
         instanceId: options.instanceId,
         createdAt: new Date().toISOString(),
         publicKey: publicKeyB64u,
+        pairingProtocolVersion: PAIRING_PROTOCOL_VERSION,
         ...(options.displayName !== undefined ? { displayName: options.displayName } : {})
       }
       const document = yield* migrateIdentityDocument(candidate)

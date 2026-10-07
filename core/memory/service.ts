@@ -12,6 +12,7 @@
  * actually consulted on every operation.
  */
 import { Context, Effect, Layer } from "effect"
+import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { MemoryStoreError, PermissionDenied } from "./errors-shim.js"
 import { resolvePaths } from "../substrate/config.js"
@@ -126,6 +127,13 @@ export interface MemoryServiceShape {
   readonly fork: (sessionId: string, newSessionId: string) => Effect.Effect<void, MemoryOpError>
   readonly get: (ns: KvNamespace, key: string) => Effect.Effect<unknown, MemoryOpError>
   readonly set: (ns: KvNamespace, key: string, value: unknown) => Effect.Effect<void, MemoryOpError>
+  /**
+   * Enumerate known session ids (sorted). The read API export (MUST #16)
+   * needs to walk every session tree without bypassing the service.
+   */
+  readonly listSessions: () => Effect.Effect<ReadonlyArray<string>, MemoryOpError>
+  /** Enumerate keys in a kv namespace (sorted). Same rationale as `listSessions`. */
+  readonly listKeys: (ns: KvNamespace) => Effect.Effect<ReadonlyArray<string>, MemoryOpError>
 }
 
 export class MemoryService extends Context.Service<MemoryService, MemoryServiceShape>()(
@@ -255,7 +263,34 @@ export const MemoryServiceLive: Layer.Layer<MemoryService, never, PermissionGate
           )
         })
 
-      return MemoryService.of({ append, read, branch, fork, get, set })
+      const listSessions: MemoryServiceShape["listSessions"] = () =>
+        Effect.gen(function* () {
+          yield* gate.checkMemory("read", "sessions:index")
+          const names = yield* Effect.tryPromise({
+            try: () =>
+              fs.readdir(paths.sessionsDir).catch((cause: unknown) => {
+                if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [] as Array<string>
+                throw cause
+              }),
+            catch: () => new MemoryStoreError({ store: "sessions:index", reason: "session index unreadable" }),
+          })
+          const ids = names
+            .filter((n) => n.endsWith(".jsonl"))
+            .map((n) => n.slice(0, -".jsonl".length))
+            .filter((id) => SESSION_ID_RE.test(id))
+          return [...ids].sort()
+        })
+
+      const listKeys: MemoryServiceShape["listKeys"] = (ns) =>
+        Effect.gen(function* () {
+          yield* gate.checkMemory("read", kvStoreName(ns))
+          const lines = yield* readKvLines(ns)
+          const seen = new Set<string>()
+          for (const l of lines) seen.add(l.key)
+          return [...seen].sort()
+        })
+
+      return MemoryService.of({ append, read, branch, fork, get, set, listSessions, listKeys })
     }),
   )
 

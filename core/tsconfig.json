@@ -38,6 +38,9 @@
     "agent-loop/**/*",
     "honesty/**/*",
     "learning/**/*",
+    "comms/**/*",
+    "export/**/*",
+    "jobs/**/*",
     "web-research/src/**/*"
   ]
 }

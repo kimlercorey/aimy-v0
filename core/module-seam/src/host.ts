@@ -118,6 +118,12 @@ export interface ModuleHostApi {
   /* diagnostics */
   /** Module IDs with live runtime state (started, not yet stopped/disabled/removed). */
   readonly runtimeModules: () => Effect.Effect<ReadonlyArray<string>, never>
+  /**
+   * All installed module records (id, name, version, state, capability
+   * manifest, staged/previous versions, trust decisions). The read API
+   * export (MUST #16) walks module state through the host, never around it.
+   */
+  readonly installedModules: () => Effect.Effect<ReadonlyArray<ModuleRecord>, never>
 }
 
 export class ModuleHost extends Context.Service<ModuleHost, ModuleHostApi>()(
@@ -366,6 +372,17 @@ export const makeModuleHost = (deps: ModuleHostDeps): ModuleHostApi => {
 
   const skillIndex = (): Effect.Effect<SkillIndex, never> => Effect.succeed(buildSkillIndex(deps.skills))
 
+  /**
+   * Installed module records via the lifecycle's public `list()` — sorted by
+   * moduleId so bundles are deterministic. Includes capability manifests,
+   * staged/previous versions, and trust decisions (everything the one-click
+   * export needs about a module, nothing it must not have).
+   */
+  const installedModules = (): Effect.Effect<ReadonlyArray<ModuleRecord>, never> =>
+    Effect.map(deps.lifecycle.list(), (records) =>
+      [...records].sort((a, b) => (a.moduleId < b.moduleId ? -1 : a.moduleId > b.moduleId ? 1 : 0))
+    )
+
   return {
     install,
     enable,
@@ -381,6 +398,7 @@ export const makeModuleHost = (deps: ModuleHostDeps): ModuleHostApi => {
     callTool,
     viewSkill,
     skillIndex,
+    installedModules,
     runtimeModules: () => Effect.succeed([...runtimes.keys()])
   }
 }

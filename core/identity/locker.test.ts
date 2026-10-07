@@ -140,7 +140,7 @@ describe("file-vault backend", () => {
 })
 
 describe("manifest", () => {
-  it.effect("lists names and scopes only — never values", () =>
+  it.effect("lists names, scopes and created-at only — never values", () =>
     Effect.gen(function* () {
       const { paths } = yield* Effect.promise(makePaths)
       const secretA = "manifest-secret-alpha-111"
@@ -153,13 +153,16 @@ describe("manifest", () => {
         })
       )
       expect(manifest).toHaveLength(2)
-      expect(manifest).toContainEqual({ name: "api/github-token", scope: WORK })
-      expect(manifest).toContainEqual({ name: "oauth/google", scope: PERSONAL })
-      // entry shape is exactly { name, scope }
+      // entry shape is exactly { name, scope, createdAt } — never values
       for (const entry of manifest) {
-        expect(Object.keys(entry).sort()).toEqual(["name", "scope"])
+        expect(Object.keys(entry).sort()).toEqual(["createdAt", "name", "scope"])
         expect(Object.keys(entry.scope)).toEqual(["profile"])
+        expect(typeof entry.createdAt).toBe("number")
+        expect(entry.createdAt).toBeGreaterThan(0)
       }
+      const byName = new Map(manifest.map((e) => [e.name, e] as const))
+      expect(byName.get("api/github-token")?.scope).toEqual(WORK)
+      expect(byName.get("oauth/google")?.scope).toEqual(PERSONAL)
       // stringify the whole manifest: no plaintext anywhere
       const blob = JSON.stringify(manifest)
       expect(blob).not.toContain(secretA)

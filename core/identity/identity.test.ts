@@ -102,7 +102,13 @@ describe("identity document", () => {
       )
       expect(roundTripped).toEqual(doc)
       // Structural: exactly the known, secret-free field set
-      expect(Object.keys(doc).sort()).toEqual(["createdAt", "instanceId", "publicKey", "version"])
+      expect(Object.keys(doc).sort()).toEqual([
+        "createdAt",
+        "instanceId",
+        "pairingProtocolVersion",
+        "publicKey",
+        "version"
+      ])
       // No secret-typed or private-key-shaped content anywhere in the doc
       const blob = JSON.stringify(doc).toLowerCase()
       for (const word of ["private", "secret", "passphrase", "seed", "mnemonic", "jwk", "redacted"]) {
