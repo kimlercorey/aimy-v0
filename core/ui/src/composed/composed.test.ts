@@ -67,6 +67,17 @@ describe("composed app", () => {
     expect(next.model.jobs).toBe(model.jobs)
   })
 
+  it("nav starts on chat; SelectPanel switches the active panel only", () => {
+    const model = initialAppModel()
+    expect(model.activePanel).toBe("chat")
+    const next = update(model, AppMessage.SelectPanel({ panel: "sovereignty" }))
+    expect(next.model.activePanel).toBe("sovereignty")
+    // Nothing else changed — nav is a pure view switch.
+    expect(next.model.shell).toBe(model.shell)
+    expect(next.model.sovereignty).toBe(model.sovereignty)
+    expect(next.commands).toBeUndefined()
+  })
+
   it("shell rejection gate survives composition (dial mutation rejected)", () => {
     const model = initialAppModel()
     // A dial-mutation-shaped object arriving as unvalidated JSON (the

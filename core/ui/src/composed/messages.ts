@@ -25,6 +25,7 @@ import type { SovereigntyMessage } from "../sovereignty/index.js"
 import { Message as SovereigntyMsg } from "../sovereignty/index.js"
 import type { TimelineMessage } from "../timeline/index.js"
 import { Message as TimelineMsg } from "../timeline/index.js"
+import { PanelId } from "./model.js"
 
 export const AppMessage = defineMessageUnion({
   GotShell: { message: ShellMsg },
@@ -36,6 +37,7 @@ export const AppMessage = defineMessageUnion({
   GotTimeline: { message: TimelineMsg },
   GotJobs: { message: JobsMessage },
   GotBanners: { message: BannersMessage },
+  SelectPanel: { panel: PanelId },
 })
 export type AppMessage = typeof AppMessage.Type
 

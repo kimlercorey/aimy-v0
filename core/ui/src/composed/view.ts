@@ -33,7 +33,7 @@ import type { SovereigntyMessage, SovereigntyModel } from "../sovereignty/index.
 import { timelineSubmodelView } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
 import { AppMessage } from "./messages.js"
-import type { AppModel } from "./model.js"
+import type { AppModel, PanelId } from "./model.js"
 
 const shellSubmodelView = defineView<ShellModel, ShellMessage>((model, h) =>
   appShellView(model, h).body,
@@ -63,97 +63,142 @@ const panel = (
     body,
   ])
 
-export const view = (model: AppModel, h: HtmlBuilder<AppMessage>): Document => ({
-  title: "AImy",
-  body: h.div([h.Class("app")], [
-    h.submodel({
-      slotId: "app-shell",
-      model: model.shell,
-      view: shellSubmodelView,
-      toParentMessage: (message) => AppMessage.GotShell({ message }),
-    }),
-    panel(
-      h,
-      "app-asc",
-      "presence",
-      h.submodel({
-        slotId: "app-asc",
-        model: model.asc,
-        view: ascSubmodelView,
-        toParentMessage: (message) => AppMessage.GotAsc({ message }),
-      }),
+/** Nav order. Chat is first and default — the test loop never scrolls. */
+const NAV_ITEMS: ReadonlyArray<{ readonly id: PanelId; readonly label: string }> = [
+  { id: "chat", label: "Chat" },
+  { id: "presence", label: "Presence" },
+  { id: "timeline", label: "Timeline" },
+  { id: "jobs", label: "Jobs" },
+  { id: "banners", label: "Banners" },
+  { id: "sovereignty", label: "Sovereignty" },
+  { id: "export", label: "Export" },
+]
+
+const navView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html =>
+  h.div([h.Class("app-nav")], [
+    h.div([h.Class("app-nav-title")], ["AImy"]),
+    ...NAV_ITEMS.map((item) =>
+      h.button(
+        [
+          h.OnClick(AppMessage.SelectPanel({ panel: item.id })),
+          h.Class(item.id === model.activePanel ? "nav-item nav-active" : "nav-item"),
+        ],
+        [item.label],
+      ),
     ),
-    panel(
-      h,
-      "app-timeline",
-      "learning timeline",
+  ])
+
+const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
+  switch (model.activePanel) {
+    case "chat":
+      return h.submodel({
+        slotId: "app-shell",
+        model: model.shell,
+        view: shellSubmodelView,
+        toParentMessage: (message) => AppMessage.GotShell({ message }),
+      })
+    case "presence":
+      return panel(
+        h,
+        "app-asc",
+        "presence",
+        h.submodel({
+          slotId: "app-asc",
+          model: model.asc,
+          view: ascSubmodelView,
+          toParentMessage: (message) => AppMessage.GotAsc({ message }),
+        }),
+      )
+    case "timeline":
+      return panel(
+        h,
+        "app-timeline",
+        "learning timeline",
+        h.submodel({
+          slotId: "app-timeline",
+          model: model.timeline,
+          view: timelineSubmodelView,
+          toParentMessage: (message) => AppMessage.GotTimeline({ message }),
+        }),
+      )
+    case "jobs":
+      return panel(
+        h,
+        "app-jobs",
+        "jobs",
+        h.submodel({
+          slotId: "app-jobs",
+          model: model.jobs,
+          view: jobsSubmodelView,
+          toParentMessage: (message) => AppMessage.GotJobs({ message }),
+        }),
+      )
+    case "banners":
+      return panel(
+        h,
+        "app-banners",
+        "banners",
+        h.submodel({
+          slotId: "app-banners",
+          model: model.banners,
+          view: bannersSubmodelView,
+          toParentMessage: (message) => AppMessage.GotBanners({ message }),
+        }),
+      )
+    case "sovereignty":
+      return panel(
+        h,
+        "app-sovereignty",
+        "sovereignty",
+        h.submodel({
+          slotId: "app-sovereignty",
+          model: model.sovereignty,
+          view: sovereigntySubmodelView,
+          toParentMessage: (message) => AppMessage.GotSovereignty({ message }),
+        }),
+      )
+    case "export":
+      return panel(
+        h,
+        "app-export",
+        "export",
+        h.submodel({
+          slotId: "app-export",
+          model: model.exportState,
+          view: exportSubmodelView,
+          toParentMessage: (message) => AppMessage.GotExport({ message }),
+        }),
+      )
+  }
+}
+
+/** First-run onboarding takes over the whole window until done or skipped. */
+const onboardingOverlay = (model: AppModel, h: HtmlBuilder<AppMessage>): Html | null =>
+  model.onboarding.step === "done" || model.onboarding.skipped
+    ? null
+    : h.div([h.Class("app-onboarding-overlay")], [
+        h.submodel({
+          slotId: "app-onboarding",
+          model: model.onboarding,
+          view: onboardingSubmodelView,
+          toParentMessage: (message) => AppMessage.GotOnboarding({ message }),
+        }),
+      ])
+
+export const view = (model: AppModel, h: HtmlBuilder<AppMessage>): Document => {
+  const overlay = onboardingOverlay(model, h)
+  return {
+    title: "AImy",
+    body: h.div([h.Class("app")], [
+      navView(model, h),
+      h.main([h.Class("app-main")], [activePanelView(model, h)]),
       h.submodel({
-        slotId: "app-timeline",
-        model: model.timeline,
-        view: timelineSubmodelView,
-        toParentMessage: (message) => AppMessage.GotTimeline({ message }),
+        slotId: "app-devtools",
+        model: model.devtools,
+        view: devtoolsSubmodelView,
+        toParentMessage: (message) => AppMessage.GotDevtools({ message }),
       }),
-    ),
-    panel(
-      h,
-      "app-jobs",
-      "jobs",
-      h.submodel({
-        slotId: "app-jobs",
-        model: model.jobs,
-        view: jobsSubmodelView,
-        toParentMessage: (message) => AppMessage.GotJobs({ message }),
-      }),
-    ),
-    panel(
-      h,
-      "app-banners",
-      "banners",
-      h.submodel({
-        slotId: "app-banners",
-        model: model.banners,
-        view: bannersSubmodelView,
-        toParentMessage: (message) => AppMessage.GotBanners({ message }),
-      }),
-    ),
-    panel(
-      h,
-      "app-sovereignty",
-      "sovereignty",
-      h.submodel({
-        slotId: "app-sovereignty",
-        model: model.sovereignty,
-        view: sovereigntySubmodelView,
-        toParentMessage: (message) => AppMessage.GotSovereignty({ message }),
-      }),
-    ),
-    panel(
-      h,
-      "app-export",
-      "export",
-      h.submodel({
-        slotId: "app-export",
-        model: model.exportState,
-        view: exportSubmodelView,
-        toParentMessage: (message) => AppMessage.GotExport({ message }),
-      }),
-    ),
-    panel(
-      h,
-      "app-onboarding",
-      "onboarding",
-      h.submodel({
-        slotId: "app-onboarding",
-        model: model.onboarding,
-        view: onboardingSubmodelView,
-        toParentMessage: (message) => AppMessage.GotOnboarding({ message }),
-      }),
-    ),
-    h.submodel({
-      slotId: "app-devtools",
-      model: model.devtools,
-      view: devtoolsSubmodelView,
-      toParentMessage: (message) => AppMessage.GotDevtools({ message }),
-    }),
-  ]),
-})
+      ...(overlay === null ? [] : [overlay]),
+    ]),
+  }
+}

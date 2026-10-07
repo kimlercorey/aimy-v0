@@ -154,5 +154,6 @@ export const update = (
     GotTimeline: ({ message }) => foldTimeline(model, message),
     GotJobs: ({ message }) => foldJobs(model, message),
     GotBanners: ({ message }) => foldBanners(model, message),
+    SelectPanel: ({ panel }) => ({ model: { ...model, activePanel: panel } }),
   })
 }

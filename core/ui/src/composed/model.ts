@@ -42,6 +42,18 @@ import {
   Model as TimelineModel,
 } from "../timeline/index.js"
 
+/** The nav panel ids. Chat is the default — everything else is one click away. */
+export const PanelId = Schema.Literals([
+  "chat",
+  "presence",
+  "timeline",
+  "jobs",
+  "banners",
+  "sovereignty",
+  "export",
+])
+export type PanelId = typeof PanelId.Type
+
 export const AppModel = Schema.Struct({
   shell: ShellModel,
   asc: AscSlice,
@@ -52,6 +64,7 @@ export const AppModel = Schema.Struct({
   timeline: TimelineModel,
   jobs: JobsModel,
   banners: BannersModel,
+  activePanel: PanelId,
 })
 export type AppModel = typeof AppModel.Type
 
@@ -66,4 +79,5 @@ export const initialAppModel = (): AppModel => ({
   timeline: structuredClone(initialTimelineModel),
   jobs: structuredClone(initialJobsModel),
   banners: structuredClone(initialBannersModel),
+  activePanel: "chat",
 })
