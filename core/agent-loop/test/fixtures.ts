@@ -50,6 +50,7 @@ import {
   layerAgentLoopWithAsc,
   layerAgentLoopWithHonesty,
   type AgentLoopHonestyOpts,
+  type AgentToolDef,
   type ChatChunk,
   type TurnReport
 } from "../src/index.js"
@@ -187,6 +188,12 @@ export interface StackOpts {
    * exposes `AscSelfMonitor` (plus the other ASC services) for assertions.
    */
   readonly asc?: boolean
+  /**
+   * Registered module tools (additive): forwarded to the loop layer so the
+   * model can call module tools (e.g. research.query) through the same
+   * gated path as built-ins.
+   */
+  readonly extraTools?: ReadonlyArray<AgentToolDef>
 }
 
 export const buildStack = (
@@ -217,11 +224,15 @@ export const buildStack = (
     opts.asc === true
       ? Layer.provide(layerAgentLoopWithAsc(), Layer.mergeAll(base, ascLayers))
       : opts.honesty === undefined
-        ? Layer.provide(layerAgentLoop({ streamProviders: opts.streamProviders ?? [] }), base)
+        ? Layer.provide(
+          layerAgentLoop({ streamProviders: opts.streamProviders ?? [], extraTools: opts.extraTools }),
+          base
+        )
         : Layer.provide(
             layerAgentLoopWithHonesty({
               streamProviders: opts.streamProviders ?? [],
-              honesty: opts.honesty
+              honesty: opts.honesty,
+              extraTools: opts.extraTools
             }),
             Layer.mergeAll(base, HonestyServiceInMemory)
           )

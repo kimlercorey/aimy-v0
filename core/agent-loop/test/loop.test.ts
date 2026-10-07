@@ -20,7 +20,7 @@ import {
 } from "../../inference-pool/index.js"
 import { MemoryService } from "../../memory/index.js"
 import { Allow, HookError, type ModuleHookImpls } from "../../module-seam/src/index.js"
-import { AgentLoop } from "../src/index.js"
+import { AgentLoop, type AgentToolDef } from "../src/index.js"
 import {
   buildStack,
   collectChat,
@@ -137,7 +137,7 @@ describe("AgentLoop tool calls", () => {
     expect(report.executed.length).toBe(1)
     const result = report.executed[0]!.result as { _tag: string; reason: string }
     expect(result._tag).toBe("IoError")
-    expect(result.reason).toContain("unknown built-in tool")
+    expect(result.reason).toContain('unknown tool "nope.nope"')
   })
 
   it("persists tool-call and tool-result entries in the session", async () => {
@@ -155,6 +155,45 @@ describe("AgentLoop tool calls", () => {
     const { chunks, kinds } = await Effect.runPromise(Effect.provide(program, buildStack(dir)))
     expect(doneReport(chunks).executed.length).toBe(1)
     expect(kinds).toEqual(["message", "message", "tool-call", "tool-result"])
+  })
+
+  it("a registered module tool is callable by the model and gated at its tier", async () => {
+    const seen: Array<string> = []
+    const impls: ReadonlyArray<ModuleHookImpls> = [
+      {
+        module: "agent-loop",
+        beforeToolCall: (call) =>
+          Effect.sync(() => {
+            seen.push(`before:${call.tool}@${call.tier}`)
+            return Allow
+          })
+      }
+    ]
+    const researchStub: AgentToolDef = {
+      name: "research.query",
+      tier: "T1",
+      description: "Search the public web.",
+      argsHint: '{ "query": "..." }',
+      run: (args, ctx) =>
+        Effect.succeed(`[verified] stubbed answer for "${String(args["query"])}" (turn ${ctx.turnId})`)
+    }
+    const stub = new StubProvider(
+      "research-model",
+      `Let me look that up:\n${toolBlock("research.query", { query: "tucson weather" })}\ndone.`
+    )
+    const chunks = await collectChat(
+      buildStack(tmpRoot(), { impls, extraTools: [researchStub] }),
+      stub,
+      "s1",
+      "what is the weather in Tucson"
+    )
+    // The hook saw the call gated at T1 (the module's declared tier).
+    expect(seen).toEqual(["before:research.query@T1"])
+    const report = doneReport(chunks)
+    expect(report.executed.length).toBe(1)
+    expect(report.executed[0]!.tool).toBe("research.query")
+    expect(report.executed[0]!.result).toContain('[verified] stubbed answer for "tucson weather"')
+    expect(report.blocked).toEqual([])
   })
 })
 

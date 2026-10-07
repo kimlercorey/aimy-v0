@@ -12,7 +12,7 @@
 import { Effect, Layer, Stream } from "effect"
 import * as net from "node:net"
 import * as readline from "node:readline"
-import { AgentLoop, type ChatChunk, type TurnReport } from "../../agent-loop/src/index.js"
+import { AgentLoop, type AgentToolDef, type ChatChunk, type TurnReport } from "../../agent-loop/src/index.js"
 import { HonestyService } from "../../honesty/index.js"
 import { InferencePool } from "../../inference-pool/index.js"
 import { ModuleHost } from "../../module-seam/src/index.js"
@@ -26,6 +26,7 @@ import {
   RESEARCH_MODULE,
   type ResearchTool
 } from "./research.js"
+import { RESEARCH_QUERY_TOOL, RESEARCH_TOOL_TIER } from "../../web-research/src/tools.js"
 import {
   formatHonestySummary,
   formatToolResult,
@@ -150,7 +151,36 @@ const main = async (): Promise<void> => {
   const model = args.model
 
   process.stdout.write("AImy chat — booting the stack…\n")
-  const { layer, provider, researchHookCounts } = buildChatStack({ baseUrl: args.baseUrl, model })
+
+  // The research tool as a MODEL-CALLABLE agent tool (not just the CLI
+  // `research <query>` prefix). It closes over the same mutable ref the
+  // boot build stashes — the loop only runs tools during chat, after boot.
+  // invoke() is called directly, NOT via host.callTool: the loop's runTurn
+  // already dispatches beforeToolCall/afterToolCall hooks, and double
+  // dispatch would double-fire the module's hooks.
+  let researchTool: ResearchTool | undefined
+  const researchAgentTool: AgentToolDef = {
+    name: RESEARCH_QUERY_TOOL,
+    tier: RESEARCH_TOOL_TIER,
+    description:
+      "Search the public web and return a sourced answer where every factual claim carries a verification badge ([verified]/[unverified]/[failed]). Use this when the user asks about current events, facts beyond training data, or anything needing up-to-date or external information — never claim you lack web access while this tool is listed.",
+    argsHint: '{ "query": "<search query>", "maxSources": 3 }',
+    run: (args, ctx) => {
+      const tool = researchTool
+      if (tool === undefined) return Effect.fail(new Error("research module is not booted"))
+      const query = typeof args["query"] === "string" ? args["query"] : ""
+      const maxSources = typeof args["maxSources"] === "number" ? args["maxSources"] : undefined
+      return Effect.map(
+        tool.invoke({ query, sessionId: ctx.sessionId, turnId: ctx.turnId, maxSources }),
+        (report) => report.answer
+      )
+    }
+  }
+  const { layer, provider, researchHookCounts } = buildChatStack({
+    baseUrl: args.baseUrl,
+    model,
+    extraTools: [researchAgentTool]
+  })
 
   const reachable = await preflight(args.baseUrl)
   if (!reachable) {
@@ -166,7 +196,6 @@ const main = async (): Promise<void> => {
   // `provider` above): every "research <query>" must hit the SAME ModuleHost
   // the module was installed on, or the install would be lost.
   let researchHost: import("../../module-seam/src/index.js").ModuleHostApi | undefined
-  let researchTool: ResearchTool | undefined
 
   // Register once; the same provider object also feeds the loop's streamer.
   const boot = Effect.gen(function* () {

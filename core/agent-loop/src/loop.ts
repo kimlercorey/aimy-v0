@@ -63,9 +63,10 @@ import {
   type TurnAscReport
 } from "./asc-wiring.js"
 import {
-  SYSTEM_PROMPT,
-  builtinToolTier,
-  runBuiltinTool,
+  buildSystemPrompt,
+  resolveToolTier,
+  runTool,
+  type AgentToolDef,
   type BuiltinToolContext
 } from "./tools.js"
 
@@ -195,6 +196,13 @@ interface Deps {
    */
   readonly asc: Option.Option<AscSelfMonitorShape>
   readonly ascOpts: AgentLoopAscOpts | undefined
+  /**
+   * Registered module tools (additive): tools beyond the built-ins that the
+   * model may call, e.g. `research.query` from the web-research module.
+   * They appear in the system prompt and are gated at their declared tier
+   * through the same `runTurn` hook dispatch as built-ins.
+   */
+  readonly extraTools: ReadonlyArray<AgentToolDef>
 }
 
 /**
@@ -221,7 +229,8 @@ const makeAgentLoop = ({
   honesty,
   honestyOpts,
   asc,
-  ascOpts
+  ascOpts,
+  extraTools
 }: Deps): AgentLoopService => {
   const streamSource = makeStreamSource(streamProviders)
 
@@ -259,7 +268,7 @@ const makeAgentLoop = ({
 
         const request: GenerateRequest = {
           messages: [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: buildSystemPrompt(extraTools) },
             ...history,
             { role: "user", content: input }
           ],
@@ -288,7 +297,7 @@ const makeAgentLoop = ({
             const text = yield* Ref.get(acc)
             const { calls, failures } = parseToolBlocks(text)
             const turnId = randomUUID()
-            const toolCtx: BuiltinToolContext = { sessionId, turnCount }
+            const toolCtx: BuiltinToolContext = { sessionId, turnCount, turnId }
 
             // Raw executor for the hooks dispatcher. Results are recorded
             // here so the loop can report them; the gate decision itself
@@ -297,7 +306,7 @@ const makeAgentLoop = ({
             const record = (id: string, outcome: ToolOutcome) =>
               Ref.update(results, (m) => new Map(m).set(id, outcome))
             const executeTool = (call: ToolCall): Effect.Effect<unknown, unknown> =>
-              runBuiltinTool(call.tool, call.args, toolCtx).pipe(
+              runTool(call.tool, call.args, toolCtx, extraTools).pipe(
                 Effect.tap((value) => record(call.id, okOutcome(value))),
                 Effect.tapCause((cause) =>
                   record(call.id, ioErrorOutcome(Cause.pretty(cause)))
@@ -314,7 +323,7 @@ const makeAgentLoop = ({
                 id: `${turnId}:call:${i}`,
                 tool: c.tool,
                 args: c.args,
-                tier: builtinToolTier(c.tool),
+                tier: resolveToolTier(c.tool, extraTools),
                 truncated: false
               })),
               executeTool
@@ -490,6 +499,7 @@ const makeAgentLoop = ({
 export const layerAgentLoop = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly honesty?: AgentLoopHonestyOpts | undefined
+  readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService> =>
   Layer.effect(
     AgentLoop,
@@ -506,7 +516,8 @@ export const layerAgentLoop = (opts?: {
         honesty,
         honestyOpts: opts?.honesty,
         asc: Option.none(),
-        ascOpts: undefined
+        ascOpts: undefined,
+        extraTools: opts?.extraTools ?? []
       })
     })
   )
@@ -521,6 +532,7 @@ export const layerAgentLoop = (opts?: {
 export const layerAgentLoopWithHonesty = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly honesty?: AgentLoopHonestyOpts | undefined
+  readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | HonestyService> =>
   Layer.effect(
     AgentLoop,
@@ -537,7 +549,8 @@ export const layerAgentLoopWithHonesty = (opts?: {
         honesty: Option.some(honestyService),
         honestyOpts: opts?.honesty,
         asc: Option.none(),
-        ascOpts: undefined
+        ascOpts: undefined,
+        extraTools: opts?.extraTools ?? []
       })
     })
   )
@@ -555,6 +568,7 @@ export const layerAgentLoopWithHonesty = (opts?: {
 export const layerAgentLoopWithAsc = (opts?: {
   readonly streamProviders?: ReadonlyArray<Provider> | undefined
   readonly asc?: AgentLoopAscOpts | undefined
+  readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | AscSelfMonitor> =>
   Layer.effect(
     AgentLoop,
@@ -571,7 +585,8 @@ export const layerAgentLoopWithAsc = (opts?: {
         honesty: Option.none(),
         honestyOpts: undefined,
         asc: Option.some(ascMonitor),
-        ascOpts: opts?.asc
+        ascOpts: opts?.asc,
+        extraTools: opts?.extraTools ?? []
       })
     })
   )

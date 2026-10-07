@@ -16,7 +16,8 @@ import { Effect, Layer } from "effect"
 import {
   AgentLoop,
   layerAgentLoopWithHonesty,
-  type AgentLoopHonestyOpts
+  type AgentLoopHonestyOpts,
+  type AgentToolDef
 } from "../../agent-loop/src/index.js"
 import { HonestyService, HonestyServiceInMemory } from "../../honesty/index.js"
 import {
@@ -191,6 +192,7 @@ export const buildChatStack = (opts: {
   readonly model: string
   readonly honestyOpts?: AgentLoopHonestyOpts | undefined
   readonly httpLayer?: Layer.Layer<HttpClient> | undefined
+  readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
 }): ChatStack => {
   const provider = new LocalHttpProvider({ name: "chat-local", baseUrl: opts.baseUrl, model: opts.model })
   const researchHookCounts: ResearchHookCounts = { beforeToolCall: 0, afterToolCall: 0 }
@@ -234,7 +236,11 @@ export const buildChatStack = (opts: {
   )
   const base = Layer.mergeAll(InferencePoolLive, hooksStack, memoryStack, HonestyServiceInMemory)
   const loopOnly = Layer.provide(
-    layerAgentLoopWithHonesty({ streamProviders: [provider as Provider], honesty: opts.honestyOpts }),
+    layerAgentLoopWithHonesty({
+      streamProviders: [provider as Provider],
+      honesty: opts.honestyOpts,
+      extraTools: opts.extraTools
+    }),
     base
   )
   const httpLayer = opts.httpLayer ?? HttpClientLive
