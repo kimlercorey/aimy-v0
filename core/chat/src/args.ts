@@ -58,4 +58,5 @@ usage: npm run chat -- --model <name> [--base-url <url>] [--session <id>]
   --base-url   chat-completions endpoint (default ${DEFAULT_BASE_URL})
   --session    resume a named session (default "${DEFAULT_SESSION}")
 
-commands inside the chat: /new  /quit  /help`
+commands inside the chat: /new  /quit  /help  /research-off  /research-on
+  research <query> — sourced answer with per-claim verification badges`

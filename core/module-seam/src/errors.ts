@@ -39,3 +39,17 @@ export class TrustDecisionRequired extends Data.TaggedError("TrustDecisionRequir
   readonly widened: ReadonlyArray<string>
   readonly reason: string
 }> {}
+
+/**
+ * A module attempted something its capability manifest does not declare.
+ * Fail-closed: anything undeclared is denied, typed, at the seam.
+ * `capability` names the enforcement point, e.g. "network.egress",
+ * "fs.read", "fs.write", "memory.store", "memory.write", "subprocess",
+ * "tool.contribution". `requested` is the exact thing asked for.
+ */
+export class CapabilityDenied extends Data.TaggedError("CapabilityDenied")<{
+  readonly module: string
+  readonly capability: string
+  readonly requested: string
+  readonly reason: string
+}> {}

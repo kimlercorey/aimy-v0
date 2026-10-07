@@ -1,6 +1,7 @@
 /** Hook dispatch: order, truncation invariant, boundaries, I/O errors, deny/terminate. */
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Ref } from "effect"
+import { Deferred, Effect, Fiber, Ref } from "effect"
+import { TestClock } from "effect/testing"
 import {
   type ChatMessage,
   type GateVerdict,
@@ -14,6 +15,7 @@ import {
   allowAllKernel,
   makeDenyAllKernel,
   makeModuleHooks,
+  withActiveCheck,
   toolIntent
 } from "../src/index.js"
 import { testCall } from "./fixtures.js"
@@ -173,5 +175,98 @@ describe("ModuleHooks dispatch", () => {
       expect(err2).toBeInstanceOf(PermissionDenied)
       expect(yield* Ref.get(ran)).toBe(false)
     })
+  )
+})
+
+
+describe("mid-turn disable (fail-closed)", () => {
+  it.effect("inner isActive check terminates the turn at the next firing point", () =>
+    Effect.gen(function* () {
+      const log = yield* Ref.make<Array<string>>([])
+      const active = yield* Ref.make(true)
+      // Flip inactive inside prepareNextTurn: the rest of the turn's hooks
+      // must never fire, and runTurn must fail typed.
+      const impls: ModuleHookImpls = {
+        module: "m1",
+        prepareNextTurn: () =>
+          Effect.asVoid(
+            Effect.andThen(
+              Ref.update(log, (xs) => [...xs, "prepareNextTurn"]),
+              Ref.set(active, false)
+            )
+          ),
+        prepareRequest: () => Effect.asVoid(Ref.update(log, (xs) => [...xs, "prepareRequest"])),
+        finishTurn: () => Effect.asVoid(Ref.update(log, (xs) => [...xs, "finishTurn"]))
+      }
+      const hooks = makeModuleHooks({
+        impls: [impls],
+        kernel: allowAllKernel,
+        isActive: (m) => Ref.get(active).pipe(Effect.map((a) => a && m === "m1"))
+      })
+      const exit = yield* Effect.exit(
+        hooks.runTurn({
+          turn: { turnId: "t1", module: "m1" },
+          contextMessages: [],
+          toolCalls: [],
+          executeTool: () => Effect.succeed("ok")
+        })
+      )
+      expect(exit._tag).toBe("Failure")
+      expect(JSON.stringify(exit)).toContain("disabled mid-turn")
+      // Only prepareNextTurn fired; prepareRequest/finishTurn never did.
+      expect(yield* Ref.get(log)).toEqual(["prepareNextTurn"])
+    })
+  )
+
+  // NOTE: @effect/vitest's it.effect provides Effect's TestClock, so
+  // Effect.sleep never advances on its own here — TestClock.adjust drives
+  // time deterministically instead. (Production uses the live clock.)
+  it.effect("withActiveCheck race interrupts an in-flight turn built without inner check", () =>
+    Effect.gen(function* () {
+      const log = yield* Ref.make<Array<string>>([])
+      const active = yield* Ref.make(true)
+      const gate = yield* Deferred.make<void>()
+      // The turn blocks inside transformContext until the test releases
+      // the gate — so the disable + watcher poll land mid-turn
+      // deterministically.
+      const slowImpls: ModuleHookImpls = {
+        module: "m1",
+        transformContext: (messages: ReadonlyArray<ChatMessage>) =>
+          Effect.as(
+            Effect.andThen(
+              Deferred.await(gate),
+              Ref.update(log, (xs) => [...xs, "transformContext-done"])
+            ),
+            messages
+          ),
+        finishTurn: () => Effect.asVoid(Ref.update(log, (xs) => [...xs, "finishTurn"]))
+      }
+      const inner = makeModuleHooks({
+        impls: [slowImpls],
+        kernel: allowAllKernel
+        // NOTE: no isActive — the wrapper's race is the only guard.
+      })
+      const hooks = withActiveCheck(inner, (m) =>
+        Ref.get(active).pipe(Effect.map((a) => a && m === "m1"))
+      )
+      const fiber = yield* Effect.forkScoped(
+        hooks.runTurn({
+          turn: { turnId: "t1", module: "m1" },
+          contextMessages: [],
+          toolCalls: [],
+          executeTool: () => Effect.succeed("ok")
+        })
+      )
+      yield* Effect.yieldNow // let the turn start and block in transformContext
+      yield* TestClock.adjust("10 millis") // watcher polls once (still active)
+      yield* Ref.set(active, false) // disable lands mid-turn
+      yield* TestClock.adjust("20 millis") // watcher polls → sees inactive → wins the race
+      yield* Deferred.succeed(gate, void 0) // release; turn is already interrupted
+      const exit = yield* Effect.exit(Fiber.join(fiber))
+      expect(exit._tag).toBe("Failure")
+      expect(JSON.stringify(exit)).toContain("disabled mid-turn")
+      // transformContext never completed; finishTurn never fired.
+      expect(yield* Ref.get(log)).toEqual([])
+    }).pipe(Effect.scoped)
   )
 })

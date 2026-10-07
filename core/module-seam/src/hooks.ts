@@ -6,6 +6,15 @@
  * each enabled module registers its `ModuleHookImpls`, and the host dispatches
  * the canonical turn sequence through them.
  *
+ * DISPATCH RULE (per-module, never broadcast): a hook fires ONLY for the
+ * module whose turn or tool call it is. The host never invokes one module's
+ * hooks on behalf of another module — there is no fan-out to "all modules".
+ * Cross-module effects happen through the SafetyKernel seam and the shared
+ * outcome log, never by calling another module's hooks. Rationale: a
+ * broadcast dispatcher lets a compromised or buggy module observe or steer
+ * turns that are not its own; per-module dispatch keeps each module's
+ * observation surface exactly its own execution.
+ *
  * Hardened invariants (from the architecture):
  * - A message truncated on `length` fails ALL its tool calls (Pi's rule,
  *   adopted verbatim): `dispatchBeforeToolCall` auto-denies truncated calls.
@@ -116,10 +125,15 @@ export interface TurnReport {
 }
 
 export interface ModuleHooksApi {
+  /**
+   * Per-module dispatchers. Each fires ONLY the named module's hooks
+   * (see the DISPATCH RULE above); unimplemented hooks are skipped.
+   */
   readonly dispatchPrepareNextTurn: (turn: TurnContext) => Effect.Effect<void, HookError>
   readonly dispatchPrepareRequest: (turn: TurnContext) => Effect.Effect<void, HookError>
   readonly dispatchFinishTurn: (turn: TurnContext) => Effect.Effect<void, HookError>
   readonly dispatchTransformContext: (
+    module: string,
     messages: ReadonlyArray<ChatMessage>
   ) => Effect.Effect<ReadonlyArray<ChatMessage>, HookError>
   readonly dispatchBeforeToolCall: (module: string, call: ToolCall) => Effect.Effect<GateVerdict, HookError>
@@ -128,10 +142,10 @@ export interface ModuleHooksApi {
     call: ToolCall,
     outcome: ToolOutcome
   ) => Effect.Effect<ToolOutcome, HookError>
-  readonly dispatchSteeringMessages: () => Effect.Effect<ReadonlyArray<ChatMessage>, HookError>
-  readonly dispatchFollowUpMessages: () => Effect.Effect<ReadonlyArray<ChatMessage>, HookError>
+  readonly dispatchSteeringMessages: (module: string) => Effect.Effect<ReadonlyArray<ChatMessage>, HookError>
+  readonly dispatchFollowUpMessages: (module: string) => Effect.Effect<ReadonlyArray<ChatMessage>, HookError>
   /**
-   * Canonical turn sequence:
+   * Canonical turn sequence, all dispatched per-module to `spec.turn.module`:
    * prepareNextTurn -> prepareRequest -> transformContext ->
    * [beforeToolCall -> execute -> afterToolCall]* -> steering ->
    * finishTurn -> follow-ups.
@@ -170,42 +184,68 @@ const invokeHook = <A>(
 export const makeModuleHooks = (opts: {
   readonly impls: ReadonlyArray<ModuleHookImpls>
   readonly kernel: SafetyKernelSeam
+  /**
+   * Live active check, wired by the host to the lifecycle state machine.
+   * When provided, the inner turn sequence consults it before every hook
+   * firing point: a disable landing mid-turn terminates the turn fail-closed
+   * with a typed `HookError` instead of letting the rest of the turn's hooks
+   * fire. Defaults to always-active (no behavior change for existing callers).
+   */
+  readonly isActive?: (module: string) => Effect.Effect<boolean, never>
 }): ModuleHooksApi => {
   const { impls, kernel } = opts
+  const isActiveFn = opts.isActive ?? ((_module: string) => Effect.succeed(true as const))
 
-  const forEachImpl = <A>(fn: (impl: ModuleHookImpls) => Effect.Effect<A, HookError> | undefined): Effect.Effect<Array<A>, HookError> =>
-    Effect.forEach(impls, (impl) => {
-      const eff = fn(impl)
-      return eff === undefined ? Effect.succeed(undefined as never) : eff
-    }).pipe(Effect.map((xs) => xs.filter((x) => x !== undefined) as Array<A>))
-
-  const dispatchPrepareNextTurn = (turn: TurnContext) =>
-    forEachImpl((impl) =>
-      impl.prepareNextTurn === undefined ? undefined : invokeHook("prepareNextTurn", impl.module, () => impl.prepareNextTurn!(turn))
-    ).pipe(Effect.asVoid)
-
-  const dispatchPrepareRequest = (turn: TurnContext) =>
-    forEachImpl((impl) =>
-      impl.prepareRequest === undefined ? undefined : invokeHook("prepareRequest", impl.module, () => impl.prepareRequest!(turn))
-    ).pipe(Effect.asVoid)
-
-  const dispatchFinishTurn = (turn: TurnContext) =>
-    forEachImpl((impl) =>
-      impl.finishTurn === undefined ? undefined : invokeHook("finishTurn", impl.module, () => impl.finishTurn!(turn))
-    ).pipe(Effect.asVoid)
-
-  const dispatchTransformContext = (messages: ReadonlyArray<ChatMessage>) =>
-    Effect.gen(function* () {
-      let current = messages
-      for (const impl of impls) {
-        if (impl.transformContext !== undefined) {
-          current = yield* invokeHook("transformContext", impl.module, () => impl.transformContext!(current))
-        }
-      }
-      return current
-    })
+  /** Fail-closed mid-turn guard: inactive module => typed HookError, turn aborts. */
+  const requireActiveTurn = (module: string): Effect.Effect<void, HookError> =>
+    Effect.flatMap(isActiveFn(module), (active) =>
+      active
+        ? Effect.void
+        : Effect.fail(
+            new HookError({
+              hook: "runTurn",
+              module,
+              reason: "module disabled mid-turn; turn terminated fail-closed"
+            })
+          )
+    )
 
   const implFor = (module: string): ModuleHookImpls | undefined => impls.find((i) => i.module === module)
+
+  // Per-module dispatch: each dispatcher looks up ONLY the named module's
+  // impl. A module with no impl (or no such hook) is a silent no-op — the
+  // dispatcher never touches another module's hooks.
+
+  const dispatchPrepareNextTurn = (turn: TurnContext): Effect.Effect<void, HookError> => {
+    const fn = implFor(turn.module)?.prepareNextTurn
+    return fn === undefined
+      ? Effect.void
+      : Effect.asVoid(invokeHook("prepareNextTurn", turn.module, () => fn(turn)))
+  }
+
+  const dispatchPrepareRequest = (turn: TurnContext): Effect.Effect<void, HookError> => {
+    const fn = implFor(turn.module)?.prepareRequest
+    return fn === undefined
+      ? Effect.void
+      : Effect.asVoid(invokeHook("prepareRequest", turn.module, () => fn(turn)))
+  }
+
+  const dispatchFinishTurn = (turn: TurnContext): Effect.Effect<void, HookError> => {
+    const fn = implFor(turn.module)?.finishTurn
+    return fn === undefined
+      ? Effect.void
+      : Effect.asVoid(invokeHook("finishTurn", turn.module, () => fn(turn)))
+  }
+
+  const dispatchTransformContext = (
+    module: string,
+    messages: ReadonlyArray<ChatMessage>
+  ): Effect.Effect<ReadonlyArray<ChatMessage>, HookError> => {
+    const fn = implFor(module)?.transformContext
+    return fn === undefined
+      ? Effect.succeed(messages)
+      : invokeHook("transformContext", module, () => fn(messages))
+  }
 
   const dispatchBeforeToolCall = (module: string, call: ToolCall): Effect.Effect<GateVerdict, HookError> =>
     Effect.gen(function* () {
@@ -237,19 +277,15 @@ export const makeModuleHooks = (opts: {
     return invokeHook("afterToolCall", module, () => impl.afterToolCall!(call, outcome))
   }
 
-  const dispatchSteeringMessages = () =>
-    forEachImpl((impl) =>
-      impl.getSteeringMessages === undefined
-        ? undefined
-        : invokeHook("getSteeringMessages", impl.module, () => impl.getSteeringMessages!())
-    ).pipe(Effect.map((lists) => lists.flat()))
+  const dispatchSteeringMessages = (module: string): Effect.Effect<ReadonlyArray<ChatMessage>, HookError> => {
+    const fn = implFor(module)?.getSteeringMessages
+    return fn === undefined ? Effect.succeed([]) : invokeHook("getSteeringMessages", module, () => fn())
+  }
 
-  const dispatchFollowUpMessages = () =>
-    forEachImpl((impl) =>
-      impl.getFollowUpMessages === undefined
-        ? undefined
-        : invokeHook("getFollowUpMessages", impl.module, () => impl.getFollowUpMessages!())
-    ).pipe(Effect.map((lists) => lists.flat()))
+  const dispatchFollowUpMessages = (module: string): Effect.Effect<ReadonlyArray<ChatMessage>, HookError> => {
+    const fn = implFor(module)?.getFollowUpMessages
+    return fn === undefined ? Effect.succeed([]) : invokeHook("getFollowUpMessages", module, () => fn())
+  }
 
   type CallDisposition = "executed" | "blocked" | "terminated"
 
@@ -261,6 +297,9 @@ export const makeModuleHooks = (opts: {
     Effect.gen(function* () {
       const verdict = yield* dispatchBeforeToolCall(turn.module, call)
       if (verdict._tag === "Allow") {
+        // Disable may have landed after the allow verdict: re-check before
+        // executing. Fail-closed: the tool never runs for an inactive module.
+        yield* requireActiveTurn(turn.module)
         // Tool I/O errors are caught at the boundary, before afterToolCall.
         const exit = yield* Effect.exit(executeTool(call))
         yield* dispatchAfterToolCall(turn.module, call, toToolOutcome(exit))
@@ -280,20 +319,31 @@ export const makeModuleHooks = (opts: {
   const runTurn = (spec: TurnSpec) =>
     Effect.gen(function* () {
       const { turn } = spec
+      // Mid-turn disable guard: consult the live lifecycle state before every
+      // hook firing point. A disable landing mid-turn aborts the turn here
+      // with a typed HookError — the rest of the turn's hooks never fire.
+      const check = () => requireActiveTurn(turn.module)
 
+      yield* check()
       yield* dispatchPrepareNextTurn(turn)
+      yield* check()
       yield* dispatchPrepareRequest(turn)
-      yield* dispatchTransformContext(spec.contextMessages)
+      yield* check()
+      yield* dispatchTransformContext(turn.module, spec.contextMessages)
 
       const dispositions: Array<CallDisposition> = []
       for (const call of spec.toolCalls) {
         if (dispositions.includes("terminated")) break
+        yield* check()
         dispositions.push(yield* runOneCall(turn, call, spec.executeTool))
       }
 
-      const steeringMessages = yield* dispatchSteeringMessages()
+      yield* check()
+      const steeringMessages = yield* dispatchSteeringMessages(turn.module)
+      yield* check()
       yield* dispatchFinishTurn(turn)
-      const followUpMessages = yield* dispatchFollowUpMessages()
+      yield* check()
+      const followUpMessages = yield* dispatchFollowUpMessages(turn.module)
 
       const executed = dispositions.filter((d) => d === "executed").length
       const blocked = dispositions.filter((d) => d !== "executed").length
@@ -320,8 +370,99 @@ export const makeModuleHooks = (opts: {
   }
 }
 
+/**
+ * Disable-mid-run guard: wrap a `ModuleHooksApi` with a LIVE active check
+ * (the host wires this to the lifecycle state machine).
+ *
+ * When the module is not active (disabled mid-run, mid-turn, or never
+ * enabled), its hooks stop firing IMMEDIATELY — even inside an in-flight
+ * turn:
+ * - void / passthrough hooks are skipped (no observation, no steering);
+ * - `beforeToolCall` returns a fail-closed `Deny` (the call never runs);
+ * - `afterToolCall` passes the outcome through untouched;
+ * - `runTurn` fails with a typed `HookError` (the host's own `requireActive`
+ *   check normally fires first with `ModuleError`; this is the inner guard).
+ */
+export const withActiveCheck = (
+  hooks: ModuleHooksApi,
+  isActive: (module: string) => Effect.Effect<boolean, never>
+): ModuleHooksApi => {
+  const inactiveDeny = (module: string): GateVerdict => ({
+    _tag: "Deny",
+    reason: `module '${module}' is not active; hook dispatch refused fail-closed`,
+    terminate: false
+  })
+  const guard = <A, E>(
+    module: string,
+    whenActive: Effect.Effect<A, E>,
+    whenInactive: Effect.Effect<A, E>
+  ): Effect.Effect<A, E> =>
+    Effect.flatMap(isActive(module), (active) => (active ? whenActive : whenInactive))
+
+  /**
+   * Backstop watcher: polls the live active state while a turn runs. If the
+   * module is disabled mid-turn, this completes with a typed `HookError`,
+   * winning the race in `runTurn` below and interrupting the in-flight turn
+   * fail-closed. This covers inner turn sequences built without the
+   * `makeModuleHooks({ isActive })` check (e.g. host-injected hooks); turns
+   * built WITH it fail deterministically at the next firing point instead.
+   * Same error shape either way.
+   */
+  const watchInactive = (module: string): Effect.Effect<never, HookError> =>
+    Effect.flatMap(isActive(module), (active) =>
+      active
+        ? Effect.andThen(Effect.sleep("15 millis"), watchInactive(module))
+        : Effect.fail(
+            new HookError({
+              hook: "runTurn",
+              module,
+              reason: "module disabled mid-turn; turn terminated fail-closed"
+            })
+          )
+    )
+
+  return {
+    dispatchPrepareNextTurn: (turn) =>
+      guard(turn.module, hooks.dispatchPrepareNextTurn(turn), Effect.void),
+    dispatchPrepareRequest: (turn) =>
+      guard(turn.module, hooks.dispatchPrepareRequest(turn), Effect.void),
+    dispatchFinishTurn: (turn) => guard(turn.module, hooks.dispatchFinishTurn(turn), Effect.void),
+    dispatchTransformContext: (module, messages) =>
+      guard(module, hooks.dispatchTransformContext(module, messages), Effect.succeed(messages)),
+    dispatchBeforeToolCall: (module, call) =>
+      guard(module, hooks.dispatchBeforeToolCall(module, call), Effect.succeed(inactiveDeny(module))),
+    dispatchAfterToolCall: (module, call, outcome) =>
+      guard(
+        module,
+        hooks.dispatchAfterToolCall(module, call, outcome),
+        Effect.succeed(outcome)
+      ),
+    dispatchSteeringMessages: (module) =>
+      guard(module, hooks.dispatchSteeringMessages(module), Effect.succeed([])),
+    dispatchFollowUpMessages: (module) =>
+      guard(module, hooks.dispatchFollowUpMessages(module), Effect.succeed([])),
+    runTurn: (spec) =>
+      guard(
+        spec.turn.module,
+        // Race the inner turn against the disable-watcher: a disable landing
+        // mid-turn interrupts the in-flight sequence instead of letting the
+        // rest of its hooks fire. The loser is interrupted; the winner's
+        // typed HookError surfaces.
+        Effect.raceFirst(hooks.runTurn(spec), watchInactive(spec.turn.module)),
+        Effect.fail(
+          new HookError({
+            hook: "runTurn",
+            module: spec.turn.module,
+            reason: "module is not active; turn refused"
+          })
+        )
+      )
+  }
+}
+
 /** Layer from explicit deps (impls + kernel seam). The real kernel wires at integration. */
 export const layerModuleHooks = (opts: {
   readonly impls: ReadonlyArray<ModuleHookImpls>
   readonly kernel: SafetyKernelSeam
+  readonly isActive?: (module: string) => Effect.Effect<boolean, never>
 }): Layer.Layer<ModuleHooks> => Layer.succeed(ModuleHooks, makeModuleHooks(opts))

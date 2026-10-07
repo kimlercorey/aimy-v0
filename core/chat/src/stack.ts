@@ -35,9 +35,19 @@ import {
   Allow,
   Ask,
   ModuleHooks,
+  ModuleHost,
+  ModuleLifecycle,
+  ModuleLifecycleLive,
+  makeBackendSet,
+  makeDirectGate,
+  makeMapSkillStore,
   makeModuleHooks,
+  makeModuleHost,
+  stubIdentitySeam,
   type GateVerdict,
   type ModuleHookImpls,
+  type ToolCall,
+  type ToolOutcome,
   type SafetyKernelSeam
 } from "../../module-seam/src/index.js"
 import {
@@ -47,6 +57,8 @@ import {
 } from "../../permission-kernel/index.js"
 import { PermissionDenied } from "../../substrate/errors.js"
 import { ToolName } from "../../substrate/types.js"
+import { HttpClient, HttpClientLive } from "../../web-research/src/http.js"
+import { RESEARCH_MODULE, researchHookImpls } from "../../web-research/src/index.js"
 
 /** T0/T1 allowed (chat + memory), T2/T3 denied. Same posture as the wiring tests. */
 export const openPolicy: PolicyDocument = {
@@ -125,31 +137,114 @@ const hooksLayer = (
 
 export interface ChatStack {
   /** The composed layer: build it, register the provider, chat. */
-  readonly layer: Layer.Layer<AgentLoop | InferencePool | MemoryService | HonestyService>
+  readonly layer: Layer.Layer<
+    AgentLoop | InferencePool | MemoryService | HonestyService | ModuleHost | HttpClient
+  >
   /** The provider to register with the pool AND hand to the loop for streaming. */
   readonly provider: LocalHttpProvider
+  /** Live hook-fire counters for the web-research module (demo observability). */
+  readonly researchHookCounts: ResearchHookCounts
+}
+
+/** Live hook-fire counters for the web-research module (demo observability). */
+export interface ResearchHookCounts {
+  beforeToolCall: number
+  afterToolCall: number
+}
+
+/**
+ * The web-research module's hook impls with a counting wrapper: the CLI can
+ * show that hooks fired — or, after a mid-run disable, that they stopped.
+ * Plain-object counters closed over by the harness (single-threaded REPL).
+ */
+const countingResearchImpls = (counts: ResearchHookCounts): ModuleHookImpls => {
+  const base = researchHookImpls(RESEARCH_MODULE)
+  return {
+    module: RESEARCH_MODULE,
+    beforeToolCall: (call: ToolCall) =>
+      Effect.andThen(
+        Effect.sync(() => {
+          counts.beforeToolCall++
+        }),
+        base.beforeToolCall?.(call) ?? Effect.succeed(Allow)
+      ),
+    afterToolCall: (call: ToolCall, outcome: ToolOutcome) =>
+      Effect.andThen(
+        Effect.sync(() => {
+          counts.afterToolCall++
+        }),
+        base.afterToolCall?.(call, outcome) ?? Effect.succeed(outcome)
+      )
+  }
 }
 
 /**
  * Build the chat stack. Construction opens zero sockets (the provider is
  * inert until registered and used) — the preflight check is the caller's job.
+ *
+ * `httpLayer` overrides the web-research HTTP client (tests inject a mock;
+ * production uses the live client — the demo is the only place live network
+ * is used).
  */
 export const buildChatStack = (opts: {
   readonly baseUrl: string
   readonly model: string
   readonly honestyOpts?: AgentLoopHonestyOpts | undefined
+  readonly httpLayer?: Layer.Layer<HttpClient> | undefined
 }): ChatStack => {
   const provider = new LocalHttpProvider({ name: "chat-local", baseUrl: opts.baseUrl, model: opts.model })
+  const researchHookCounts: ResearchHookCounts = { beforeToolCall: 0, afterToolCall: 0 }
   const kernelLayer = SafetyKernel.layerFromPolicy(openPolicy)
   const memoryStack = Layer.provide(
     Layer.provide(MemoryServiceLive, Layer.mergeAll(kernelBackedGate, MemoryPathsLive)),
     kernelLayer
   )
   const hooksStack = Layer.provide(hooksLayer([]), kernelLayer)
+  // The web-research module's own dispatcher: lifecycle + hook dispatch +
+  // manifest enforcement + DirectGate + runtime registry. Separate from the
+  // loop's ModuleHooks (per-module dispatch: the host never touches the
+  // loop's turns and vice versa).
+  const researchHostLayer: Layer.Layer<ModuleHost, never, SafetyKernel | ModuleLifecycle> = Layer.effect(
+    ModuleHost,
+    Effect.gen(function* () {
+      const lifecycle = yield* ModuleLifecycle
+      const kernel = yield* SafetyKernel
+      const seam = seamFromKernel(kernel)
+      const moduleHooks = makeModuleHooks({
+        impls: [countingResearchImpls(researchHookCounts)],
+        kernel: seam
+      })
+      return makeModuleHost({
+        lifecycle,
+        hooks: moduleHooks,
+        kernel: seam,
+        identity: stubIdentitySeam("aimy-chat-instance"),
+        backends: makeBackendSet(makeDirectGate(seam)),
+        platform: process.platform === "darwin" ? "darwin" : "linux",
+        skills: [],
+        skillStore: makeMapSkillStore(new Map())
+      })
+    })
+  )
+  // Effect 4: mergeAll does not wire requirements between siblings — the
+  // host's requirements are provided explicitly, then the stacks merge.
+  const researchStack = Layer.provide(
+    researchHostLayer,
+    Layer.mergeAll(ModuleLifecycleLive, kernelLayer)
+  )
   const base = Layer.mergeAll(InferencePoolLive, hooksStack, memoryStack, HonestyServiceInMemory)
   const loopOnly = Layer.provide(
     layerAgentLoopWithHonesty({ streamProviders: [provider as Provider], honesty: opts.honestyOpts }),
     base
   )
-  return { layer: Layer.mergeAll(loopOnly, InferencePoolLive, memoryStack, HonestyServiceInMemory), provider }
+  const httpLayer = opts.httpLayer ?? HttpClientLive
+  const layer = Layer.mergeAll(
+    loopOnly,
+    InferencePoolLive,
+    memoryStack,
+    HonestyServiceInMemory,
+    researchStack,
+    httpLayer
+  )
+  return { layer, provider, researchHookCounts }
 }

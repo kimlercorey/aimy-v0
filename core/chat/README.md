@@ -38,7 +38,21 @@ AImy: The time is:
 [judge] claim-has-evidence@1.0.0: PASS
 ```
 
-Commands: `/new` (fresh session) · `/quit` · `/help`. Ctrl+D also exits cleanly.
+Commands: `/new` (fresh session) · `/quit` · `/help` · `/research-off` · `/research-on`. Ctrl+D also exits cleanly.
+
+## Research (M4)
+
+Type `research <query>` for a sourced answer with per-claim verification
+badges, routed through the module seam (`ModuleHost.callTool` → the
+`web-research` module, tier T1): the module is installed from its real
+`SKILL.md` at boot, its `beforeToolCall`/`afterToolCall` hooks fire through
+the seam's dispatch, and every claim lands in the shared `HonestyService`
+ledger — sourced claims badge `✓ verified [source url]`, the module's own
+synthesis/coverage badge `? unverified`. `/research-off` disables the module
+(mid-run safe: in-flight hook dispatch stops immediately, runtime entry torn
+down); `/research-on` re-enables and restarts it. A research while disabled
+fails with a clean typed `ModuleError`. See `../web-research/DEMO.md` for a
+real transcript (live DuckDuckGo; tests always mock the network).
 
 ## Layout
 
