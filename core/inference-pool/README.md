@@ -94,6 +94,56 @@ token counts (`capabilities.reasoningTokens: true` — it really counts the
 trace), per-call log in `calls`, `failNextWith(reason)` to arm one typed
 failure, optional `latencyMs` for deterministic race tests. No network.
 
+### `LocalHttpProvider` (`local-http.ts`)
+
+Real HTTP provider for the OpenAI-ish `/v1/chat/completions` shape — one
+module covers both llama.cpp-server and Ollama, which share the shape.
+
+```ts
+import { LocalHttpProvider } from "./index.js"
+
+const provider = new LocalHttpProvider({
+  name: "local-main",            // required
+  baseUrl: "http://127.0.0.1:11434", // optional, this is the default
+  model: "qwen3.8-27b",         // required, sent as `model`
+  timeoutMs: 120000             // optional, this is the default
+})
+```
+
+- **baseUrl default:** `http://127.0.0.1:11434` (Ollama's default).
+  Point it at llama.cpp-server's port (e.g. `http://127.0.0.1:8080`)
+  for a llama.cpp backend. `kind: "local"`, `egress: "local"`.
+- **Params passthrough:** the POST body is
+  `{ model, messages, max_tokens: request.maxTokens, ...request.params }`,
+  so the loop can pass through extras (`temperature`, `stop`, …) — params
+  merge last and may override `max_tokens`.
+- **Capabilities (honest):** `reasoningTokens: false` — this endpoint shape
+  does not report reasoning tokens in M1, so usage carries
+  `reasoningTokensEstimatedBy: "local-http:no-reasoning-channel"` instead of
+  a silent zero; `tools: false` — M1 uses a text tool-call convention, not
+  native `tool_calls`.
+- **Streaming:** `stream()` posts with `stream: true`, parses SSE
+  (`data: {...}` lines, `[DONE]` terminator), yields `Token { delta }`.
+  A mid-stream connection drop terminates the stream with a typed
+  `InferenceError` — never a hang, never a raw throw.
+- **Boot guarantee:** constructing and registering the provider opens zero
+  sockets; the endpoint is only touched per `generate`/`stream` call (proven
+  by the zero-socket boot test).
+- **No telemetry, no cloud, no fallbacks, no retries.** A failure is a typed
+  `InferenceError` naming the provider, full stop.
+
+**Error taxonomy** (`reason` strings on `InferenceError`):
+
+| Cause | `reason` |
+|---|---|
+| Connection refused | `connection refused: <baseUrl>` |
+| Timeout (AbortController, default 120s) | `request timed out after <timeoutMs>ms (<baseUrl>)` |
+| HTTP 4xx/5xx | `HTTP <status>: <body snippet>` |
+| Invalid JSON body / unexpected shape (incl. missing `choices`, non-string content, missing `usage`) | `malformed response: …` |
+| SSE chunk fails to parse | `malformed response: invalid SSE JSON chunk: …` |
+| Socket destroyed before `[DONE]` | `truncated stream: connection ended before [DONE]` |
+| Other transport failure (reset, DNS, …) | `transport failure [<errno>]: <baseUrl>: …` |
+
 ## SHIM note
 
 `errors-shim.ts` provides `InferenceError { provider: string; reason: string }`

@@ -13,6 +13,8 @@ export type {
 export { InferencePool, InferencePoolLive } from "./pool.js"
 export { StubProvider } from "./local-stub.js"
 export type { StubCall } from "./local-stub.js"
+export { LocalHttpProvider, DEFAULT_BASE_URL, DEFAULT_TIMEOUT_MS, NO_REASONING_CHANNEL } from "./local-http.js"
+export type { LocalHttpProviderOptions } from "./local-http.js"
 export type {
   EgressClass,
   GenerateRequest,
