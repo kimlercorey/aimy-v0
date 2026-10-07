@@ -1,3 +1,5 @@
+![AImy MVP architecture — MoSCoW v1.0 information workflow](./mvp-moscow-architecture.svg)
+
 # AImy — MVP MoSCoW (v1.0 — FINAL, locked 2026-10-07)
 
 *Sources: uber approach (Sovereignty / Continuity / Adaptive) · Pi+Hermes decomposition + pitfalls checklist · ASC paper (`workspace/user/files/paperASC.pdf`, Kimler + Ani, Sept 2026) · ThinkingBox executable-judges diagram. All open decisions resolved — see Locked decisions.*

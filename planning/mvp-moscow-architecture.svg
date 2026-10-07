@@ -1,0 +1,336 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="2792" viewBox="0 0 1680 2792">
+<defs>
+<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#2f6b3d" stroke-width="1.6"/></marker>
+<pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M 44 0 L 0 0 0 44" fill="none" stroke="#0b120b" stroke-width="1"/></pattern>
+</defs>
+<rect x="0" y="0" width="1680" height="2792" fill="#050804"/>
+<rect x="0" y="0" width="1680" height="2792" fill="url(#grid)"/>
+<text x="40" y="70" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:30px;fill:#e6f5ea;font-weight:bold;letter-spacing:3px;">AImy — MVP ARCHITECTURE</text>
+<text x="40" y="98" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:14px;fill:#7fa88a;font-weight:normal;">// MoSCoW v1.0 · information workflow · every Must / Should / Could / Won&#x27;t placed</text>
+<rect x="980" y="44" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="988" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;">M#</text>
+<text x="1020" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">completed</text>
+<rect x="1117" y="44" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1125" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;">S#/C#</text>
+<text x="1182" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">partial</text>
+<rect x="1264" y="44" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="1272" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;">—</text>
+<text x="1296" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">structural</text>
+<rect x="1400" y="44" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="1408" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;">W</text>
+<text x="1432" y="58" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">excluded</text>
+<rect x="40" y="136" width="1600" height="173" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="168" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">OPERATOR</text>
+<text x="176" y="168" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">the human — direction + verification</text>
+<rect x="56" y="188" width="1568" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="66" y="198" width="57" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="74" y="212" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">HUMAN</text>
+<text x="68" y="237" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">KIMLER — operator</text>
+<text x="68" y="256" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">sets direction · verifies on disk</text>
+<rect x="40" y="345" width="1600" height="383" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="377" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">INTERFACE</text>
+<text x="189" y="377" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">desktop shell · every panel the user touches</text>
+<rect x="56" y="397" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="407" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="421" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M17</text>
+<text x="68" y="446" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Desktop shell (Foldkit)</text>
+<text x="68" y="465" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">chat · nav · panels</text>
+<rect x="452" y="397" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="462" y="407" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="470" y="421" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M17</text>
+<text x="464" y="446" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Chat + research.query</text>
+<text x="464" y="465" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">model-callable web tool</text>
+<rect x="847" y="397" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="857" y="407" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="865" y="421" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M12</text>
+<text x="859" y="446" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">ASC presence panel</text>
+<text x="859" y="465" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">dials read-only · FACS preview</text>
+<rect x="1242" y="397" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="1252" y="407" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="1260" y="421" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M13</text>
+<text x="1254" y="446" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Learning timeline UI</text>
+<text x="1254" y="465" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">shows what was remembered</text>
+<rect x="56" y="502" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="512" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="526" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M15</text>
+<text x="68" y="551" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Comms banners</text>
+<text x="68" y="570" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">priority queue · audit-trailed</text>
+<rect x="452" y="502" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="462" y="512" width="57" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="470" y="526" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M3·17</text>
+<text x="464" y="551" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Sovereignty toggles</text>
+<text x="464" y="570" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">default-off-except-local</text>
+<rect x="847" y="502" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="857" y="512" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="865" y="526" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="859" y="551" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Sovereignty dashboard</text>
+<text x="859" y="570" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">visible surface · v1.1</text>
+<rect x="1242" y="502" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="1252" y="512" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="1260" y="526" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M16</text>
+<text x="1254" y="551" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Export wizard</text>
+<text x="1254" y="570" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">one click · verified receipt</text>
+<rect x="56" y="607" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="66" y="617" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="74" y="631" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">—</text>
+<text x="68" y="656" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Onboarding</text>
+<text x="68" y="675" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">it-was-there · Splash default</text>
+<rect x="452" y="607" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="462" y="617" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="470" y="631" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="464" y="656" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">FACS avatar engine</text>
+<text x="464" y="675" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">M8 engine · full output v1.1</text>
+<rect x="847" y="607" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="857" y="617" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="865" y="631" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="859" y="656" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Local TTS voice</text>
+<text x="859" y="675" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Chatterbox candidate</text>
+<rect x="1242" y="607" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1252" y="617" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1260" y="631" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="1254" y="656" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Messaging gateway</text>
+<text x="1254" y="675" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Telegram · Discord · WA · Signal</text>
+<rect x="40" y="764" width="1600" height="278" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="796" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">AGENT CORE</text>
+<text x="202" y="796" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">the loop Kimler owns</text>
+<rect x="56" y="816" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="826" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="840" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M1</text>
+<text x="68" y="865" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Agent loop</text>
+<text x="68" y="884" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">sovereign runtime · multi-round</text>
+<rect x="452" y="816" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="462" y="826" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="470" y="840" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M2</text>
+<text x="464" y="865" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Inference pool</text>
+<text x="464" y="884" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">one manager · local + cloud</text>
+<rect x="847" y="816" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="857" y="826" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="865" y="840" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M3</text>
+<text x="859" y="865" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Local default</text>
+<text x="859" y="884" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">cloud strictly opt-in</text>
+<rect x="1242" y="816" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="1252" y="826" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="1260" y="840" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M7</text>
+<text x="1254" y="865" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">JobRunner</text>
+<text x="1254" y="884" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">cron + supervision + tiers</text>
+<rect x="56" y="921" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="931" width="65" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="945" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="68" y="970" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Background execution</text>
+<text x="68" y="989" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">fork-safe · add-only writes</text>
+<rect x="583" y="921" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="593" y="931" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="601" y="945" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="595" y="970" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Multi-agent delegation</text>
+<text x="595" y="989" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">delegate_task + review</text>
+<rect x="1111" y="921" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1121" y="931" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1129" y="945" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="1123" y="970" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Session branching</text>
+<text x="1123" y="989" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">checkpoints</text>
+<rect x="40" y="1078" width="1600" height="278" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="1110" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">HONESTY · PRESENCE · SAFETY</text>
+<text x="426" y="1110" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">the thesis made structural</text>
+<rect x="56" y="1130" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="1140" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="1154" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M11</text>
+<text x="68" y="1179" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Honesty layer</text>
+<text x="68" y="1198" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">evidence ledger · judges · badges</text>
+<rect x="583" y="1130" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="593" y="1140" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="601" y="1154" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M12</text>
+<text x="595" y="1179" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">ASC core</text>
+<text x="595" y="1198" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">L1 model · L2 dials+guard · L3 narrative</text>
+<rect x="1111" y="1130" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1121" y="1140" width="41" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1129" y="1154" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">M10</text>
+<text x="1123" y="1179" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Permission kernel</text>
+<text x="1123" y="1198" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">fail-closed tiers OK · OS stub</text>
+<rect x="56" y="1235" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="1245" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="1259" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M18</text>
+<text x="68" y="1284" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Compaction (adversarial)</text>
+<text x="68" y="1303" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">pins byte-identical · 10k demo</text>
+<rect x="583" y="1235" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="593" y="1245" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="601" y="1259" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="595" y="1284" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Context accounting</text>
+<text x="595" y="1303" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">sees reasoning tokens · M9</text>
+<rect x="1111" y="1235" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1121" y="1245" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1129" y="1259" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="1123" y="1284" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Skill refinement</text>
+<text x="1123" y="1303" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">fossilization guard OK · loop…</text>
+<rect x="40" y="1392" width="1600" height="173" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="1424" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">MEMORY · IDENTITY · LEARNING</text>
+<text x="440" y="1424" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">user-owned continuity</text>
+<rect x="56" y="1444" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="1454" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="1468" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M5</text>
+<text x="68" y="1493" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Persistent memory</text>
+<text x="68" y="1512" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">JSONL session tree · portable</text>
+<rect x="452" y="1444" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="462" y="1454" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="470" y="1468" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M6</text>
+<text x="464" y="1493" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Secret locker</text>
+<text x="464" y="1512" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">encrypted at rest</text>
+<rect x="847" y="1444" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="857" y="1454" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="865" y="1468" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M4</text>
+<text x="859" y="1493" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Install UUID</text>
+<text x="859" y="1512" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">identity root · offline-safe</text>
+<rect x="1242" y="1444" width="382" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="1252" y="1454" width="41" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="1260" y="1468" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M13</text>
+<text x="1254" y="1493" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Learning loop</text>
+<text x="1254" y="1512" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">quarantine -&gt; verify -&gt; trusted</text>
+<rect x="40" y="1601" width="1600" height="278" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="1633" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">MODULE SEAM</text>
+<text x="215" y="1633" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">capabilities plug in here</text>
+<rect x="56" y="1653" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="66" y="1663" width="32" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="74" y="1677" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M8</text>
+<text x="68" y="1702" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Module seam</text>
+<text x="68" y="1721" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">lifecycle hooks · T0–T3 · instance-aware</text>
+<rect x="583" y="1653" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2eff70" stroke-width="1.5"/>
+<rect x="593" y="1663" width="57" height="20" rx="4" fill="#0d3319" stroke="#2eff70" stroke-width="1"/>
+<text x="601" y="1677" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#2eff70;font-weight:bold;letter-spacing:1px;">M9·14</text>
+<text x="595" y="1702" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">web-research</text>
+<text x="595" y="1721" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">reference module · live · badges</text>
+<rect x="1111" y="1653" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="1121" y="1663" width="49" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="1129" y="1677" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">NEXT</text>
+<text x="1123" y="1702" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">software-building</text>
+<text x="1123" y="1721" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">2nd module · protocol draft v0.1</text>
+<rect x="56" y="1758" width="777" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="66" y="1768" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="74" y="1782" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">COULD</text>
+<text x="68" y="1807" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Skill Garden</text>
+<text x="68" y="1826" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">registry · fork / remix</text>
+<rect x="847" y="1758" width="777" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="857" y="1768" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="865" y="1782" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">COULD</text>
+<text x="859" y="1807" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Domain modules</text>
+<text x="859" y="1826" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">music · more…</text>
+<rect x="40" y="1915" width="1600" height="278" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="1947" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">NETWORK</text>
+<text x="162" y="1947" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">two classes · sovereignty supported, not forced</text>
+<rect x="56" y="1967" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="66" y="1977" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="74" y="1991" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">—</text>
+<text x="68" y="2016" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">First-party network</text>
+<text x="68" y="2035" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">UUID identity · LAN pairing</text>
+<rect x="583" y="1967" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="593" y="1977" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="601" y="1991" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">—</text>
+<text x="595" y="2016" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Shared memory + locker</text>
+<text x="595" y="2035" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">across your own devices</text>
+<rect x="1111" y="1967" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1121" y="1977" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1129" y="1991" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">COULD</text>
+<text x="1123" y="2016" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Same-network awareness</text>
+<text x="1123" y="2035" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">intimate-mode per instance</text>
+<rect x="56" y="2072" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="66" y="2082" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="74" y="2096" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">—</text>
+<text x="68" y="2121" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Vendor network (opt-in)</text>
+<text x="68" y="2140" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">telemetry · broadcast · updates</text>
+<rect x="372" y="2072" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="382" y="2082" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="390" y="2096" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">COULD</text>
+<text x="384" y="2121" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">OpenTelemetry -&gt; suggestions</text>
+<text x="384" y="2140" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">strictly opt-in</text>
+<rect x="689" y="2072" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="699" y="2082" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="707" y="2096" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="701" y="2121" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Trusted broadcast</text>
+<text x="701" y="2140" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">security disclosure first</text>
+<rect x="1005" y="2072" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1015" y="2082" width="65" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1023" y="2096" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">SHOULD</text>
+<text x="1017" y="2121" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Signed updates</text>
+<text x="1017" y="2140" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">reproducible builds</text>
+<rect x="1322" y="2072" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#ffa01f" stroke-width="1.5"/>
+<rect x="1332" y="2082" width="57" height="20" rx="4" fill="#38220a" stroke="#ffa01f" stroke-width="1"/>
+<text x="1340" y="2096" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#ffa01f;font-weight:bold;letter-spacing:1px;">COULD</text>
+<text x="1334" y="2121" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">Cloud identity move</text>
+<text x="1334" y="2140" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#cfe8d4;font-weight:normal;">UUID + history · new machine</text>
+<rect x="40" y="2229" width="1600" height="173" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="2261" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">FOUNDATION</text>
+<text x="202" y="2261" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">locked decisions 2026-10-07</text>
+<rect x="56" y="2281" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="66" y="2291" width="49" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="74" y="2305" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">LOCK</text>
+<text x="68" y="2330" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">TypeScript + Effect</text>
+<text x="68" y="2349" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">full bet — trust structural</text>
+<rect x="372" y="2281" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="382" y="2291" width="49" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="390" y="2305" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">LOCK</text>
+<text x="384" y="2330" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Foldkit</text>
+<text x="384" y="2349" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">UI framework · React surrendered</text>
+<rect x="689" y="2281" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="699" y="2291" width="49" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="707" y="2305" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">LOCK</text>
+<text x="701" y="2330" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Sandbox: hybrid</text>
+<text x="701" y="2349" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Seatbelt · ns+seccomp · WASM</text>
+<rect x="1005" y="2281" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="1015" y="2291" width="24" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="1023" y="2305" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">—</text>
+<text x="1017" y="2330" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">IronProxy</text>
+<text x="1017" y="2349" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">opaque tokens · boundary swap</text>
+<rect x="1322" y="2281" width="302" height="91" rx="6" fill="#0a0f0a" stroke="#2c5a38" stroke-width="1.5"/>
+<rect x="1332" y="2291" width="49" height="20" rx="4" fill="#0a140c" stroke="#2c5a38" stroke-width="1"/>
+<text x="1340" y="2305" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#a9cdb2;font-weight:bold;letter-spacing:1px;">LOCK</text>
+<text x="1334" y="2330" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">ASC iface freeze</text>
+<text x="1334" y="2349" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">rich read · evidence-only write</text>
+<rect x="40" y="2438" width="1600" height="278" rx="10" fill="#070c07" stroke="#1e4028" stroke-width="1.5"/>
+<text x="60" y="2470" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:16px;fill:#9fe8b0;font-weight:bold;letter-spacing:2px;">WON&#x27;T</text>
+<text x="136" y="2470" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:12px;fill:#7fa88a;font-weight:normal;">explicitly excluded — the thesis has edges</text>
+<rect x="56" y="2490" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="66" y="2500" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="74" y="2514" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="68" y="2539" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Cloud-hosted / managed</text>
+<text x="68" y="2558" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">instance lives on your hardware</text>
+<rect x="583" y="2490" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="593" y="2500" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="601" y="2514" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="595" y="2539" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Pi / Hermes runtimes</text>
+<text x="595" y="2558" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">study only · never adopt</text>
+<rect x="1111" y="2490" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="1121" y="2500" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="1129" y="2514" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="1123" y="2539" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Intimate-companion primary</text>
+<text x="1123" y="2558" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">secondary by design</text>
+<rect x="56" y="2595" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="66" y="2605" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="74" y="2619" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="68" y="2644" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Telemetry · default-on net</text>
+<text x="68" y="2663" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">against the thesis</text>
+<rect x="583" y="2595" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="593" y="2605" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="601" y="2619" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="595" y="2644" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Own model weights</text>
+<text x="595" y="2663" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">model = plumbing</text>
+<rect x="1111" y="2595" width="513" height="91" rx="6" fill="#0a0f0a" stroke="#6e2a24" stroke-width="1.5"/>
+<rect x="1121" y="2605" width="24" height="20" rx="4" fill="#2a0f0c" stroke="#6e2a24" stroke-width="1"/>
+<text x="1129" y="2619" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#c08a84;font-weight:bold;letter-spacing:1px;">W</text>
+<text x="1123" y="2644" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">React-ecosystem UI</text>
+<text x="1123" y="2663" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:13px;fill:#a9cdb2;font-weight:normal;">Foldkit committed</text>
+<line x1="66" y1="315" x2="66" y2="339" stroke="#2f6b3d" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="78" y="331" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">intent</text>
+<line x1="66" y1="734" x2="66" y2="758" stroke="#2f6b3d" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="78" y="750" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">turns</text>
+<line x1="66" y1="1048" x2="66" y2="1072" stroke="#2f6b3d" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="78" y="1064" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">every turn gated</text>
+<line x1="66" y1="1362" x2="66" y2="1386" stroke="#2f6b3d" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="78" y="1378" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">read / write</text>
+<path d="M 1636 1048 L 1660 1048 L 1660 1595 L 1636 1595" fill="none" stroke="#2f6b3d" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+<rect x="1571" y="1298" width="81" height="20" rx="4" fill="#050804" stroke="#050804" stroke-width="0"/>
+<text x="1646" y="1312" text-anchor="end" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">tool calls</text>
+<line x1="66" y1="1885" x2="66" y2="1909" stroke="#2f6b3d" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+<text x="78" y="1901" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">governed egress</text>
+<path d="M 1636 1048 L 1660 1048 L 1660 1909 L 1636 1909" fill="none" stroke="#2f6b3d" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+<rect x="1531" y="1454" width="121" height="20" rx="4" fill="#050804" stroke="#050804" stroke-width="0"/>
+<text x="1646" y="1468" text-anchor="end" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">inference egress</text>
+<text x="40" y="2780" text-anchor="start" style="font-family:ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;font-size:11px;fill:#7fa88a;font-weight:normal;">generated 2026-10-07 · badges mirror mvp-moscow.md · bright green = verified complete · orange = partial · dim green = structural</text>
+</svg>
