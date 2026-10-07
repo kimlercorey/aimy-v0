@@ -90,7 +90,16 @@ export const resolveMemoryDirs = (): MemoryDirs => {
 
 /** Resolved on-disk paths, injectable so tests can point at a temp dir. */
 export class MemoryPaths extends Context.Service<MemoryPaths, MemoryDirs>()("aimy/memory/MemoryPaths") {}
-export const MemoryPathsLive: Layer.Layer<MemoryPaths> = Layer.succeed(MemoryPaths, resolveMemoryDirs())
+/**
+ * NOTE: suspended, not eager — `resolveMemoryDirs()` touches `os.homedir()`,
+ * which does not exist in a browser bundle. An eager top-level call breaks
+ * any bundler (e.g. the desktop renderer) that imports this module for the
+ * `MemoryService` tag alone. Laziness costs nothing: the value is computed
+ * once, on first layer build.
+ */
+export const MemoryPathsLive: Layer.Layer<MemoryPaths> = Layer.suspend(() =>
+  Layer.succeed(MemoryPaths, resolveMemoryDirs())
+)
 
 export type MemoryOpError = MemoryStoreError | PermissionDenied
 

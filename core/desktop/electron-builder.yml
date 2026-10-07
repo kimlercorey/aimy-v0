@@ -1,0 +1,57 @@
+# desktop/electron-builder.yml — AImy desktop packaging (M10 Track 3).
+#
+# Sovereignty posture, enforced by omission:
+# - publish: null — no auto-update, no phoning home. Updates are staged,
+#   explicit, user-initiated (architecture §2.2).
+# - electron-updater is not a dependency (verified: not in package.json).
+# - No telemetry in the shell; the only network the app makes is the
+#   user-configured model endpoint.
+# - asar: true — the app bundle is a single archive.
+appId: ai.aimy.desktop
+productName: AImy
+# The npm package name is @aimy/core — not a valid executable/file name.
+executableName: aimy
+directories:
+  # Build outputs land here (gitignored): AppImage, deb, dmg, zip.
+  output: desktop/release
+files:
+  # The compiled output: main process + preload bridge + renderer bundle +
+  # every engine module they import (agent-loop, chat, asc-engine, ...).
+  # (package.json and production node_modules are always included by
+  # electron-builder's own matchers; devDependencies are pruned.)
+  - dist/**/*
+  # Runtime asset the engine reads (web-research SKILL.md — tsc does not copy
+  # non-TS files; `desktop:assets` places it here).
+  - dist/web-research/SKILL.md
+  # Keep it tight: no source maps, no TypeScript sources, no test files.
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!**/test/**"
+  - "!**/*.ts"
+  - "!node_modules/.cache/**"
+  - "!desktop/**/*"
+  - "!ui/**/*"
+  - "!**/test/**"
+  - "!**/*.test.js"
+asar: true
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  maintainer: "AImy Contributors"
+  # The npm package name is @aimy/core — usable for the AppImage via
+  # executableName, but the deb filename must not contain "@" or "/".
+  artifactName: "${productName}-${version}.${ext}"
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.productivity
+  # Signing/notarization: see desktop/BUILD_MAC.md. CI builds sign with a
+  # Developer ID certificate; local builds are ad-hoc (Gatekeeper will
+  # require an explicit user override on first launch).
+win:
+  target:
+    - nsis
+publish: null

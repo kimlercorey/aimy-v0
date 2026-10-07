@@ -16,6 +16,7 @@ const doneChunk = (text: string): ChatChunk => ({
     executed: [],
     blocked: [],
     terminated: false,
+    toolRounds: 0,
     parseFailures: [],
     steeringMessages: [],
     followUpMessages: [],

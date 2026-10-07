@@ -2,12 +2,16 @@
   "name": "@aimy/core",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/desktop/src/main/main.js",
   "scripts": {
     "test": "vitest run",
     "build": "tsc -b",
     "typecheck": "tsc --noEmit",
-    "chat": "tsx chat/src/index.ts"
+    "chat": "tsx chat/src/index.ts",
+    "desktop": "concurrently \"vite --config desktop/vite.config.ts\" \"npm run build && npm run desktop:assets && npm run desktop:preload && AIMY_DEV=1 electron dist/desktop/src/main/main.js\"",
+    "dist": "npm run build && npm run desktop:assets && npm run desktop:preload && vite build --config desktop/vite.config.ts && electron-builder --config desktop/electron-builder.yml",
+    "desktop:preload": "esbuild desktop/src/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/desktop/src/preload.cjs --log-level=warning",
+    "desktop:assets": "mkdir -p dist/web-research && cp web-research/SKILL.md dist/web-research/SKILL.md"
   },
   "keywords": [],
   "author": "",
@@ -24,10 +28,14 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "concurrently": "^10.0.5",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
     "tsx": "^4.19.0"
   },
   "overrides": {
     "@effect/platform-browser": "$@effect/platform-browser",
     "effect": "$effect"
-  }
+  },
+  "homepage": "https://github.com/kimlercorey/aimy-v0"
 }

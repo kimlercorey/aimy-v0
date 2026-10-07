@@ -1,0 +1,56 @@
+{
+  "pass": true,
+  "checks": [
+    {
+      "name": "window renders",
+      "pass": true
+    },
+    {
+      "name": "onboarding shown on first run",
+      "pass": true
+    },
+    {
+      "name": "endpoint input settable",
+      "pass": true,
+      "detail": "set"
+    },
+    {
+      "name": "onboarding persisted endpoint via config.set",
+      "pass": true,
+      "detail": "baseUrl=\"http://127.0.0.1:18000\""
+    },
+    {
+      "name": "composer input settable",
+      "pass": true,
+      "detail": "set"
+    },
+    {
+      "name": "stream started",
+      "pass": true
+    },
+    {
+      "name": "chat streams end-to-end through the real engine",
+      "pass": true
+    },
+    {
+      "name": "ASC panel shows dials",
+      "pass": true,
+      "detail": "dial-value elements: 4"
+    },
+    {
+      "name": "export destination settable",
+      "pass": true,
+      "detail": "set"
+    },
+    {
+      "name": "export wizard completes with verified receipt",
+      "pass": true
+    },
+    {
+      "name": "screenshot captured",
+      "pass": true,
+      "detail": "/home/hatch/workspace/aimy/core/desktop/smoke/smoke.png"
+    }
+  ],
+  "screenshot": "/home/hatch/workspace/aimy/core/desktop/smoke/smoke.png"
+}

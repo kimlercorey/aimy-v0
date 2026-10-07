@@ -5,3 +5,5 @@ build/
 .DS_Store
 .env
 coverage/
+# M10: electron-builder output (AppImages, dmgs — hundreds of MB, rebuilt by npm run dist)
+core/desktop/release/

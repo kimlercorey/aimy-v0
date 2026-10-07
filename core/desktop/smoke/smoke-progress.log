@@ -1,0 +1,25 @@
+2026-10-07T19:31:02.784Z waiting for app render…
+2026-10-07T19:31:03.864Z ok   - window renders
+2026-10-07T19:31:03.866Z waiting for onboarding…
+2026-10-07T19:31:03.868Z ok   - onboarding shown on first run
+2026-10-07T19:31:03.870Z onboarding: Begin →
+2026-10-07T19:31:04.138Z onboarding: identity Continue →
+2026-10-07T19:31:04.149Z onboarding: typing endpoint http://127.0.0.1:18000
+2026-10-07T19:31:04.153Z ok   - endpoint input settable (set)
+2026-10-07T19:31:04.411Z onboarding: confirming defaults →
+2026-10-07T19:31:04.423Z onboarding complete
+2026-10-07T19:31:05.925Z ok   - onboarding persisted endpoint via config.set (baseUrl="http://127.0.0.1:18000")
+2026-10-07T19:31:05.926Z waiting for chat composer…
+2026-10-07T19:31:05.929Z ok   - composer input settable (set)
+2026-10-07T19:31:06.937Z chat: sending message…
+2026-10-07T19:31:06.988Z ok   - stream started
+2026-10-07T19:31:06.988Z chat: streaming…
+2026-10-07T19:31:07.241Z ok   - chat streams end-to-end through the real engine
+2026-10-07T19:31:07.241Z chat complete
+2026-10-07T19:31:07.243Z ok   - ASC panel shows dials (dial-value elements: 4)
+2026-10-07T19:31:07.243Z export: opening wizard…
+2026-10-07T19:31:07.262Z ok   - export destination settable (set)
+2026-10-07T19:31:07.515Z export: running to /tmp/aimy-smoke/export-dest…
+2026-10-07T19:31:07.782Z ok   - export wizard completes with verified receipt
+2026-10-07T19:31:07.783Z export complete
+2026-10-07T19:31:07.857Z ok   - screenshot captured (/home/hatch/workspace/aimy/core/desktop/smoke/smoke.png)

@@ -6,7 +6,8 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "lib": [
-      "ES2022"
+      "ES2022",
+      "DOM"
     ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -42,6 +43,7 @@
     "export/**/*",
     "jobs/**/*",
     "web-research/src/**/*",
-    "ui/**/*"
+    "ui/**/*",
+    "desktop/**/*"
   ]
 }
