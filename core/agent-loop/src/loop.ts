@@ -21,8 +21,13 @@
  * per invocation. The extension point is step 5 — loop on `report` until
  * no tool calls remain, with a turn budget.
  */
-import { Cause, Context, Effect, Layer, Ref, Stream } from "effect"
+import { Cause, Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import { randomUUID } from "node:crypto"
+import { HonestyService, type HonestyServiceShape } from "../../honesty/src/service.js"
+import { runPostTurnHonesty, type TurnHonestyReport } from "../../honesty/wiring.js"
+import type { HonestyError } from "../../honesty/src/errors.js"
+import type { JudgeError } from "../../honesty/judges/src/contracts.js"
+import type { JudgeRegistry } from "../../honesty/judges/src/registry.js"
 import { InferencePool } from "../../inference-pool/index.js"
 import type {
   GenerateRequest,
@@ -64,6 +69,12 @@ export type AgentLoopError =
   | TurnTerminated
   | SandboxViolation
   | MemoryOpError
+  // M3 honesty wiring (additive): a judge *infrastructure* failure
+  // (JudgeNotFound, JudgeInputInvalid, JudgeThrew, JudgeVerdictInvalid) is a
+  // typed error on the stream — distinct from a FAIL verdict, which is data
+  // on the report, never an error.
+  | HonestyError
+  | JudgeError
 
 /** One streamed unit of a turn. */
 export type ChatChunk =
@@ -94,6 +105,13 @@ export interface TurnReport {
   readonly parseFailures: ReadonlyArray<ToolBlockParseFailure>
   readonly steeringMessages: ReadonlyArray<ChatMessage>
   readonly followUpMessages: ReadonlyArray<ChatMessage>
+  /**
+   * M3 post-turn honesty (additive): present when the layer was composed
+   * with `HonestyService`. Carries the per-claim badges and judge verdicts —
+   * including failures (`honesty.failedVerdicts`), which are surfaced here
+   * and never swallowed.
+   */
+  readonly honesty?: TurnHonestyReport
 }
 
 export interface AgentLoopService {
@@ -138,9 +156,40 @@ interface Deps {
   readonly hooks: ModuleHooksApi
   readonly memory: MemoryServiceShape
   readonly streamProviders: ReadonlyArray<Provider>
+  /**
+   * M3 honesty wiring (additive): `Some` when the layer was composed with
+   * `HonestyService`, `None` otherwise (the Done path then skips the
+   * pipeline). Resolved via `Effect.serviceOption` so the layer's
+   * requirements are unchanged.
+   */
+  readonly honesty: Option.Option<HonestyServiceShape>
+  readonly honestyOpts: AgentLoopHonestyOpts | undefined
 }
 
-const makeAgentLoop = ({ pool, hooks, memory, streamProviders }: Deps): AgentLoopService => {
+/**
+ * M3 post-turn honesty wiring options for `layerAgentLoop` (Track 3).
+ * Everything is optional; `AgentLoopLive` passes none of it.
+ */
+export interface AgentLoopHonestyOpts {
+  /**
+   * Demo-only: record one evidence-less claim per turn so the `unverified`
+   * badge is exhibited. Never set in production wiring.
+   */
+  readonly recordUnverifiedDemoClaim?: boolean | undefined
+  /** Judge registry override (tests). Defaults to the M3 reference judges. */
+  readonly registry?: JudgeRegistry | undefined
+  /** Runner clock override (tests): stamps `ranAt` only; judges never see it. */
+  readonly now?: string | undefined
+}
+
+const makeAgentLoop = ({
+  pool,
+  hooks,
+  memory,
+  streamProviders,
+  honesty,
+  honestyOpts
+}: Deps): AgentLoopService => {
   const streamSource = makeStreamSource(streamProviders)
 
   const chat = (sessionId: string, input: string): Stream.Stream<ChatChunk, AgentLoopError> =>
@@ -290,12 +339,31 @@ const makeAgentLoop = ({ pool, hooks, memory, streamProviders }: Deps): AgentLoo
               steeringMessages: hookReport.steeringMessages,
               followUpMessages: hookReport.followUpMessages
             }
+
+            // 6. M3 post-turn honesty (Track 3). Runs only when the layer
+            // was composed with HonestyService. A FAIL verdict is DATA on
+            // the report (`report.honesty.failedVerdicts`) — never an
+            // exception, never hidden. A judge *infrastructure* error
+            // (JudgeNotFound, …) is a typed error on the stream, distinct
+            // from a FAIL verdict.
+            const honestyReport = Option.isSome(honesty)
+              ? yield* runPostTurnHonesty(honesty.value, {
+                  sessionId,
+                  input,
+                  report,
+                  recordUnverifiedDemoClaim: honestyOpts?.recordUnverifiedDemoClaim,
+                  registry: honestyOpts?.registry,
+                  now: honestyOpts?.now
+                })
+              : undefined
+            const honestReport: TurnReport =
+              honestyReport === undefined ? report : { ...report, honesty: honestyReport }
             const chunks: Array<ChatChunk> = executed.map((e) => ({
               _tag: "ToolCall",
               tool: e.tool,
               result: e.result
             }))
-            chunks.push({ _tag: "Done", report })
+            chunks.push({ _tag: "Done", report: honestReport })
             return Stream.fromIterable(chunks)
           })
         )
@@ -311,9 +379,17 @@ const makeAgentLoop = ({ pool, hooks, memory, streamProviders }: Deps): AgentLoo
  * Build the loop layer. The wiring step passes the same provider objects
  * it registered with the pool so the streaming adapter can use
  * `Provider.stream` when offered; omit for generate-only operation.
+ *
+ * M3 honesty (additive, opt-in): when the composed layer provides
+ * `HonestyService` (e.g. merged with `HonestyServiceInMemory`), the post-turn
+ * honesty pipeline runs in the `Done` path and the report carries
+ * `report.honesty`. `opts.honesty` tunes the pipeline (demo claim, judge
+ * registry override, runner clock). `AgentLoopLive` passes no honesty
+ * options and its requirements are unchanged.
  */
 export const layerAgentLoop = (opts?: {
-  readonly streamProviders?: ReadonlyArray<Provider>
+  readonly streamProviders?: ReadonlyArray<Provider> | undefined
+  readonly honesty?: AgentLoopHonestyOpts | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService> =>
   Layer.effect(
     AgentLoop,
@@ -321,11 +397,43 @@ export const layerAgentLoop = (opts?: {
       const pool = yield* InferencePool
       const hooks = yield* ModuleHooks
       const memory = yield* MemoryService
+      const honesty = yield* Effect.serviceOption(HonestyService)
       return makeAgentLoop({
         pool,
         hooks,
         memory,
-        streamProviders: opts?.streamProviders ?? []
+        streamProviders: opts?.streamProviders ?? [],
+        honesty,
+        honestyOpts: opts?.honesty
+      })
+    })
+  )
+
+/**
+ * M3 honesty variant of `layerAgentLoop`: `HonestyService` is a declared
+ * requirement, so the post-turn pipeline is guaranteed to run in the `Done`
+ * path. Prefer this over the ambient `serviceOption` pickup in
+ * `layerAgentLoop` when the wiring must hold by construction rather than by
+ * composition accident.
+ */
+export const layerAgentLoopWithHonesty = (opts?: {
+  readonly streamProviders?: ReadonlyArray<Provider> | undefined
+  readonly honesty?: AgentLoopHonestyOpts | undefined
+}): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | HonestyService> =>
+  Layer.effect(
+    AgentLoop,
+    Effect.gen(function* () {
+      const pool = yield* InferencePool
+      const hooks = yield* ModuleHooks
+      const memory = yield* MemoryService
+      const honestyService = yield* HonestyService
+      return makeAgentLoop({
+        pool,
+        hooks,
+        memory,
+        streamProviders: opts?.streamProviders ?? [],
+        honesty: Option.some(honestyService),
+        honestyOpts: opts?.honesty
       })
     })
   )
