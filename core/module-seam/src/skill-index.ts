@@ -97,8 +97,9 @@ export const makeSkillView = (deps: {
       if (!declaresTool(manifest, SKILL_VIEW_TOOL)) {
         return yield* Effect.fail(
           new PermissionDenied({
+            tool: SKILL_VIEW_TOOL,
+            tier: "T0",
             reason: `module '${moduleId}' does not declare the '${SKILL_VIEW_TOOL}' tool (undeclared = denied)`,
-            intent: SKILL_VIEW_TOOL
           })
         )
       }
@@ -109,7 +110,11 @@ export const makeSkillView = (deps: {
         const intent = toolIntent(moduleId, SKILL_VIEW_TOOL, "T0", `view skill '${name}'`)
         yield* deps.kernel.execute(intent, Effect.succeed(undefined))
         return yield* Effect.fail(
-          new PermissionDenied({ reason: "unreachable: kernel allowed a denied skill view", intent: SKILL_VIEW_TOOL })
+          new PermissionDenied({
+            tool: intent.tool,
+            tier: intent.tier,
+            reason: "unreachable: kernel allowed a denied skill view",
+          })
         )
       }
       const body = yield* deps.store.getBody(name)

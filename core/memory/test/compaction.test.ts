@@ -22,14 +22,13 @@ import {
   verifyStaged,
 } from "../compaction.js"
 import { SessionEntry, checkInvariants, getBranch } from "../session-tree.js"
-import { AllowAllGate, MemoryPaths, MemoryService, MemoryServiceLive } from "../service.js"
-import { resolvePaths } from "../paths-shim.js"
+import { AllowAllGate, MemoryPaths, MemoryService, MemoryServiceLive, resolveMemoryDirs } from "../service.js"
 
 const tmpRoots: string[] = []
 const layer = (() => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aimy-cmp-test-"))
   tmpRoots.push(dir)
-  const base = resolvePaths()
+  const base = resolveMemoryDirs()
   const paths = Layer.succeed(MemoryPaths, {
     ...base,
     sessionsDir: path.join(dir, "sessions"),

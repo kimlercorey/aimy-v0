@@ -97,12 +97,18 @@ export const makeStubSafetyKernel = (decide: (intent: ToolIntent) => GateVerdict
         return run
       case "Ask":
         return Effect.fail(
-          new PermissionDenied({ reason: `ask unresolved, call blocked: ${verdict.reason}`, intent: intent.tool })
+          new PermissionDenied({
+            tool: intent.tool,
+            tier: intent.tier,
+            reason: `ask unresolved, call blocked: ${verdict.reason}`,
+          })
         )
       case "Deny":
         return verdict.terminate
           ? Effect.fail(new TurnTerminated({ reason: verdict.reason, toolCallId: intent.tool }))
-          : Effect.fail(new PermissionDenied({ reason: verdict.reason, intent: intent.tool }))
+          : Effect.fail(
+              new PermissionDenied({ tool: intent.tool, tier: intent.tier, reason: verdict.reason })
+            )
     }
   }
 })

@@ -14,7 +14,7 @@
 import { Context, Effect, Layer } from "effect"
 import * as path from "node:path"
 import { MemoryStoreError, PermissionDenied } from "./errors-shim.js"
-import { AimyPaths, resolvePaths } from "./paths-shim.js"
+import { resolvePaths } from "../substrate/config.js"
 import {
   PersistenceError,
   appendJsonlLine,
@@ -55,13 +55,41 @@ export const AllowAllGate: Layer.Layer<PermissionGate> = Layer.succeed(Permissio
 
 /** Test layer: denies every memory operation. Proves the gate is consulted. */
 export const DenyAllGate: Layer.Layer<PermissionGate> = Layer.succeed(PermissionGate, {
+  // Canonical PermissionDenied shape (substrate contract): memory reads are
+  // T0 (local read), writes are T1 (local write).
   checkMemory: (op, store) =>
-    Effect.fail(new PermissionDenied({ op, store, reason: "denied by DenyAllGate" })),
+    Effect.fail(
+      new PermissionDenied({
+        tool: `memory:${store}:${op}`,
+        tier: op === "read" ? "T0" : "T1",
+        reason: "denied by DenyAllGate",
+      }),
+    ),
 })
 
+/**
+ * The on-disk directories memory actually uses. Derived from the substrate
+ * path layout at integration: `<state>/memory/sessions` and
+ * `<state>/memory/stores`. Injectable so tests can point at a temp dir.
+ */
+export interface MemoryDirs {
+  readonly sessionsDir: string
+  readonly storesDir: string
+}
+
+/** Resolve memory directories from the canonical AImy path layout. */
+export const resolveMemoryDirs = (): MemoryDirs => {
+  const base = resolvePaths()
+  const memoryDir = path.join(base.state, "memory")
+  return {
+    sessionsDir: path.join(memoryDir, "sessions"),
+    storesDir: path.join(memoryDir, "stores"),
+  }
+}
+
 /** Resolved on-disk paths, injectable so tests can point at a temp dir. */
-export class MemoryPaths extends Context.Service<MemoryPaths, AimyPaths>()("aimy/memory/MemoryPaths") {}
-export const MemoryPathsLive: Layer.Layer<MemoryPaths> = Layer.succeed(MemoryPaths, resolvePaths())
+export class MemoryPaths extends Context.Service<MemoryPaths, MemoryDirs>()("aimy/memory/MemoryPaths") {}
+export const MemoryPathsLive: Layer.Layer<MemoryPaths> = Layer.succeed(MemoryPaths, resolveMemoryDirs())
 
 export type MemoryOpError = MemoryStoreError | PermissionDenied
 
@@ -74,9 +102,9 @@ const checkSessionId = (sessionId: string): Effect.Effect<void, MemoryStoreError
     ? Effect.void
     : Effect.fail(new MemoryStoreError({ store: sessionId, reason: "invalid session id" }))
 
-const sessionFile = (paths: AimyPaths, sessionId: string) =>
+const sessionFile = (paths: MemoryDirs, sessionId: string) =>
   path.join(paths.sessionsDir, `${sessionId}.jsonl`)
-const kvFile = (paths: AimyPaths, ns: KvNamespace) => path.join(paths.storesDir, `${ns}.jsonl`)
+const kvFile = (paths: MemoryDirs, ns: KvNamespace) => path.join(paths.storesDir, `${ns}.jsonl`)
 
 interface KvLine {
   readonly key: string

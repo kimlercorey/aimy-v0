@@ -5,7 +5,6 @@
  * boundary). Nothing outside service.ts performs file I/O for memory.
  */
 export * from "./errors-shim.js"
-export * from "./paths-shim.js"
 export * from "./session-tree.js"
 export * from "./persistence.js"
 export * from "./service.js"

@@ -1,22 +1,7 @@
 /**
- * errors-shim.ts — TEMPORARY SHIM (parallel build).
- *
- * The substrate library (`../substrate/errors.ts`) has not landed yet, so this
- * file provides the shared `InferenceError` contract locally. Name and fields
- * are IDENTICAL to the contract so the swap is mechanical:
- *
- *   contract: `InferenceError { provider: string; reason: string }`
- *
- * When `../substrate/errors.ts` exists, delete this file and change the
- * imports in `provider.ts`, `pool.ts`, and `local-stub.ts` to:
- *
- *   import { InferenceError } from "../substrate/errors.js"
- *
- * Nothing else in this package may change.
+ * Re-export of the canonical `InferenceError` from the substrate error
+ * taxonomy. The parallel-build shim was deleted at integration (2026-10-07);
+ * all importers of this path now resolve to the real contract:
+ * `InferenceError { provider: string; reason: string }`.
  */
-import { Data } from "effect"
-
-export class InferenceError extends Data.TaggedError("InferenceError")<{
-  readonly provider: string
-  readonly reason: string
-}> {}
+export { InferenceError } from "../substrate/errors.js"

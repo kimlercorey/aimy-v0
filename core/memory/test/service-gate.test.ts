@@ -17,14 +17,14 @@ import {
   MemoryPaths,
   MemoryService,
   MemoryServiceLive,
+  resolveMemoryDirs,
 } from "../service.js"
-import { resolvePaths } from "../paths-shim.js"
 
 const tmpRoots: string[] = []
 const testPathsLayer = (): Layer.Layer<MemoryPaths> => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aimy-svc-test-"))
   tmpRoots.push(dir)
-  const base = resolvePaths()
+  const base = resolveMemoryDirs()
   return Layer.succeed(MemoryPaths, {
     ...base,
     sessionsDir: path.join(dir, "sessions"),

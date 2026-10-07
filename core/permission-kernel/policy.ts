@@ -34,10 +34,10 @@ export const SUPPORTED_POLICY_VERSION = 1 as const
 /** Wildcard tool name: a rule with this tool applies to every tool at its tier. */
 export const WILDCARD_TOOL = "*" as const
 
-const TierField = Schema.Literal("T0", "T1", "T2", "T3")
+const TierField = Schema.Literals(["T0", "T1", "T2", "T3"])
 
 /** Per-tool decision. `ask` means: do not execute until `approve()` grants a one-shot approval. */
-export const DecisionSchema = Schema.Literal("allow", "ask", "deny")
+export const DecisionSchema = Schema.Literals(["allow", "ask", "deny"])
 export type Decision = typeof DecisionSchema.Type
 
 export const PolicyRuleSchema = Schema.Struct({

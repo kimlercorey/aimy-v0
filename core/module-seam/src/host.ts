@@ -236,8 +236,9 @@ export const makeModuleHost = (deps: ModuleHostDeps): ModuleHostApi => {
       if (!declaresTool(record.manifest, call.tool)) {
         return yield* Effect.fail(
           new PermissionDenied({
+            tool: call.tool,
+            tier: call.tier,
             reason: `tool '${call.tool}' is not declared in module '${moduleId}' manifest (undeclared = denied)`,
-            intent: call.tool
           })
         )
       }
@@ -257,7 +258,11 @@ export const makeModuleHost = (deps: ModuleHostDeps): ModuleHostApi => {
         // Deny / Ask: enforce through the kernel seam. The tool never runs.
         yield* deps.kernel.execute(intent, Effect.succeed(undefined))
         return yield* Effect.fail(
-          new PermissionDenied({ reason: "unreachable: kernel allowed a denied tool call", intent: call.tool })
+          new PermissionDenied({
+            tool: intent.tool,
+            tier: intent.tier,
+            reason: "unreachable: kernel allowed a denied tool call",
+          })
         )
       }
       const outcome = yield* Effect.exit(backend.run(intent, run))

@@ -1,41 +1,21 @@
 /**
  * Typed errors for the module-seam library.
  *
- * SHIM NOTE (integration): `ModuleError`, `SandboxViolation`, and
- * `PermissionDenied` are specified to live in `../substrate/errors.ts`.
- * The substrate library has not landed yet, so they are defined HERE with
- * exactly the contracted shapes:
+ * INTEGRATION (2026-10-07): `ModuleError`, `SandboxViolation`, and
+ * `PermissionDenied` are the canonical definitions from the substrate error
+ * taxonomy, re-exported here. The module-seam-local errors (HookError,
+ * TurnTerminated, TrustDecisionRequired) stay defined in this file.
  *
- *   ModuleError      { module: string; reason: string }
- *   SandboxViolation { reason: string; backend?: string }
- *   PermissionDenied { reason: string; intent?: string }   (shape chosen by module-seam)
- *
- * When substrate lands, replace the three classes below with:
- *
- *   export { ModuleError, SandboxViolation, PermissionDenied } from "../substrate/errors.ts"
- *
- * and keep the module-seam-local errors (HookError, TurnTerminated,
- * TrustDecisionRequired) defined here.
+ * NOTE: the parallel-build `PermissionDenied` shim had shape
+ * `{ reason, intent? }`; the canonical contract is
+ * `PermissionDenied { tool: string; tier: Tier; reason: string }`.
+ * All construction sites (kernel-seam.ts, host.ts, skill-index.ts) were
+ * reconciled to the canonical shape — the seam's ToolIntent already carries
+ * `tool` and `tier`, so the mapping is exact, nothing invented.
  */
 import { Data } from "effect"
 
-/** A module failed in a typed, reportable way (bad manifest, bad transition, missing module, ...). */
-export class ModuleError extends Data.TaggedError("ModuleError")<{
-  readonly module: string
-  readonly reason: string
-}> {}
-
-/** A sandbox backend refused to run something, or reported unhealthy. Fail-closed signal. */
-export class SandboxViolation extends Data.TaggedError("SandboxViolation")<{
-  readonly reason: string
-  readonly backend?: string
-}> {}
-
-/** A capability or gate decision denied an intent. Undeclared capabilities always land here. */
-export class PermissionDenied extends Data.TaggedError("PermissionDenied")<{
-  readonly reason: string
-  readonly intent?: string
-}> {}
+export { ModuleError, SandboxViolation, PermissionDenied } from "../../substrate/errors.js"
 
 /** A lifecycle hook misbehaved. Hook boundaries never throw: defects become this. */
 export class HookError extends Data.TaggedError("HookError")<{
