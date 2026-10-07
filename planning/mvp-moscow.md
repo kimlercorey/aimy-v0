@@ -20,11 +20,11 @@
 10. ⚠️ **Fail-closed permission/sandboxing** — per-tool allow/ask/deny; denial kills the intent, not just the call; every code-execution path gated; sandbox selection fail-closed. *(Permission tiers verified; OS sandbox backends are honest stubs — real backends land after MVP.)*
 11. ✅ **Honesty/validation layer** — verification evidence attached to claims; research answers grounded. **ThinkingBox-style executable judges** as the mechanism: deterministic, versioned checks over final state, side effects, and dialogue resolution → PASS/FAIL verdict per task. Self-written skills ship with an independent verification arm (Hermes #25833/#96704).
 12. ✅ **ASC core (from the paper)** — L1 self-model (capability map, track record, relational model), L2 self-monitoring (four dials: Warmth/Playfulness/Intensity/Vulnerability, computed not chosen; other-model guard flags impression management), L3 self-narration (persistent story *including the system's own errors*). The error term keeps the self-model calibrated to the track record. This is the presence + honesty engine — and neither Pi nor Hermes has it.
-13. ⚠️ **Learning loop v1** — skill creation from experience + **learning timeline UI** (show the user what was remembered — the trust mechanism). *(Loop verified end-to-end; timeline UI lands in M8.)*
+13. ✅ **Learning loop v1** — skill creation from experience + **learning timeline UI** (show the user what was remembered — the trust mechanism). *(Loop verified end-to-end (M6); timeline UI built in M8.)*
 14. ✅ **Web research capability** — real-world validation methods, not just model knowledge.
 15. ✅ **In-app comms banner infrastructure** — the channel by which the system alerts the user (long-running job done, cron status). Product-owner broadcast reuses this channel (see Should, with conditions).
 16. ✅ **One-click full data export** — memory, skills, identity, locker manifest. "No one can take it from you" requires *you* can take all of you, trivially.
-17. ⚠️ **Desktop app shell, graphically polished** — beauty is a pillar, not a coat of paint. *(In progress — M8, the last Must.)*
+17. ✅ **Desktop app shell, graphically polished** — beauty is a pillar, not a coat of paint. *(M8 complete 2026-10-07: Foldkit shell, ASC panel with read-only dials, FACS engine, sovereignty toggles default-off-except-local-inference, timeline/jobs/banners views, export wizard, onboarding, DevTools gated; 871/871 tests green.)*
 18. ✅ **Compaction treated as adversarial** — the buggiest subsystem in both repos gets its own test/quarantine discipline from day one. *(Discipline in place; full adversarial suite = M9.)*
 
 ## SHOULD — high value, not MVP-blocking
