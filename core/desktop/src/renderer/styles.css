@@ -111,3 +111,9 @@ input[type="text"], input:not([type]) {
 .job-row, .timeline-row { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .dim { color: var(--text-dim); font-size: 12px; }
 .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* context meter: the label / values / pct spans need breathing room */
+.context-meter { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.meter-label { color: var(--text-dim); }
+.meter-values { font-family: ui-monospace, monospace; font-size: 12px; }
+.meter-pct { color: var(--text-dim); font-size: 12px; }
