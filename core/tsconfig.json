@@ -41,6 +41,7 @@
     "comms/**/*",
     "export/**/*",
     "jobs/**/*",
-    "web-research/src/**/*"
+    "web-research/src/**/*",
+    "ui/**/*"
   ]
 }
