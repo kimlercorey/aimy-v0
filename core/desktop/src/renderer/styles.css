@@ -41,18 +41,21 @@ body {
 }
 
 /* panels */
-section { background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; }
-section > h2, section > h3 { margin: 0 0 8px; font-size: 15px; }
+section { background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; }
+section > h2, section > h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+section > h2 { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 
 /* chat */
 .chat-panel { display: flex; flex-direction: column; min-height: 280px; }
-.chat-header { display: flex; gap: 12px; color: var(--text-dim); font-size: 12px; margin-bottom: 8px; }
-.message-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-.msg { padding: 8px 12px; border-radius: var(--radius); background: var(--bg-inset); border: 1px solid var(--border); }
+.chat-header { display: flex; gap: 12px; color: var(--text-dim); font-size: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.chat-header .context-meter { margin-left: auto; }
+.message-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.msg { padding: 10px 14px; border-radius: var(--radius); background: var(--bg-inset); border: 1px solid var(--border); }
 .msg-role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); display: block; margin-bottom: 4px; }
 .msg-user { border-left: 3px solid var(--accent); }
 .msg-assistant { border-left: 3px solid var(--good); }
-.msg-body { white-space: pre-wrap; word-break: break-word; }
+.msg-body { white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+.msg-error .msg-body { color: var(--bad); }
 .streaming { padding: 8px 12px; color: var(--text-dim); }
 .stream-caret { color: var(--accent); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -96,7 +99,20 @@ input[type="text"], input:not([type]) {
 .export-receipt dd { font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: 6px; word-break: break-all; }
 
 /* ASC panel */
-.dial-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+.dial-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0; }
+.dial-card {
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dial-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.dial-name { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.dial-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dial-readonly { font-size: 11px; color: var(--text-dim); }
+.dial-card svg { display: block; width: 100%; height: 28px; color: var(--accent-dim); }
+.asc-dials > h2, .asc-section > h2 { font-size: 14px; }
+.asc-latest, .asc-empty { color: var(--text-dim); font-size: 12px; margin: 8px 0 0; }
+/* legacy .dial rules kept for older views */
 .dial { background: var(--bg-inset); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; text-align: center; }
 .dial .dial-name { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
 .dial .dial-value { font-size: 22px; font-weight: 600; }
