@@ -264,6 +264,9 @@ export class LocalHttpProvider implements Provider {
 
   private async *sseIterator(request: GenerateRequest): AsyncGenerator<Token> {
     const response = await this.postChat(request, true)
+    // Diagnostic: log response status and headers for zero-token debugging.
+    console.log(`[aimy] sse: status=${response.status} ok=${response.ok} ` +
+      `model=${this.model} messages=${request.messages.length}`)
     if (!response.ok) throw await httpStatusError(this.name, response)
     if (response.body === null) {
       throw new InferenceError({ provider: this.name, reason: "streaming response had no body" })
@@ -272,6 +275,8 @@ export class LocalHttpProvider implements Provider {
     const decoder = new TextDecoder()
     let buffer = ""
     let sawDone = false
+    let lineCount = 0
+    let tokenCount = 0
     try {
       for (;;) {
         let readResult: Awaited<ReturnType<typeof reader.read>>
@@ -288,13 +293,22 @@ export class LocalHttpProvider implements Provider {
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed.startsWith("data:")) continue
+          lineCount += 1
+          // Log first few SSE lines for debugging.
+          if (lineCount <= 3) {
+            console.log(`[aimy] sse.line[${lineCount}]: ${trimmed.slice(0, 200)}`)
+          }
           const token = parseSsePayload(this.name, trimmed.slice("data:".length))
           if (token === undefined) {
             sawDone = true
+            console.log(`[aimy] sse: done after ${lineCount} lines, ${tokenCount} tokens`)
             return
           }
           // Skip empty deltas (role-only or usage chunks); emit real text.
-          if (token.delta.length > 0) yield token
+          if (token.delta.length > 0) {
+            tokenCount += 1
+            yield token
+          }
         }
       }
       if (!sawDone) {
