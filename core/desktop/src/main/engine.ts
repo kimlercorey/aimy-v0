@@ -153,8 +153,7 @@ export const bootDesktopEngine = async (opts?: {
 
   // Background job registry: process-lifetime, shared across turns.
   // Spawned jobs (via `job.spawn` tool) outlive the turn that created them.
-  // TEMP-TEST: registry creation disabled to isolate zero-token issue
-  // const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
+  const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
 
   // Narration sink: mutable ref populated by IPC handlers once the TTS
   // engine is ready. Before that, `narrate` calls degrade gracefully
@@ -175,10 +174,9 @@ export const bootDesktopEngine = async (opts?: {
   const stack: ChatStack = buildChatStack({
     baseUrl: config.baseUrl,
     model: config.model,
-    extraTools: [retrievalAgentTool]
-    // TEMP-TEST: backgroundJobs and narration removed to isolate zero-token issue
-    // backgroundJobs,
-    // narration: narrationSink
+    extraTools: [retrievalAgentTool],
+    backgroundJobs,
+    narration: narrationSink
   })
   const { layer, provider } = stack
 
