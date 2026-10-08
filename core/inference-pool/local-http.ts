@@ -201,13 +201,20 @@ export class LocalHttpProvider implements Provider {
   private requestBody(request: GenerateRequest, stream: boolean): ChatBody {
     // `params` merges into the body so the loop can pass through extras
     // (temperature, stop, …); it may also override max_tokens explicitly.
-    return {
+    const body = {
       model: this.model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
       max_tokens: request.maxTokens,
       ...(stream ? { stream: true } : {}),
       ...request.params
     }
+    // Diagnostic: log the request shape (not full content — system prompt is long).
+    // Helps isolate desktop-vs-CLI differences.
+    if (typeof process !== "undefined" && process.env["AIMY_DEBUG_REQUEST"] === "1") {
+      console.log(`[aimy] llm.request: model=${body.model} messages=${body.messages.length} ` +
+        `systemLen=${body.messages[0]?.content.length ?? 0} maxTokens=${body.max_tokens} stream=${stream}`)
+    }
+    return body
   }
 
   private async postChat(request: GenerateRequest, stream: boolean): Promise<Response> {

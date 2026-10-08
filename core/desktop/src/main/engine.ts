@@ -153,7 +153,8 @@ export const bootDesktopEngine = async (opts?: {
 
   // Background job registry: process-lifetime, shared across turns.
   // Spawned jobs (via `job.spawn` tool) outlive the turn that created them.
-  const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
+  // TEMP-TEST: registry creation disabled to isolate zero-token issue
+  // const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
 
   // Narration sink: mutable ref populated by IPC handlers once the TTS
   // engine is ready. Before that, `narrate` calls degrade gracefully
