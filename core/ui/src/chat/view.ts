@@ -36,6 +36,107 @@ const messageRow = (h: H, m: ChatMessage) =>
 const formatTokens = (n: number | null): string =>
   n === null ? "unknown" : n.toLocaleString("en-US")
 
+/**
+ * Voice settings panel: engine install + voice clone management.
+ * Rendered under the chat header when `voicePanelOpen`.
+ */
+const voicePanelView = (h: H, session: SessionSlice) => {
+  const engine = session.ttsEngine
+  const rows: Array<ReturnType<H["div"]>> = []
+
+  const errorLine =
+    session.voiceError !== undefined
+      ? h.p([h.Class("voice-error")], [session.voiceError])
+      : undefined
+
+  if (engine.state === "unknown") {
+    rows.push(h.div([h.Class("voice-row")], ["Checking voice engine…"]))
+  } else if (engine.state === "missing") {
+    rows.push(
+      h.div([h.Class("voice-row")], [
+        "The voice engine isn't installed yet — one download (~1–2.5 GB), then every reply can be spoken aloud.",
+      ])
+    )
+    rows.push(
+      h.div([h.Class("voice-row")], [
+        h.button(
+          [h.Class("voice-btn voice-btn-primary"), h.OnClick(Message.TtsInstallRequested({}))],
+          ["Install voice engine"]
+        ),
+      ])
+    )
+  } else if (engine.state === "installing") {
+    rows.push(
+      h.div([h.Class("voice-row")], [
+        `Installing… ${engine.progressMessage ?? "starting"}`,
+      ])
+    )
+  } else if (engine.state === "failed") {
+    rows.push(
+      h.div([h.Class("voice-row")], [`Install failed: ${engine.detail ?? "unknown error"}`])
+    )
+    rows.push(
+      h.div([h.Class("voice-row")], [
+        h.button(
+          [h.Class("voice-btn"), h.OnClick(Message.TtsInstallRequested({}))],
+          ["Retry install"]
+        ),
+      ])
+    )
+  } else {
+    // ready — voice list + clone management
+    rows.push(h.div([h.Class("voice-row voice-ready")], ["Voice engine ready."]))
+    for (const v of session.voices) {
+      const active = session.activeVoiceId === v.id || (session.activeVoiceId === undefined && v.isDefault)
+      rows.push(
+        h.div([h.Class("voice-row")], [
+          h.button(
+            [
+              h.Class(active ? "voice-btn voice-active" : "voice-btn"),
+              h.OnClick(Message.VoiceSelectRequested({ voiceId: v.id })),
+              h.Title(active ? "Active voice" : `Use ${v.name}`),
+            ],
+            [`${active ? "● " : "○ "}${v.name}`]
+          ),
+        ])
+      )
+    }
+    if (session.voices.length === 0) {
+      rows.push(h.div([h.Class("voice-row voice-dim")], ["No voices yet — add one below."]))
+    }
+    rows.push(
+      h.div([h.Class("voice-row")], [
+        h.button(
+          [h.Class("voice-btn"), h.OnClick(Message.VoiceFilePickRequested({}))],
+          ["Add voice…"]
+        ),
+        h.button(
+          [h.Class("voice-btn"), h.OnClick(Message.VoicesRefreshRequested({}))],
+          ["Refresh"]
+        ),
+      ])
+    )
+    rows.push(
+      h.div([h.Class("voice-row voice-dim")], [
+        "Add a voice from a short WAV recording — Chatterbox clones it at synthesis time, no training step.",
+      ])
+    )
+  }
+
+  const children: Array<ReturnType<H["div"]>> = [
+    h.div([h.Class("voice-panel-head")], [
+      h.span([h.Class("voice-panel-title")], ["Voice"]),
+      h.button(
+        [h.Class("voice-btn"), h.OnClick(Message.VoicePanelToggled({ open: false })), h.Title("Close")],
+        ["×"]
+      ),
+    ]),
+    ...rows,
+  ]
+  if (errorLine !== undefined) children.push(errorLine as ReturnType<H["div"]>)
+  return h.section([h.Class("voice-panel")], children)
+}
+
 const contextMeterView = (h: H, meter: ContextMeter) => {
   const used = (meter.inputTokens ?? 0) + (meter.outputTokens ?? 0) + (meter.reasoningTokens ?? 0)
   const pct =
@@ -144,11 +245,20 @@ export const chatPanelView = (session: SessionSlice, h: H) => {
         ],
         [session.voiceEnabled ? "🔊 voice" : "🔇 voice"]
       ),
+      h.button(
+        [
+          h.Class("voice-settings-btn"),
+          h.Title("Voice settings — engine install, voices"),
+          h.OnClick(Message.VoicePanelToggled({ open: !session.voicePanelOpen })),
+        ],
+        ["⚙"]
+      ),
       ...(session.speakingStreamId !== undefined
         ? [h.span([h.Class("speaking-indicator")], ["speaking…"])]
         : []),
       contextMeterView(h, session.contextMeter),
     ]),
+    ...(session.voicePanelOpen ? [voicePanelView(h, session)] : []),
     h.div(
       [
         h.Class("message-list"),

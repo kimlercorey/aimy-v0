@@ -100,6 +100,30 @@ export const SessionSlice = Schema.Struct({
       ),
     })
   ),
+  /** Voice settings panel (engine install + voice clone management). */
+  voicePanelOpen: Schema.Boolean,
+  /**
+   * TTS engine install state. `unknown` until first status fetch;
+   * `progress` carries the latest installer line while installing.
+   */
+  ttsEngine: Schema.Struct({
+    state: Schema.Literals(["unknown", "missing", "installing", "ready", "failed"]),
+    detail: Schema.optional(Schema.String),
+    progressPhase: Schema.optional(Schema.String),
+    progressMessage: Schema.optional(Schema.String),
+  }),
+  /** Voices known to the TTS server (empty until fetched). */
+  voices: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      isDefault: Schema.Boolean,
+    })
+  ),
+  /** The selected voice id (persists server-side via tts.setVoice). */
+  activeVoiceId: Schema.optional(Schema.String),
+  /** Transient voice-panel error line. */
+  voiceError: Schema.optional(Schema.String),
 })
 export type SessionSlice = typeof SessionSlice.Type
 
@@ -237,6 +261,9 @@ export const initialModel = (): Model => ({
     composer: { draft: "" },
     listWindow: { anchorIndex: 0, overscan: 8 },
     voiceEnabled: false,
+    voicePanelOpen: false,
+    ttsEngine: { state: "unknown" },
+    voices: [],
   },
   memoryView: freshPlaceholder("memoryView"),
   moduleRegistry: freshPlaceholder("moduleRegistry"),

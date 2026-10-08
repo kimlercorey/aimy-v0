@@ -45,6 +45,7 @@ import type { Message as TimelineMessage, Model as TimelineModel } from "../time
 import { update as messagingUpdate, Message as MessagingMsg } from "../messaging/index.js"
 import type { MessagingMessage, MessagingModel } from "../messaging/index.js"
 import type { MessagingIpc } from "../messaging/seam.js"
+import type { TtsIpc } from "../voice/seam.js"
 import type { DevtoolsRelay } from "../devtools/seam.js"
 import { AppMessage } from "./messages.js"
 import type { AppModel } from "./model.js"
@@ -61,6 +62,7 @@ export type AppServices =
   | OnboardingPersistence
   | DevtoolsRelay
   | MessagingIpc
+  | TtsIpc
 
 // The shell's update validates `unknown`; the typed envelope is a no-op pass.
 // The shell's update validates `unknown` itself (rejection gate), so the fold

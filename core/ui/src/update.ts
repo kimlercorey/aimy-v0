@@ -26,11 +26,20 @@ import { Update } from "foldkit"
 import { MemoryService } from "../../memory/service.js"
 import type { SafetyKernel } from "../../permission-kernel/index.js"
 import { PersistMemory, RequestPermission, SendToInference } from "./commands.js"
+import {
+  AddVoice,
+  FetchEngineStatus,
+  FetchVoices,
+  InstallEngine,
+  PickVoiceFile,
+  SelectVoice,
+} from "./voice/commands.js"
 import { MAX_REJECTIONS, type Model, type RejectionRecord } from "./model.js"
 import { MESSAGE_TAGS, Message } from "./messages.js"
+import type { TtsIpc } from "./voice/seam.js"
 
 /** Services the shell track's commands require; provided at the shell boundary. */
-export type ShellServices = SafetyKernel | MemoryService
+export type ShellServices = SafetyKernel | MemoryService | TtsIpc
 
 /** Estimated transcript-row height (px) mapping scrollTop -> window anchor. */
 export const ESTIMATED_ROW_PX = 64
@@ -226,12 +235,24 @@ export const update = (
       },
     }),
 
-    VoiceToggled: ({ enabled }) => ({
-      model: {
-        ...model,
-        session: { ...model.session, voiceEnabled: enabled },
-      },
-    }),
+    VoiceToggled: ({ enabled }) => {
+      const engineState = model.session.ttsEngine.state
+      const needsPanel = enabled && (engineState === "unknown" || engineState === "missing")
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            voiceEnabled: enabled,
+            // First enable with no engine: open the panel so the user can
+            // install it — the toggle alone can't produce speech.
+            voicePanelOpen: needsPanel ? true : model.session.voicePanelOpen,
+            voiceError: undefined,
+          },
+        },
+        ...(needsPanel ? { commands: [FetchEngineStatus({})] } : {}),
+      }
+    },
 
     ChannelsReceived: ({ streamId, audioBase64, audioUnavailableReason, expressions }) => ({
       // The audio plays in the voice subscription (a side effect); the model
@@ -273,6 +294,183 @@ export const update = (
               ? undefined
               : model.session.pendingChannels,
         },
+      },
+    }),
+
+    /* -- voice panel -------------------------------------------- */
+
+    VoicePanelToggled: ({ open }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          voicePanelOpen: open,
+          voiceError: undefined,
+        },
+      },
+      ...(open ? { commands: [FetchEngineStatus({})] } : {}),
+    }),
+
+    TtsInstallRequested: () => ({
+      model,
+      commands: [InstallEngine({})],
+    }),
+
+    VoicesRefreshRequested: () => ({
+      model,
+      commands: [FetchVoices({})],
+    }),
+
+    VoiceSelectRequested: ({ voiceId }) => ({
+      model,
+      commands: [SelectVoice({ voiceId })],
+    }),
+
+    VoiceFilePickRequested: () => ({
+      model,
+      commands: [PickVoiceFile({})],
+    }),
+
+    TtsEngineStatusReceived: ({ state, detail }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          ttsEngine: {
+            state,
+            ...(detail !== undefined ? { detail } : {}),
+          },
+          voiceError: undefined,
+        },
+      },
+      ...(state === "ready" ? { commands: [FetchVoices({})] } : {}),
+    }),
+
+    TtsEngineStatusFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          ttsEngine: { state: "failed", detail: reason },
+        },
+      },
+    }),
+
+    TtsInstallStarted: () => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          ttsEngine: { state: "installing", progressMessage: "Starting…" },
+          voiceError: undefined,
+        },
+      },
+    }),
+
+    TtsInstallFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          ttsEngine: { state: "failed", detail: reason },
+        },
+      },
+    }),
+
+    TtsInstallProgressReceived: ({ phase, message }) => {
+      const done = phase === "done"
+      const failed = phase === "error"
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            ttsEngine: done
+              ? { state: "ready" }
+              : failed
+                ? { state: "failed", detail: message }
+                : {
+                    state: "installing",
+                    progressPhase: phase,
+                    progressMessage: message,
+                  },
+            voiceError: undefined,
+          },
+        },
+        ...(done ? { commands: [FetchVoices({})] } : {}),
+      }
+    },
+
+    VoicesReceived: ({ voices }) => {
+      const list = [...voices]
+      const current = model.session.activeVoiceId
+      const stillThere = current !== undefined && list.some((v) => v.id === current)
+      const def = list.find((v) => v.isDefault)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            voices: list,
+            activeVoiceId: stillThere ? current : def?.id,
+            voiceError: undefined,
+          },
+        },
+      }
+    },
+
+    VoicesFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, voiceError: reason },
+      },
+    }),
+
+    VoiceSelected: ({ voiceId }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, activeVoiceId: voiceId, voiceError: undefined },
+      },
+    }),
+
+    VoiceSelectFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, voiceError: reason },
+      },
+    }),
+
+    VoiceFilePicked: ({ name, audioBase64 }) => ({
+      model,
+      commands: [AddVoice({ name, audioBase64 })],
+    }),
+
+    VoiceFilePickCancelled: () => ({ model }),
+
+    VoiceFilePickFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, voiceError: reason },
+      },
+    }),
+
+    VoiceAdded: ({ id, name, isDefault }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          voices: [...model.session.voices, { id, name, isDefault }],
+          voiceError: undefined,
+        },
+      },
+      // Select the new clone immediately.
+      commands: [SelectVoice({ voiceId: id })],
+    }),
+
+    VoiceAddFailed: ({ reason }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, voiceError: reason },
       },
     }),
 

@@ -56,6 +56,32 @@ export interface TtsVoicesResult {
   readonly voices: ReadonlyArray<Voice>
 }
 
+export type TtsEngineStateWire = "missing" | "installing" | "ready" | "failed"
+
+export interface TtsEngineStatusResult {
+  readonly state: TtsEngineStateWire
+  readonly detail?: string | undefined
+}
+
+export interface TtsInstallResult {
+  readonly started: boolean
+}
+
+export interface TtsAddVoiceResult {
+  readonly voice: Voice
+}
+
+export interface TtsPickVoiceFileResult {
+  readonly cancelled: boolean
+  readonly name?: string | undefined
+  readonly audioBase64?: string | undefined
+}
+
+export interface TtsInstallProgressEvent {
+  readonly phase: "python" | "venv" | "deps" | "verify" | "done" | "error"
+  readonly message: string
+}
+
 export interface MessagingStatusResult {
   readonly configured: boolean
   readonly botUsername?: string | undefined
@@ -158,6 +184,10 @@ export type IpcCommand =
   | { _tag: "tts.health" }
   | { _tag: "tts.voices" }
   | { _tag: "tts.setVoice"; voiceId: string }
+  | { _tag: "tts.engineStatus" }
+  | { _tag: "tts.installEngine" }
+  | { _tag: "tts.addVoice"; name: string; audioBase64: string }
+  | { _tag: "tts.pickVoiceFile" }
   | { _tag: "messaging.status" }
   | { _tag: "messaging.validateToken"; token: string }
   | { _tag: "messaging.issueCode" }
@@ -185,6 +215,10 @@ export interface IpcResponse {
   "tts.health": TtsHealthResult
   "tts.voices": TtsVoicesResult
   "tts.setVoice": void
+  "tts.engineStatus": TtsEngineStatusResult
+  "tts.installEngine": TtsInstallResult
+  "tts.addVoice": TtsAddVoiceResult
+  "tts.pickVoiceFile": TtsPickVoiceFileResult
   "messaging.status": MessagingStatusResult
   "messaging.validateToken": MessagingValidateResult
   "messaging.issueCode": MessagingCodeResult
@@ -204,6 +238,7 @@ export type IpcEvent =
   | { _tag: "chat.done"; streamId: string }
   | { _tag: "chat.error"; streamId: string; error: string }
   | { _tag: "chat.channels"; channels: ChatChannelsResult }
+  | { _tag: "tts.installProgress"; progress: TtsInstallProgressEvent }
   | { _tag: "banner.published"; banner: Banner }
   | { _tag: "asc.dialsUpdated"; dials: DialVector }
 
@@ -226,6 +261,10 @@ export const IPC_COMMAND_TAGS = [
   "tts.health",
   "tts.voices",
   "tts.setVoice",
+  "tts.engineStatus",
+  "tts.installEngine",
+  "tts.addVoice",
+  "tts.pickVoiceFile",
   "messaging.status",
   "messaging.validateToken",
   "messaging.issueCode",
@@ -240,6 +279,7 @@ export const IPC_EVENT_TAGS = [
   "chat.done",
   "chat.error",
   "chat.channels",
+  "tts.installProgress",
   "banner.published",
   "asc.dialsUpdated"
 ] as const

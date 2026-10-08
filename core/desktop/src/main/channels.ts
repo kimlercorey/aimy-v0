@@ -11,16 +11,17 @@
  * channels failure never fails the chat turn itself.
  */
 import { Effect } from "effect"
-import { makeTtsService } from "../../../tts/src/index.js"
 import { renderChannels } from "../../../asc-channels/src/index.js"
 import { HttpClient } from "../../../web-retrieval/src/http.js"
 import type { ASCEngineShape } from "../../../asc-engine/index.js"
 import type { DesktopEngine } from "./engine.js"
+import type { TtsEngine } from "./tts-engine.js"
 import type { ChatChannelsResult } from "../ipc/protocol.js"
 
 export interface ChannelsFanOutDeps {
   readonly engine: DesktopEngine
   readonly asc: ASCEngineShape
+  readonly tts: TtsEngine
 }
 
 const toBase64 = (bytes: Uint8Array): string => {
@@ -48,7 +49,7 @@ export const fanOutChannels = (
         const clean = text.trim()
         if (clean === "") return undefined
         const http = yield* HttpClient
-        const tts = makeTtsService({ http })
+        const tts = yield* deps.tts.ttsService(http)
         const dials = yield* deps.asc.currentDials.pipe(
           Effect.catch(() => Effect.succeed(undefined))
         )

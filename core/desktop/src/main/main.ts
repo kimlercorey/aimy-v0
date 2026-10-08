@@ -109,6 +109,7 @@ const createWindow = (): BrowserWindow => {
 }
 
 let engine: DesktopEngine | undefined
+let ipcCleanupHandle: { readonly stop: () => void } | undefined
 
 /** Present only in `--smoke-test` runs (M10 Track 3 acceptance). */
 const SMOKE = process.argv.includes("--smoke-test")
@@ -184,7 +185,7 @@ const boot = async (): Promise<void> => {
     app.quit()
     return
   }
-  registerIpc(ipcMain, engine)
+  ipcCleanupHandle = registerIpc(ipcMain, engine)
   console.log(`smoke: boot complete, SMOKE=${SMOKE}`)
   const win = createWindow()
   console.log("smoke: window created")
@@ -206,4 +207,6 @@ app.on("before-quit", () => {
   const e = engine
   engine = undefined
   if (e !== undefined) void e.shutdown()
+  try { ipcCleanupHandle?.stop() } catch { /* ignore */ }
+  ipcCleanupHandle = undefined
 })

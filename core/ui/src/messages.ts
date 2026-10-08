@@ -93,6 +93,55 @@ export const Message = defineMessageUnion({
   /** The voice subscription took (or skipped) the pending channels. */
   ChannelsConsumed: { streamId: Schema.String },
 
+  /* -- voice panel (engine install + voice clones) ---------------- */
+
+  /** The user opened/closed the voice settings panel. */
+  VoicePanelToggled: { open: Schema.Boolean },
+  /** Button intents — each runs its IPC command. */
+  TtsInstallRequested: {},
+  VoicesRefreshRequested: {},
+  VoiceSelectRequested: { voiceId: Schema.String },
+  VoiceFilePickRequested: {},
+  /** Engine install state from main. */
+  TtsEngineStatusReceived: {
+    state: Schema.Literals(["missing", "installing", "ready", "failed"]),
+    detail: Schema.optional(Schema.String),
+  },
+  TtsEngineStatusFailed: { reason: Schema.String },
+  /** The install job started in main (progress follows via events). */
+  TtsInstallStarted: {},
+  TtsInstallFailed: { reason: Schema.String },
+  /** One installer progress line from the `tts.installProgress` event. */
+  TtsInstallProgressReceived: {
+    phase: Schema.String,
+    message: Schema.String,
+  },
+  /** Voice list from the server. */
+  VoicesReceived: {
+    voices: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        name: Schema.String,
+        isDefault: Schema.Boolean,
+      })
+    ),
+  },
+  VoicesFailed: { reason: Schema.String },
+  /** A voice was selected (persisted server-side). */
+  VoiceSelected: { voiceId: Schema.String },
+  VoiceSelectFailed: { reason: Schema.String },
+  /** Native file picker returned a WAV for cloning. */
+  VoiceFilePicked: { name: Schema.String, audioBase64: Schema.String },
+  VoiceFilePickCancelled: {},
+  VoiceFilePickFailed: { reason: Schema.String },
+  /** The clone was stored server-side. */
+  VoiceAdded: {
+    id: Schema.String,
+    name: Schema.String,
+    isDefault: Schema.Boolean,
+  },
+  VoiceAddFailed: { reason: Schema.String },
+
   SessionBranched: {
     fromId: Schema.String,
     newSessionId: Schema.String,

@@ -36,6 +36,37 @@ import {
 } from "../src/ipc/handlers.js"
 import { loadSovereigntyStore } from "../src/ipc/sovereignty.js"
 import type { MessagingGateway } from "../src/main/messaging.js"
+import type { TtsEngine } from "../src/main/tts-engine.js"
+
+/** In-memory TTS engine stub: install flips to ready, server is a no-op. */
+const stubTtsEngine = (): TtsEngine => {
+  let state: "missing" | "installing" | "ready" | "failed" = "missing"
+  let voiceId: string | undefined
+  // The stub service is never usable: any synthesis attempt defects loudly.
+  const deadService = {
+    speak: () => Effect.die(new Error("stub tts engine: no service")),
+    voices: () => Effect.die(new Error("stub tts engine: no service")),
+    setVoice: () => Effect.die(new Error("stub tts engine: no service")),
+    addVoice: () => Effect.die(new Error("stub tts engine: no service")),
+    health: () =>
+      Effect.succeed({ reachable: false, modelLoaded: false, reason: "stub" as const }),
+  }
+  return {
+    status: () => ({ state }),
+    install: async (onProgress) => {
+      state = "installing"
+      onProgress({ phase: "deps", message: "stub install" })
+      state = "ready"
+      onProgress({ phase: "done", message: "stub installed" })
+    },
+    ensureServer: async () => undefined,
+    stopServer: () => undefined,
+    venvPython: () => "/stub/python",
+    activeVoiceId: () => voiceId,
+    setActiveVoice: (id: string) => { voiceId = id },
+    ttsService: () => Effect.succeed(deadService),
+  }
+}
 
 /** In-memory messaging stub: the wizard commands without any network. */
 const stubMessaging = (): MessagingGateway => {
@@ -287,6 +318,7 @@ const buildTestDeps = async (
     locker: Context.get(ctx, SecretLocker),
     sovereignty: loadSovereigntyStore(path.join(root, "sovereignty.json")),
     messaging: stubMessaging(),
+    tts: stubTtsEngine(),
     paths,
     instanceId
   }
@@ -593,6 +625,44 @@ describe("tts commands", () => {
     await expect(
       invoke("aimy:tts.setVoice", { _tag: "tts.setVoice", voiceId: "v1" })
     ).rejects.toThrow()
+  })
+
+  it("engineStatus reports missing, installEngine starts the stub install", async () => {
+    const t = await setup(scriptOf([]))
+    const { invoke } = t
+    const before = (await invoke("aimy:tts.engineStatus", { _tag: "tts.engineStatus" })) as {
+      state: string
+    }
+    expect(before.state).toBe("missing")
+    const started = (await invoke("aimy:tts.installEngine", { _tag: "tts.installEngine" })) as {
+      started: boolean
+    }
+    expect(started.started).toBe(true)
+    // The stub install completes synchronously: engine is ready now.
+    const after = (await invoke("aimy:tts.engineStatus", { _tag: "tts.engineStatus" })) as {
+      state: string
+    }
+    expect(after.state).toBe("ready")
+    // Second install is a no-op.
+    const again = (await invoke("aimy:tts.installEngine", { _tag: "tts.installEngine" })) as {
+      started: boolean
+    }
+    expect(again.started).toBe(false)
+  })
+
+  it("addVoice validates its inputs before touching the server", async () => {
+    const t = await setup(scriptOf([]))
+    const { invoke } = t
+    await expect(
+      invoke("aimy:tts.addVoice", { _tag: "tts.addVoice", name: "", audioBase64: "eA==" })
+    ).rejects.toThrow(/non-empty string/)
+    await expect(
+      invoke("aimy:tts.addVoice", {
+        _tag: "tts.addVoice",
+        name: "x".repeat(81),
+        audioBase64: "eA==",
+      })
+    ).rejects.toThrow(/at most 80/)
   })
 })
 

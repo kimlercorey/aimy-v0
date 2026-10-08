@@ -64,6 +64,7 @@ import {
 import type { InitialConfig } from "../../../ui/src/onboarding/model.js"
 import { DevtoolsRelay, DevtoolsError, type DevtoolsRelayShape } from "../../../ui/src/devtools/seam.js"
 import { MessagingIpc, type MessagingIpcShape } from "../../../ui/src/messaging/seam.js"
+import { TtsIpc, type TtsIpcShape } from "../../../ui/src/voice/seam.js"
 import { MCP_BIND_HOST } from "../../../ui/src/devtools/model.js"
 import type { AppServices } from "../../../ui/src/composed/index.js"
 import type { IpcCommand, IpcCommandResult } from "../ipc/protocol.js"
@@ -374,6 +375,39 @@ const ipcMessaging: MessagingIpcShape = {
       })),
 }
 
+/** The voice panel's IPC seam: one method per `tts.*` command. */
+const ipcTts: TtsIpcShape = {
+  engineStatus: () =>
+    getAimy()
+      .invoke({ _tag: "tts.engineStatus" })
+      .then((r) => ({
+        state: r.state,
+        ...(r.detail !== undefined ? { detail: r.detail } : {}),
+      })),
+  installEngine: () =>
+    getAimy()
+      .invoke({ _tag: "tts.installEngine" })
+      .then((r) => ({ started: r.started })),
+  voices: () =>
+    getAimy()
+      .invoke({ _tag: "tts.voices" })
+      .then((r) => r.voices.map((v) => ({ id: v.id, name: v.name, isDefault: v.isDefault }))),
+  setVoice: (voiceId: string) =>
+    getAimy().invoke({ _tag: "tts.setVoice", voiceId }).then(() => undefined),
+  addVoice: (name: string, audioBase64: string) =>
+    getAimy()
+      .invoke({ _tag: "tts.addVoice", name, audioBase64 })
+      .then((r) => ({ id: r.voice.id, name: r.voice.name, isDefault: r.voice.isDefault })),
+  pickVoiceFile: () =>
+    getAimy()
+      .invoke({ _tag: "tts.pickVoiceFile" })
+      .then((r) => ({
+        cancelled: r.cancelled,
+        ...(r.name !== undefined ? { name: r.name } : {}),
+        ...(r.audioBase64 !== undefined ? { audioBase64: r.audioBase64 } : {}),
+      })),
+}
+
 /** The full IPC-backed service set for the composed app. */
 export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(SafetyKernel, ipcSafetyKernel),
@@ -386,6 +420,7 @@ export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(ExportInterpreter, ipcExportInterpreter),
   Layer.succeed(OnboardingPersistence, ipcOnboardingPersistence),
   Layer.succeed(DevtoolsRelay, ipcDevtoolsRelay),
-  Layer.succeed(MessagingIpc, ipcMessaging)
+  Layer.succeed(MessagingIpc, ipcMessaging),
+  Layer.succeed(TtsIpc, ipcTts)
 )
 

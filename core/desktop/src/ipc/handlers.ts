@@ -34,10 +34,12 @@
  * services (used by `desktop/test/ipc.test.ts` with in-memory services).
  */
 import { Context, Effect, Layer, Scope, Stream } from "effect"
+import { dialog } from "electron"
 import type { IpcMain, WebContents } from "electron"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { fileURLToPath } from "node:url"
 import { randomUUID } from "node:crypto"
 import type { ChatChunk } from "../../../agent-loop/src/index.js"
 import {
@@ -93,9 +95,9 @@ import {
   type IpcResponse
 } from "./protocol.js"
 import { loadSovereigntyStore, type SovereigntyStore } from "./sovereignty.js"
-import { makeTtsService } from "../../../tts/src/index.js"
 import { HttpClient } from "../../../web-retrieval/src/http.js"
 import { makeMessagingGateway, type MessagingGateway } from "../main/messaging.js"
+import { makeTtsEngine, type TtsEngine } from "../main/tts-engine.js"
 import { fanOutChannels } from "../main/channels.js"
 import type { ChatChannelsResult } from "./protocol.js"
 
@@ -314,6 +316,7 @@ export interface IpcWireDeps extends DesktopServices {
   readonly chatStreams: ChatStreams
   readonly sovereignty: SovereigntyStore
   readonly messaging: MessagingGateway
+  readonly tts: TtsEngine
 }
 
 export interface InvokeContext {
@@ -350,7 +353,10 @@ const reqNumber = (payload: FieldBag, field: string): number => {
   return value
 }
 
-export const createHandlerTable = (deps: IpcWireDeps): HandlerTable => {
+export const createHandlerTable = (
+  deps: IpcWireDeps,
+  broadcast: (evt: IpcEvent) => void
+): HandlerTable => {
   const { engine } = deps
   return {
     "chat.send": async (payload, ctx) => {
@@ -465,7 +471,8 @@ export const createHandlerTable = (deps: IpcWireDeps): HandlerTable => {
       health: await engine.run(
         Effect.gen(function* () {
           const http = yield* HttpClient
-          return yield* makeTtsService({ http }).health()
+          const svc = yield* deps.tts.ttsService(http)
+          return yield* svc.health()
         })
       )
     }),
@@ -473,17 +480,91 @@ export const createHandlerTable = (deps: IpcWireDeps): HandlerTable => {
       voices: await engine.run(
         Effect.gen(function* () {
           const http = yield* HttpClient
-          return yield* makeTtsService({ http }).voices()
+          const svc = yield* deps.tts.ttsService(http)
+          return yield* svc.voices()
         })
       )
     }),
     "tts.setVoice": async (payload) => {
+      const voiceId = reqString(payload, "voiceId")
       await engine.run(
         Effect.gen(function* () {
           const http = yield* HttpClient
-          yield* makeTtsService({ http }).setVoice(reqString(payload, "voiceId"))
+          const svc = yield* deps.tts.ttsService(http)
+          yield* svc.setVoice(voiceId) // validates the id exists
         })
       )
+      // Persisted to disk inside the engine holder: survives restarts and
+      // applies to every future service, including the channels fan-out.
+      deps.tts.setActiveVoice(voiceId)
+    },
+    "tts.addVoice": async (payload) => {
+      const name = reqString(payload, "name")
+      const audioBase64 = reqString(payload, "audioBase64")
+      if (name.length > 80) throw new Error('aimy: command field "name" must be at most 80 characters')
+      let bytes: Uint8Array
+      try {
+        bytes = Uint8Array.from(Buffer.from(audioBase64, "base64"))
+      } catch {
+        throw new Error('aimy: command field "audioBase64" is not valid base64')
+      }
+      // 25 MB cap: reference clips are seconds long; this is generous.
+      if (bytes.length > 25 * 1024 * 1024) {
+        throw new Error("aimy: voice reference audio too large (max 25 MB)")
+      }
+      const voice = await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          const svc = yield* deps.tts.ttsService(http)
+          return yield* svc.addVoice(name, bytes)
+        })
+      )
+      return { voice }
+    },
+    "tts.pickVoiceFile": async () => {
+      const picked = await dialog.showOpenDialog({
+        title: "Choose a voice reference recording",
+        filters: [{ name: "WAV audio", extensions: ["wav"] }],
+        properties: ["openFile"]
+      })
+      if (picked.canceled || picked.filePaths.length === 0) {
+        return { cancelled: true }
+      }
+      const filePath = picked.filePaths[0]!
+      let bytes: Buffer
+      try {
+        bytes = fs.readFileSync(filePath)
+      } catch {
+        throw new Error("aimy: could not read the chosen file")
+      }
+      if (bytes.length > 25 * 1024 * 1024) {
+        throw new Error("aimy: voice reference audio too large (max 25 MB)")
+      }
+      return {
+        cancelled: false,
+        name: path.basename(filePath, path.extname(filePath)),
+        audioBase64: bytes.toString("base64")
+      }
+    },
+    "tts.engineStatus": async () => {
+      const s = deps.tts.status()
+      return { state: s.state, ...(s.detail !== undefined ? { detail: s.detail } : {}) }
+    },
+    "tts.installEngine": async () => {
+      const st = deps.tts.status()
+      if (st.state === "installing" || st.state === "ready") {
+        return { started: false }
+      }
+      // Fire-and-forget: progress streams back as tts.installProgress events.
+      // Errors surface through the event's error phase, never as a rejection
+      // here — the invoke itself only starts the job.
+      void deps.tts
+        .install((progress) => broadcast({ _tag: "tts.installProgress", progress }))
+        .then(
+          () => deps.tts.ensureServer().catch(() => undefined),
+          () => undefined
+        )
+      return { started: true }
     },
     "messaging.status": async () => deps.messaging.status(),
     "messaging.validateToken": async (payload) => {
@@ -568,7 +649,7 @@ export const registerIpcWithDeps = (
   )
 
   const ready: Promise<HandlerTable> = getDepsOnce().then(
-    (deps) => createHandlerTable(deps),
+    (deps) => createHandlerTable(deps, broadcast),
     (error: unknown) => {
       throw new Error(`aimy: services unavailable: ${toCleanMessage(error)}`)
     }
@@ -607,16 +688,27 @@ export const registerIpcWithDeps = (
  * Register every IPC command on the real `ipcMain`, backed by the
  * `DesktopEngine` plus the desktop-owned services booted here. The
  * messaging gateway's runtime (inbound listener + banner forwarder)
- * starts on boot when a token and a paired chat exist.
+ * starts on boot when a token and a paired chat exist; the TTS server
+ * starts on boot when the voice engine is installed.
+ *
+ * Returns a cleanup handle: call `stop()` on app quit to stop the TTS
+ * server child process.
  */
-export const registerIpc: (ipcMain: Electron.IpcMain, engine: DesktopEngine) => void = (
-  ipcMain,
-  engine
-) => {
+export const registerIpc: (
+  ipcMain: Electron.IpcMain,
+  engine: DesktopEngine
+) => { readonly stop: () => void } = (ipcMain, engine) => {
+  // tts-server.py ships in the bundle next to the compiled output
+  // (desktop:assets copies it to dist/tts/server/).
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const serverPy = path.resolve(here, "..", "..", "..", "tts", "server", "tts-server.py")
+  let tts: TtsEngine | undefined
+
   registerIpcWithDeps(ipcMain, engine, async () => {
     const services = await bootDesktopServices()
+    tts = makeTtsEngine({ serverPy })
     const chatStreams = createChatStreams(engine, (streamId, text) =>
-      fanOutChannels({ engine, asc: services.asc }, streamId, text)
+      fanOutChannels({ engine, asc: services.asc, tts: tts! }, streamId, text)
     )
     const messaging = makeMessagingGateway({
       engine,
@@ -625,12 +717,23 @@ export const registerIpc: (ipcMain: Electron.IpcMain, engine: DesktopEngine) => 
       paths: services.paths
     })
     messaging.startRuntime()
+    // Voice server autostart: silent when the engine was never installed.
+    if (tts.status().state === "ready") {
+      void tts.ensureServer().catch(() => undefined)
+    }
     return {
       ...services,
       engine,
       chatStreams,
       sovereignty: loadSovereigntyStore(),
-      messaging
+      messaging,
+      tts
     }
   })
+
+  return {
+    stop: () => {
+      try { tts?.stopServer() } catch { /* ignore */ }
+    }
+  }
 }

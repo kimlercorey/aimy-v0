@@ -243,6 +243,18 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
               )
               break
             }
+            case "tts.installProgress": {
+              const p = evt.progress
+              push(
+                AppMessage.GotShell({
+                  message: ShellMessage.TtsInstallProgressReceived({
+                    phase: p.phase,
+                    message: p.message,
+                  }),
+                })
+              )
+              break
+            }
             default:
               break
           }

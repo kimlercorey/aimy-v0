@@ -11,7 +11,7 @@
     "desktop": "concurrently \"vite --config desktop/vite.config.ts\" \"npm run build && npm run desktop:assets && npm run desktop:preload && AIMY_DEV=1 electron dist/desktop/src/main/main.js\"",
     "dist": "npm run build && npm run desktop:assets && npm run desktop:preload && vite build --config desktop/vite.config.ts && electron-builder --config desktop/electron-builder.yml",
     "desktop:preload": "esbuild desktop/src/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/desktop/src/preload.cjs --log-level=warning",
-    "desktop:assets": "mkdir -p dist/web-retrieval && cp web-retrieval/SKILL.md dist/web-retrieval/SKILL.md"
+    "desktop:assets": "mkdir -p dist/web-retrieval dist/tts/server && cp web-retrieval/SKILL.md dist/web-retrieval/SKILL.md && cp tts/server/tts-server.py dist/tts/server/tts-server.py"
   },
   "keywords": [],
   "author": "",
