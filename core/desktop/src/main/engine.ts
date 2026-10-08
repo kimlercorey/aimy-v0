@@ -174,9 +174,10 @@ export const bootDesktopEngine = async (opts?: {
   const stack: ChatStack = buildChatStack({
     baseUrl: config.baseUrl,
     model: config.model,
-    extraTools: [retrievalAgentTool],
-    backgroundJobs,
-    narration: narrationSink
+    extraTools: [retrievalAgentTool]
+    // TEMP-TEST: backgroundJobs and narration removed to isolate zero-token issue
+    // backgroundJobs,
+    // narration: narrationSink
   })
   const { layer, provider } = stack
 
