@@ -232,8 +232,9 @@ const pumpAudioChunks = (deps: ChunkDeps): Stream.Stream<AppMessage> => {
       const audio = new Audio(`data:audio/wav;base64,${chunk.audioBase64}`)
       try {
         await audio.play()
-      } catch {
-        // Skip failed chunk, continue with next.
+      } catch (error) {
+        // Log playback failures — silent skips hide broken audio.
+        console.error(`[aimy] audio.play failed for chunk ${chunk.sequence}:`, error)
         continue
       }
       await new Promise<void>((resolve) => {
