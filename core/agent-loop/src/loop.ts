@@ -170,6 +170,9 @@ const historyMessages = (
     if (e.kind !== "message") continue
     const { role, text } = e.payload
     if ((role === "user" || role === "assistant") && typeof text === "string") {
+      // Skip empty assistant messages — they're noise from failed turns and
+      // teach the model to return empty. Only keep messages with content.
+      if (role === "assistant" && text.trim().length === 0) continue
       out.push(toChatMessage(role, text))
     }
   }
@@ -192,23 +195,30 @@ const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
  */
 const truncateHistory = (
   history: ReadonlyArray<Message>,
-  maxHistoryTokens: number
+  maxHistoryTokens: number,
+  maxMessages: number = 40
 ): { readonly messages: Array<Message>; readonly truncated: boolean; readonly dropped: number } => {
-  // Estimate from the end (most recent) backwards.
+  // First, limit by message count (models choke on too many messages even if short).
+  let working = history
+  if (working.length > maxMessages) {
+    working = working.slice(working.length - maxMessages)
+  }
+  // Then, estimate from the end (most recent) backwards by tokens.
   let tokens = 0
-  let keepFrom = history.length
-  for (let i = history.length - 1; i >= 0; i--) {
-    const msg = history[i]!
+  let keepFrom = working.length
+  for (let i = working.length - 1; i >= 0; i--) {
+    const msg = working[i]!
     const msgTokens = estimateTokens(msg.content)
     if (tokens + msgTokens > maxHistoryTokens) break
     tokens += msgTokens
     keepFrom = i
   }
-  const dropped = keepFrom
+  const dropped = history.length - (working.length - keepFrom) - (history.length - working.length)
+  const actualDropped = history.length - working.slice(keepFrom).length
   return {
-    messages: history.slice(keepFrom),
-    truncated: dropped > 0,
-    dropped
+    messages: working.slice(keepFrom),
+    truncated: actualDropped > 0,
+    dropped: actualDropped
   }
 }
 
