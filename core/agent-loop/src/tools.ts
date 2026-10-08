@@ -239,9 +239,11 @@ export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): str
     `- job.spawn — start a long-running task in the background and return immediately with a job ID. ` +
       `Use for work taking minutes (deep research) so the conversation stays unblocked. ` +
       `args: { "description": "...", "tool": "<tool-name>", "args": { }, "estimateMinutes": 30 }`,
-    `- narrate — speak a voice-only message (not shown in chat). Use for acknowledgments, transitions, ` +
-      `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
-      `args: { "text": "OK, looking into that now…" }`
+    // TEMP-DISABLED 2026-10-08: narrate tool breaks chat turns (model returns 0 tokens
+    // when it tries to narrate). Re-enable after hardening the narration pipeline.
+    // `- narrate — speak a voice-only message (not shown in chat). Use for acknowledgments, transitions, ` +
+    //   `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
+    //   `args: { "text": "OK, looking into that now…" }`
   ]
   for (const t of extraTools ?? []) {
     lines.push(`- ${t.name} — ${t.description} args: ${t.argsHint}`)
