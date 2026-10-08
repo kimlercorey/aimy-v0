@@ -176,6 +176,42 @@ const historyMessages = (
   return out
 }
 
+/**
+ * Rough token estimate: ~4 characters per token for English text.
+ * Conservative (over-estimates) to avoid context overflow.
+ */
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
+
+/**
+ * Truncate conversation history to fit within a token budget.
+ * Keeps the most recent messages; drops oldest first.
+ * The system prompt and current input are NOT counted here — the caller
+ * reserves budget for them separately.
+ *
+ * Returns the truncated history and whether truncation occurred.
+ */
+const truncateHistory = (
+  history: ReadonlyArray<Message>,
+  maxHistoryTokens: number
+): { readonly messages: Array<Message>; readonly truncated: boolean; readonly dropped: number } => {
+  // Estimate from the end (most recent) backwards.
+  let tokens = 0
+  let keepFrom = history.length
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i]!
+    const msgTokens = estimateTokens(msg.content)
+    if (tokens + msgTokens > maxHistoryTokens) break
+    tokens += msgTokens
+    keepFrom = i
+  }
+  const dropped = keepFrom
+  return {
+    messages: history.slice(keepFrom),
+    truncated: dropped > 0,
+    dropped
+  }
+}
+
 const outcomeToJson = (outcome: ToolOutcome): unknown =>
   outcome._tag === "Ok" ? outcome.value : { _tag: "IoError", reason: outcome.reason }
 
@@ -296,10 +332,21 @@ const makeAgentLoop = ({
         // consults it so the audit runs exactly once per turn.
         const auditDoneRef = yield* Ref.make(false)
 
+        const systemPrompt = buildSystemPrompt(extraTools)
+        // Truncate history to fit context: 64K total, reserve 4K for system
+        // prompt, 4K for input+response, leaving ~56K for history. Conservative.
+        // Without this, long sessions silently return empty (model chokes).
+        const MAX_HISTORY_TOKENS = 56000
+        const { messages: truncatedHistory, truncated, dropped } = truncateHistory(history, MAX_HISTORY_TOKENS)
+        if (truncated) {
+          console.log(`[aimy] history truncated: dropped ${dropped} oldest messages ` +
+            `(${history.length} → ${truncatedHistory.length}) to fit context`)
+        }
+
         const request: GenerateRequest = {
           messages: [
-            { role: "system", content: buildSystemPrompt(extraTools) },
-            ...history,
+            { role: "system", content: systemPrompt },
+            ...truncatedHistory,
             { role: "user", content: input }
           ],
           params: {},
