@@ -246,6 +246,7 @@ export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): str
       `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
       `IMPORTANT: when the user explicitly asks you to speak, say something aloud, or read text aloud, ` +
       `you MUST call this tool — do not just reply with text about speaking. ` +
+      `Keep narrations SHORT (under 20 words) — long texts take 30+ seconds to synthesize. ` +
       `args: { "text": "OK, looking into that now…" }`
   ]
   for (const t of extraTools ?? []) {
