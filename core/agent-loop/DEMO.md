@@ -26,7 +26,7 @@ chunks in order:
   Token  "The current time is:\n`"
   Token  "``aimy-tool\n{\"tool\":\"c"
   Token  "lock.now\",\"args\":{}}\n```"
-  ToolCall  tool=clock.now result="2026-10-07T19:37:21.985Z"
+  ToolCall  tool=clock.now result="2026-10-08T01:23:05.947Z"
   Token  "It "
   Token  "is "
   Token  "noon."
@@ -44,7 +44,7 @@ hook trace: before:clock.now -> after:clock.now:Ok
 ```
 
 The `ToolCall` chunk above carries the tool's real result — the actual
-system clock at run time (`2026-10-07T19:37:21.985Z`) — and the turn report records
+system clock at run time (`2026-10-08T01:23:05.947Z`) — and the turn report records
 `executed.length === 1`, `blocked === []`. The loop never executes tools
 itself; `ModuleHooks.runTurn` owns the gate.
 
@@ -55,7 +55,7 @@ The mock server wrote one SSE chunk, then destroyed the socket with no
 raw exception:
 
 ```
-InferenceError { provider: "m1-http", reason: "transport failure [UND_ERR_SOCKET]: http://127.0.0.1:42417: fetch failed" }
+InferenceError { provider: "m1-http", reason: "transport failure [UND_ERR_SOCKET]: http://127.0.0.1:44785: fetch failed" }
 ```
 
 This is the architecture §12 M1 demo contract: streaming chat with a local

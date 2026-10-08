@@ -43,6 +43,7 @@
     "export/**/*",
     "jobs/**/*",
     "web-retrieval/src/**/*",
+    "deep-research/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]
