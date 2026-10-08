@@ -235,7 +235,7 @@ export type IpcCommandResult<C extends IpcCommand> = IpcResponse[C["_tag"]]
 
 export type IpcEvent =
   | { _tag: "chat.token"; streamId: string; delta: string }
-  | { _tag: "chat.done"; streamId: string }
+  | { _tag: "chat.done"; streamId: string; outputTokens: number }
   | { _tag: "chat.error"; streamId: string; error: string }
   | { _tag: "chat.channels"; channels: ChatChannelsResult }
   | { _tag: "chat.audioChunk"; streamId: string; sequence: number; audioBase64: string }

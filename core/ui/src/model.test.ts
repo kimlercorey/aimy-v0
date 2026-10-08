@@ -33,7 +33,7 @@ describe("Model", () => {
     const m = initialModel()
     expect(m.session._tag).toBe("session")
     expect(m.session.streaming.active).toBe(false)
-    expect(m.session.contextMeter.ceiling).toBe(0)
+    expect(m.session.contextMeter.ceiling).toBe(64000)
     expect(m.session.listWindow.overscan).toBe(8)
   })
 })

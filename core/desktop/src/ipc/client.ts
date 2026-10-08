@@ -23,11 +23,13 @@ export interface IpcClient {
 export interface ChatStreamHandle extends AsyncIterable<string> {
   /** Interrupt the main-side stream and end iteration (idempotent). */
   readonly cancel: () => void
+  /** Token count from the completed stream, if available. */
+  readonly outputTokens: () => number | undefined
 }
 
 type ChatOutcome =
   | { readonly _tag: "token"; readonly delta: string }
-  | { readonly _tag: "done" }
+  | { readonly _tag: "done"; readonly outputTokens: number }
   | { readonly _tag: "error"; readonly error: string }
 
 const toMessage = (error: unknown): string =>
@@ -67,7 +69,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
     const onChatEvent = (evt: ChatIpcEvent): void => {
       if (streamId === undefined || evt.streamId !== streamId) return
       if (evt._tag === "chat.token") push({ _tag: "token", delta: evt.delta })
-      else if (evt._tag === "chat.done") push({ _tag: "done" })
+      else if (evt._tag === "chat.done") push({ _tag: "done", outputTokens: evt.outputTokens })
       else push({ _tag: "error", error: evt.error })
     }
 
@@ -111,13 +113,16 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
       (error) => push({ _tag: "error", error: toMessage(error) })
     )
 
+    let lastOutputTokens: number | undefined
+
     const handle: ChatStreamHandle = {
       cancel: () => {
         cancelRequested = true
         sendCancel()
-        push({ _tag: "done" })
+        push({ _tag: "done", outputTokens: 0 })
         finish()
       },
+      outputTokens: () => lastOutputTokens,
       [Symbol.asyncIterator]: () => {
         let iterDone = false
         const take = (): Promise<ChatOutcome> => {
@@ -133,6 +138,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
             const outcome = await take()
             if (outcome._tag === "token") return { done: false, value: outcome.delta }
             iterDone = true
+            if (outcome._tag === "done") lastOutputTokens = outcome.outputTokens
             finish()
             if (outcome._tag === "error") throw new Error(outcome.error)
             return { done: true, value: undefined }

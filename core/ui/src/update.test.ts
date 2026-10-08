@@ -125,7 +125,9 @@ describe("update: session lifecycle", () => {
     expect(model.session.messages[1]).toMatchObject({ id: "m1", role: "assistant", text: "hi there" })
     expect(model.session.streaming.active).toBe(false)
     expect(model.session.contextMeter).toMatchObject({
-      inputTokens: 10,
+      // inputTokens is estimated from local history (2000 system + message text),
+      // not from usage.inputTokens, because the IPC layer doesn't know the prompt size.
+      inputTokens: 2002,
       outputTokens: 4,
       reasoningTokens: 40,
     })

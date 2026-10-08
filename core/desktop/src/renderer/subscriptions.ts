@@ -85,8 +85,16 @@ const pumpChat = (shellStreamId: string, sessionId: string, input: string): Stre
           message: ShellMessage.StreamChunkReceived({ streamId: shellStreamId, delta: clean })
         })
       }
+      const outputTokens = handle.outputTokens()
       yield AppMessage.GotShell({
-        message: ShellMessage.StreamSettled({ streamId: shellStreamId, text, at: Date.now() })
+        message: ShellMessage.StreamSettled({
+          streamId: shellStreamId,
+          text,
+          at: Date.now(),
+          ...(outputTokens !== undefined
+            ? { usage: { inputTokens: 0, outputTokens, reasoningTokens: 0 } }
+            : {})
+        })
       })
     } catch (error) {
       yield AppMessage.GotShell({

@@ -929,7 +929,7 @@ describe("renderer client", () => {
     fake.emit({ _tag: "chat.token", streamId: "someone-else", delta: "ignored" })
     fake.emit({ _tag: "chat.token", streamId, delta: "a" })
     fake.emit({ _tag: "chat.token", streamId, delta: "b" })
-    fake.emit({ _tag: "chat.done", streamId })
+    fake.emit({ _tag: "chat.done", streamId, outputTokens: 2 })
     await finished
     expect(collected).toEqual(["a", "b"])
     expect(fake.subscriberCount()).toBe(0)

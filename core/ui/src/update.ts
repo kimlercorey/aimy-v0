@@ -175,6 +175,13 @@ export const update = (
     StreamSettled: ({ streamId, text, at, usage }) => {
       if (!streamingActive(model, streamId)) return { model }
       const sessionId = model.session.sessionId
+      // Estimate input tokens from local message history (system prompt ~2K + messages).
+      // The IPC layer provides outputTokens; input is estimated here where history lives.
+      const estimateTokens = (s: string): number => Math.ceil(s.length / 4)
+      const historyTokens = model.session.messages.reduce(
+        (sum, m) => sum + estimateTokens(m.text),
+        2000 // system prompt estimate
+      )
       return {
         model: {
           ...model,
@@ -190,7 +197,7 @@ export const update = (
                 ? model.session.contextMeter
                 : {
                     ...model.session.contextMeter,
-                    inputTokens: usage.inputTokens,
+                    inputTokens: historyTokens,
                     outputTokens: usage.outputTokens,
                     reasoningTokens: usage.reasoningTokens,
                   },
