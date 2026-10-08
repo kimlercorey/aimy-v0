@@ -732,6 +732,7 @@ export const registerIpc: (
     const narrationQueue = new NarrationQueue(
       {
         synthesize: async (text: string): Promise<Uint8Array> => {
+          console.log(`[aimy] narration synthesize: "${text.substring(0, 40)}..."`)
           // Direct to the TTS server (same endpoint the fan-out uses).
           const res = await fetch("http://127.0.0.1:8001/speak", {
             method: "POST",
@@ -745,10 +746,12 @@ export const registerIpc: (
           const bin = atob(data.audio_base64)
           const bytes = new Uint8Array(bin.length)
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          console.log(`[aimy] narration synthesize: got ${bytes.length} bytes`)
           return bytes
         }
       },
       (audio) => {
+        console.log(`[aimy] narration audio ready: id=${audio.id} seq=${audio.sequence} bytes=${audio.audio.length}`)
         // Emit ordered audio chunk to renderers for gapless playback.
         const b64 = Buffer.from(audio.audio).toString("base64")
         broadcast({
@@ -757,6 +760,7 @@ export const registerIpc: (
           sequence: audio.sequence,
           audioBase64: b64
         })
+        console.log(`[aimy] narration audioChunk broadcast`)
       },
       (id, reason) => {
         console.error(`[aimy] narration ${id} failed: ${reason}`)
