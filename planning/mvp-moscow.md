@@ -85,3 +85,18 @@ Non-negotiable: full functionality offline; no feature held hostage to connectiv
 - **WON'T updated:** no React-ecosystem UI (Foldkit committed).
 - **Sandbox backend (locked 2026-10-07):** hybrid — OS-native per platform at MVP (Seatbelt/macOS, namespaces+seccomp/Linux), WASM for portable skill scripts, in-process permission gate for T0/T1. Container runtime dependency rejected (kills the install story); hardened Windows sandboxing deferred. Gates the IronProxy pattern and the software-building module's code execution.
 - **ASC Engine interface freeze (locked 2026-10-07):** rich read, minimal write. Full observability across the boundary (dial history, error-term values, guard flags, L3 narrative stream) — transparency is the product. Writes restricted to evidence updates only. Everything versioned; reads may expand, writes are frozen.
+
+## Phase 2 — post-MVP Must-haves (appended 2026-10-07, Kimler)
+
+Headline capability: **deep research** (spec: `planning/deep-research-spec.md`) —
+`research.query` earning its name: planned multi-query investigation
+(background / evidence / counterpoint / primary-source), corroboration across
+independent sources, honest gaps, visual-first papers. Focus domains:
+competitive landscape for products and ideas, scientific exploration, general
+science. No paid APIs, no cloud tokens, no new infrastructure.
+
+1. **Paper download — Markdown + PDF (Must).** Every research paper
+   downloadable as Markdown (native format, default) and PDF (desktop via
+   Electron `printToPDF` — no new dependencies, no services). Papers
+   optionally carry the evidence-bundle hash so "verified" is checkable when
+   shared, composing with Must #16 (one-click verified export).

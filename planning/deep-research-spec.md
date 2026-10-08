@@ -237,6 +237,11 @@ type Visual =
   the matrix/timeline as aligned text and notes that charts are available
   in the desktop/paper export. A paper exports as a self-contained document
   (markdown + rendered SVGs) the user can keep.
+- **Download (MoSCoW Phase 2 Must):** Markdown is the native download format;
+  PDF via Electron `printToPDF` in the desktop (no new dependencies, no
+  services). Papers optionally carry the evidence-bundle hash so "verified"
+  is checkable when shared — composing with the verified-export machinery
+  (MoSCoW Must #16).
 
 ## 4. Data shapes (summary)
 
