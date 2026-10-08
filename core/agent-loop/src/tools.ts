@@ -174,9 +174,12 @@ const defs: Array<[string, AgentToolDef]> = [
         if (sink === undefined) {
           // No voice in this host — narration is a no-op, not an error.
           // The chat text still carries the information.
+          console.log("[aimy] narrate called but no sink (voice not wired)")
           return Effect.succeed({ narrated: false, reason: "no narration sink in this host" })
         }
+        console.log(`[aimy] narrate: enqueueing "${text.trim().substring(0, 50)}..."`)
         const id = sink.enqueue(text.trim())
+        console.log(`[aimy] narrate: enqueued id=${id}`)
         return Effect.succeed({ narrated: id !== "", narrationId: id })
       }
     }
@@ -241,6 +244,8 @@ export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): str
       `args: { "description": "...", "tool": "<tool-name>", "args": { }, "estimateMinutes": 30 }`,
     `- narrate — speak a voice-only message (not shown in chat). Use for acknowledgments, transitions, ` +
       `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
+      `IMPORTANT: when the user explicitly asks you to speak, say something aloud, or read text aloud, ` +
+      `you MUST call this tool — do not just reply with text about speaking. ` +
       `args: { "text": "OK, looking into that now…" }`
   ]
   for (const t of extraTools ?? []) {

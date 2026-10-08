@@ -169,6 +169,7 @@ export const bootDesktopEngine = async (opts?: {
   // Exposed for handlers.ts to wire up once TTS is available.
   const setNarrationSink = (fn: (text: string) => string): void => {
     narrationEnqueue = fn
+    console.log("[aimy] narration sink wired")
   }
 
   const stack: ChatStack = buildChatStack({
