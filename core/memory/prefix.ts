@@ -22,7 +22,7 @@
  * entry ids. Track B's PinRegistry produces that set; no Pin type is defined
  * here. This module never touches compaction.ts / session-tree.ts signatures.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex } from "../substrate/hash.js"
 import { Data, Effect } from "effect"
 import {
   CompactionWindow,
@@ -60,7 +60,7 @@ export interface PrefixSnapshot {
 
 /** sha256 of the canonical payload — the content fingerprint for the prefix contract. */
 const contentHash = (entry: SessionEntry): string =>
-  createHash("sha256").update(JSON.stringify(entry.payload)).digest("hex")
+  sha256Hex(JSON.stringify(entry.payload))
 
 /**
  * Capture the frozen prefix: protected entry ids in tree (append) order plus

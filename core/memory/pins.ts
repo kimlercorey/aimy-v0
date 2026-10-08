@@ -16,7 +16,7 @@
  * budget, fitCheck fails LOUD with a typed BudgetExceeded — the turn never
  * proceeds with a degraded, unpinned context.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex } from "../substrate/hash.js"
 import { Data, Effect } from "effect"
 import { SessionEntry, SessionTree } from "./session-tree.js"
 
@@ -91,9 +91,7 @@ const canonical = (value: unknown): string => {
 
 /** sha256 of the canonical { kind, payload } — the byte-identity fingerprint. */
 export const contentHash = (entry: Pick<SessionEntry, "kind" | "payload">): string =>
-  createHash("sha256")
-    .update(canonical({ kind: entry.kind, payload: entry.payload }))
-    .digest("hex")
+  sha256Hex(canonical({ kind: entry.kind, payload: entry.payload }))
 
 const indexById = (tree: SessionTree): ReadonlyMap<string, SessionEntry> =>
   new Map(tree.entries.map((e) => [e.id, e]))

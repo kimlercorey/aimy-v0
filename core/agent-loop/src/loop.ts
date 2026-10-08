@@ -22,7 +22,7 @@
  * no tool calls remain, with a turn budget.
  */
 import { Cause, Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { randomUUID } from "node:crypto"
+
 import { AscSelfMonitor, type AscSelfMonitorShape, AscError } from "../../asc-engine/index.js"
 import { HonestyService, type HonestyServiceShape } from "../../honesty/src/service.js"
 import { runPostTurnHonesty, type TurnHonestyReport } from "../../honesty/wiring.js"
@@ -315,7 +315,7 @@ const makeAgentLoop = ({
         // maxToolRounds; a round with no tool calls ends the loop.
         const tailPart: Stream.Stream<ChatChunk, AgentLoopError> = Stream.unwrap(
           Effect.gen(function* () {
-            const turnId = randomUUID()
+            const turnId = crypto.randomUUID()
             const toolCtx: BuiltinToolContext = { sessionId, turnCount, turnId }
             const out: Array<ChatChunk> = []
             const executed: Array<ExecutedToolCall> = []

@@ -31,7 +31,7 @@
  * TRANSPORT is later work (architecture §12 post-MVP #5); this is the
  * channel it will reuse.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex as sha256HexStr } from "../substrate/hash.js"
 import { Context, DateTime, Effect, Layer, PubSub, Stream, type Scope } from "effect"
 
 import type { AimyPaths } from "../substrate/config.js"
@@ -114,7 +114,7 @@ interface BannerState {
 const dedupeIndexKey = (source: string, dedupeKey: string): string => `${source}\n${dedupeKey}`
 
 const sha256Hex = (parts: ReadonlyArray<string>): string =>
-  createHash("sha256").update(parts.join("\n"), "utf-8").digest("hex")
+  sha256HexStr(parts.join("\n"))
 
 /** Deterministic banner id: content hash + sequence (so identical re-publishes without dedupe stay distinct). */
 const bannerId = (input: NewBanner, seq: number): string =>

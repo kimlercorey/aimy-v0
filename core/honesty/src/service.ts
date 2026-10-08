@@ -24,7 +24,7 @@
  * resolves those refs and forces status "failed" when any attached verdict
  * failed.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex } from "../../substrate/hash.js"
 import { Context, Effect, Layer } from "effect"
 import {
   ClaimNotFound,
@@ -88,7 +88,7 @@ const canonicalize = (value: unknown): string => {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`).join(",")}}`
 }
 
-const sha256hex = (input: string): string => createHash("sha256").update(input, "utf8").digest("hex")
+const sha256hex = (input: string): string => sha256Hex(input)
 
 /** claimId: deterministic in (sessionId, turnId, text) — re-recording is idempotent by construction. */
 const claimIdFor = (claim: NewClaim): string =>

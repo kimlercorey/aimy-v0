@@ -14,8 +14,8 @@
  * keys, missing required fields, invalid module name, duplicate tool/hook
  * declarations.
  */
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
+import * as fs from "node:fs/promises"
+import * as path from "node:path"
 import { Effect } from "effect"
 import { ModuleError } from "./errors.js"
 import {
@@ -109,7 +109,7 @@ export const packageModule = (
 ): Effect.Effect<ModulePackage, ModuleError> =>
   Effect.gen(function* () {
     const skillMd = yield* Effect.tryPromise({
-      try: () => readFile(join(dir, "SKILL.md"), "utf8"),
+      try: () => fs.readFile(path.join(dir, "SKILL.md"), "utf8"),
       catch: (e) =>
         new ModuleError({
           module: dir,

@@ -15,7 +15,7 @@
  *   - every entry's parent exists
  *   - compaction entries reference preserved originals (checked in compaction.ts)
  */
-import { createHash } from "node:crypto"
+import { sha256Hex } from "../substrate/hash.js"
 import { Data, Effect } from "effect"
 
 /** Typed error for tree-structure violations. */
@@ -61,10 +61,7 @@ export const makeEntryId = (
   payload: Readonly<Record<string, unknown>>,
   ts: number,
 ): string =>
-  createHash("sha256")
-    .update(JSON.stringify({ parentId, payload, ts }))
-    .digest("hex")
-    .slice(0, 32)
+  sha256Hex(JSON.stringify({ parentId, payload, ts })).slice(0, 32)
 
 const newTree = (sessionId: string): SessionTree => ({
   version: 1,

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { sha256Hex } from "../substrate/hash.js"
 
 import { Context, Effect, Layer, Option, Ref } from "effect"
 
@@ -42,7 +42,7 @@ export interface AppendNarrativeInput {
 
 /** Content-addressed id: `n3-` + first 16 hex chars of sha256(at|turn|text). */
 export const narrativeId = (at: string, turn: number, text: string): string => {
-  const digest = createHash("sha256").update(`${at}|${turn}|${text}`, "utf8").digest("hex")
+  const digest = sha256Hex(`${at}|${turn}|${text}`)
   return `n3-${digest.slice(0, 16)}`
 }
 

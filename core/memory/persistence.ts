@@ -13,7 +13,7 @@
  * exposes the primitives the service uses. Nothing else in the codebase should
  * import this module directly.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex, sha256HexBytes } from "../substrate/hash.js"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Data, Effect } from "effect"
@@ -118,7 +118,7 @@ export const withFileLock = <A, E, R>(
 
 /** sha256 fingerprint of bytes, used for the read-back drift check. */
 export const fingerprint = (bytes: Uint8Array | string): string =>
-  createHash("sha256").update(bytes).digest("hex")
+  typeof bytes === "string" ? sha256Hex(bytes) : sha256HexBytes(bytes)
 
 /**
  * Drift-guarded write: temp file in the same directory + fsync + atomic

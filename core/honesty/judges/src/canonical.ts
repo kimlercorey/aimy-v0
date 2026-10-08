@@ -10,7 +10,7 @@
  * - `deepFreeze`: recursive `Object.freeze`, cycle-safe. The runner freezes
  *   the judge's input before invocation and the verdict before returning it.
  */
-import { createHash } from "node:crypto"
+import { sha256Hex as sha256HexSub } from "../../../substrate/hash.js"
 
 export interface CanonicalResult {
   readonly ok: boolean
@@ -76,7 +76,7 @@ export const canonicalJson = (value: unknown): CanonicalResult => {
     : { ok: false, json: "", reason: "value is not JSON-serializable (cycle, function, or symbol)" }
 }
 
-export const sha256Hex = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex")
+export const sha256Hex = (text: string): string => sha256HexSub(text)
 
 /**
  * Recursively `Object.freeze` a value. Cycle-safe. Returns the same reference.
