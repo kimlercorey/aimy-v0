@@ -34,8 +34,7 @@ describe("extensible tool registry", () => {
     expect(SYSTEM_PROMPT).toContain("clock.now")
     expect(SYSTEM_PROMPT).toContain("session.info")
     expect(SYSTEM_PROMPT).toContain("job.spawn")
-    // TEMP-DISABLED 2026-10-08: narrate removed from prompt (breaks chat turns).
-    // expect(SYSTEM_PROMPT).toContain("narrate")
+    expect(SYSTEM_PROMPT).toContain("narrate")
     expect(SYSTEM_PROMPT).not.toContain("retrieval.query")
   })
 
