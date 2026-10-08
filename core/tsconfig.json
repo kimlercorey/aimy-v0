@@ -44,6 +44,7 @@
     "jobs/**/*",
     "web-retrieval/src/**/*",
     "deep-research/src/**/*",
+    "messaging/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]
