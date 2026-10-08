@@ -63,6 +63,33 @@ def gpu_name() -> str | None:
     return None
 
 
+def _disable_broken_watermarker():
+    """Stub out perth watermarking when it can't import.
+
+    perth 1.0.0 imports pkg_resources, which was removed from setuptools on
+    Python 3.12+. Its __init__ swallows the ImportError and leaves
+    PerthImplicitWatermarker = None, which makes ChatterboxTTS.__init__ raise
+    "TypeError: 'NoneType' object is not callable". Watermarking is
+    non-essential for a personal voice assistant, so when the real
+    watermarker is unavailable we replace it with a no-op that returns the
+    audio unchanged. chatterbox does `import perth` (module attribute
+    access), so patching the module object works.
+    """
+    try:
+        import perth
+    except ImportError:
+        return
+    if getattr(perth, "PerthImplicitWatermarker", None) is not None:
+        return
+
+    class _NoWatermark:
+        def apply_watermark(self, wav, sample_rate=None, **kwargs):
+            return wav
+
+    perth.PerthImplicitWatermarker = _NoWatermark
+    print("[tts] perth watermarker unavailable — watermarking disabled", flush=True)
+
+
 def load_model():
     """Lazy-load Chatterbox. Raises RuntimeError with an honest message."""
     global _model
@@ -75,6 +102,7 @@ def load_model():
             raise RuntimeError(
                 "chatterbox-tts is not installed. Install it with: pip install chatterbox-tts torch"
             ) from e
+        _disable_broken_watermarker()
         device = detect_device()
         print(f"[tts] loading Chatterbox on {device}...", flush=True)
         try:
