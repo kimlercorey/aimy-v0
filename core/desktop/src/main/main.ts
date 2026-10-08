@@ -69,8 +69,8 @@ const enforceCsp = (): void => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const dev = process.env.AIMY_DEV === "1"
     const policy = dev
-      ? "default-src 'none'; script-src 'self' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; img-src 'self' data: http://127.0.0.1:5173; connect-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173"
-      : "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'self'"
+      ? "default-src 'none'; script-src 'self' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; img-src 'self' data: http://127.0.0.1:5173; media-src 'self' data: blob: http://127.0.0.1:5173; connect-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173"
+      : "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'self' data: blob:"
     callback({
       responseHeaders: {
         ...details.responseHeaders,
