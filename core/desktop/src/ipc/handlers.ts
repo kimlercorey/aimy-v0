@@ -172,7 +172,7 @@ export const createChatStreams = (
         // A cancelled stream is already gone from the map: no `done` after
         // a cancel, so the renderer never sees terminal state twice.
         if (active.has(streamId)) {
-          push({ _tag: "chat.done", streamId })
+          push({ _tag: "chat.done", streamId, outputTokens: tokenCount })
           if (onSettled !== undefined) {
             const channels = await onSettled(streamId, text).catch(() => undefined)
             if (channels !== undefined) push({ _tag: "chat.channels", channels })
