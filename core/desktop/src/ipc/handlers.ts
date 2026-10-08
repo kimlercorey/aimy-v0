@@ -722,9 +722,9 @@ export const registerIpc: (
   registerIpcWithDeps(ipcMain, engine, async (broadcast) => {
     const services = await bootDesktopServices()
     tts = makeTtsEngine({ serverPy })
-    const chatStreams = createChatStreams(engine, (streamId, text) =>
-      fanOutChannels({ engine, asc: services.asc, tts: tts! }, streamId, text)
-    )
+    // TEST 2026-10-08: fanOutChannels disabled to isolate the pause culprit.
+    // If the system pause goes away, the automatic TTS synthesis was the cause.
+    const chatStreams = createChatStreams(engine, undefined)
 
     // Voice narration queue: the `narrate` tool enqueues text here;
     // synthesized audio streams back as ordered `chat.audioChunk` events.
