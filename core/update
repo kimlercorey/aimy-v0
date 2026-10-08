@@ -38,7 +38,16 @@ pkill -x "Aimy" 2>/dev/null || true
 pkill -x "aimy" 2>/dev/null || true
 # Dev-mode electron running this repo's main.js
 pkill -f "dist/desktop/src/main/main.js" 2>/dev/null || true
+# Stale vite dev servers from previous runs (they hold port 5173)
+pkill -f "vite --config desktop/vite.config.ts" 2>/dev/null || true
 sleep 1
+# Wait for port 5173 to actually free up before starting a new vite
+for _ in $(seq 1 15); do
+  if ! curl -sf -o /dev/null http://127.0.0.1:5173 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
 
 if [[ "$DIST" == "1" ]]; then
   echo "→ building packaged app (this takes a few minutes)..."
