@@ -35,6 +35,40 @@ import {
   type IpcWireDeps
 } from "../src/ipc/handlers.js"
 import { loadSovereigntyStore } from "../src/ipc/sovereignty.js"
+import type { MessagingGateway } from "../src/main/messaging.js"
+
+/** In-memory messaging stub: the wizard commands without any network. */
+const stubMessaging = (): MessagingGateway => {
+  let token: string | undefined
+  let code: string | undefined
+  let paired = false
+  let kinds: ReadonlyArray<string> = ["success", "critical"]
+  return {
+    status: async () => ({
+      configured: token !== undefined,
+      botUsername: token !== undefined ? "stubbot" : undefined,
+      paired,
+      forwardingKinds: kinds,
+    }),
+    validateToken: async (t: string) => {
+      if (t === "bad") return { ok: false, error: "Token invalid: bad" }
+      token = t
+      return { ok: true, botUsername: "stubbot" }
+    },
+    issueCode: async () => {
+      code = "123456"
+      return { code, expiresAt: new Date(Date.now() + 300_000).toISOString() }
+    },
+    checkPairing: async () => ({ paired }),
+    getForwarding: async () => ({ kinds }),
+    setForwarding: async (k: ReadonlyArray<string>) => {
+      kinds = k
+    },
+    testMessage: async () =>
+      token !== undefined && paired ? { ok: true } : { ok: false, error: "not ready" },
+    startRuntime: () => undefined,
+  }
+}
 import {
   type AimyBridgeApi,
   type IpcCommand,
@@ -56,6 +90,7 @@ import {
   type Provenance
 } from "../../learning/src/timeline.js"
 import { AllowAllGate, MemoryPaths, MemoryService, MemoryServiceLive } from "../../memory/service.js"
+import { makeMockHttpClient, HttpClient } from "../../web-retrieval/src/http.js"
 import { ModuleHost, makeModuleHost } from "../../module-seam/src/host.js"
 import { ModuleLifecycle, ModuleLifecycleLive } from "../../module-seam/src/lifecycle.js"
 import { makeModuleHooks } from "../../module-seam/src/hooks.js"
@@ -96,7 +131,9 @@ const scriptOf = (
 
 // ── fake engine ─────────────────────────────────────────────────────────────
 
-const buildTestEngineLayer = (root: string): Layer.Layer<MemoryService | ModuleHost, never, never> => {
+const buildTestEngineLayer = (
+  root: string
+): Layer.Layer<MemoryService | ModuleHost | import("../../web-retrieval/src/http.js").HttpClient, never, never> => {
   const memoryLayer = Layer.provide(
     MemoryServiceLive,
     Layer.mergeAll(
@@ -125,7 +162,13 @@ const buildTestEngineLayer = (root: string): Layer.Layer<MemoryService | ModuleH
     ),
     ModuleLifecycleLive
   )
-  return Layer.mergeAll(memoryLayer, hostLayer)
+  return Layer.mergeAll(
+    memoryLayer,
+    hostLayer,
+    // No network in tests: every request fails like a refused connection,
+    // so tts.health honestly reports unreachable and voices/setVoice fail.
+    makeMockHttpClient(() => Effect.fail(new Error("connection refused") as never))
+  )
 }
 
 /**
@@ -136,16 +179,18 @@ const buildTestEngineLayer = (root: string): Layer.Layer<MemoryService | ModuleH
  */
 const makeFakeEngine = (
   script: () => AsyncGenerator<ChatChunk>,
-  engineCtx: Context.Context<MemoryService | ModuleHost>
+  engineCtx: Context.Context<MemoryService | ModuleHost | import("../../web-retrieval/src/http.js").HttpClient>
 ): DesktopEngine => {
   const memory = Context.get(engineCtx, MemoryService)
   const host = Context.get(engineCtx, ModuleHost)
+  const http = Context.get(engineCtx, HttpClient)
   return {
     run: <A, E>(effect: Effect.Effect<A, E, EngineRequirements>): Promise<A> =>
       Effect.runPromise(
         effect.pipe(
           Effect.provideService(MemoryService, memory),
-          Effect.provideService(ModuleHost, host)
+          Effect.provideService(ModuleHost, host),
+          Effect.provideService(HttpClient, http)
         ) as Effect.Effect<A, E, never>
       ),
     chatStream: (_sessionId: string, _input: string): AsyncIterable<ChatChunk> => ({
@@ -241,6 +286,7 @@ const buildTestDeps = async (
     identity: Context.get(ctx, IdentityService),
     locker: Context.get(ctx, SecretLocker),
     sovereignty: loadSovereigntyStore(path.join(root, "sovereignty.json")),
+    messaging: stubMessaging(),
     paths,
     instanceId
   }
@@ -478,6 +524,75 @@ describe("ipc command round-trips", () => {
     await expect(
       t.invoke("aimy:chat.cancel", { _tag: "chat.cancel", streamId: "no-such-stream" })
     ).rejects.toThrow(/unknown chat stream/)
+  })
+})
+
+describe("messaging wizard commands", () => {
+  it("validate → issue code → status → forwarding → test", async () => {
+    const t = await setup(scriptOf([]))
+    const { invoke } = t
+
+    const status0 = (await invoke("aimy:messaging.status", {
+      _tag: "messaging.status"
+    })) as { configured: boolean; paired: boolean }
+    expect(status0.configured).toBe(false)
+    expect(status0.paired).toBe(false)
+
+    const bad = (await invoke("aimy:messaging.validateToken", {
+      _tag: "messaging.validateToken",
+      token: "bad"
+    })) as { ok: boolean; error?: string }
+    expect(bad.ok).toBe(false)
+
+    const good = (await invoke("aimy:messaging.validateToken", {
+      _tag: "messaging.validateToken",
+      token: "good-token"
+    })) as { ok: boolean; botUsername?: string }
+    expect(good.ok).toBe(true)
+    expect(good.botUsername).toBe("stubbot")
+
+    const codeRes = (await invoke("aimy:messaging.issueCode", {
+      _tag: "messaging.issueCode"
+    })) as { code: string; expiresAt: string }
+    expect(codeRes.code).toBe("123456")
+
+    const pairing = (await invoke("aimy:messaging.checkPairing", {
+      _tag: "messaging.checkPairing"
+    })) as { paired: boolean }
+    expect(pairing.paired).toBe(false)
+
+    const fwd0 = (await invoke("aimy:messaging.getForwarding", {
+      _tag: "messaging.getForwarding"
+    })) as { kinds: ReadonlyArray<string> }
+    expect(fwd0.kinds).toContain("critical")
+    await invoke("aimy:messaging.setForwarding", {
+      _tag: "messaging.setForwarding",
+      kinds: ["critical"]
+    })
+    const fwd1 = (await invoke("aimy:messaging.getForwarding", {
+      _tag: "messaging.getForwarding"
+    })) as { kinds: ReadonlyArray<string> }
+    expect(fwd1.kinds).toEqual(["critical"])
+
+    await expect(
+      invoke("aimy:messaging.setForwarding", { _tag: "messaging.setForwarding", kinds: "x" })
+    ).rejects.toThrow(/array of strings/)
+  })
+})
+
+describe("tts commands", () => {
+  it("health, voices, setVoice dispatch through the protocol", async () => {
+    const t = await setup(scriptOf([]))
+    const { invoke } = t
+    // No TTS server in tests: health reports unreachable (a result, not a throw).
+    const health = (await invoke("aimy:tts.health", { _tag: "tts.health" })) as {
+      health: { reachable: boolean }
+    }
+    expect(health.health.reachable).toBe(false)
+    await expect(invoke("aimy:tts.voices", { _tag: "tts.voices" })).rejects.toThrow()
+    await expect(
+      invoke("aimy:tts.setVoice", { _tag: "tts.setVoice", voiceId: "v1" })
+    ).rejects.toThrow()
   })
 })
 

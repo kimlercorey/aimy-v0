@@ -63,6 +63,7 @@ import {
 } from "../../../ui/src/onboarding/seam.js"
 import type { InitialConfig } from "../../../ui/src/onboarding/model.js"
 import { DevtoolsRelay, DevtoolsError, type DevtoolsRelayShape } from "../../../ui/src/devtools/seam.js"
+import { MessagingIpc, type MessagingIpcShape } from "../../../ui/src/messaging/seam.js"
 import { MCP_BIND_HOST } from "../../../ui/src/devtools/model.js"
 import type { AppServices } from "../../../ui/src/composed/index.js"
 import type { IpcCommand, IpcCommandResult } from "../ipc/protocol.js"
@@ -329,6 +330,50 @@ const ipcDevtoolsRelay: DevtoolsRelayShape = {
     Effect.fail(new DevtoolsError({ reason: "devtools: publishing from the renderer is disabled (relay not bound)" }))
 }
 
+/** The messaging slice's IPC seam: one method per `messaging.*` command. */
+const ipcMessaging: MessagingIpcShape = {
+  status: () =>
+    getAimy()
+      .invoke({ _tag: "messaging.status" })
+      .then((r) => ({
+        configured: r.configured,
+        ...(r.botUsername !== undefined ? { botUsername: r.botUsername } : {}),
+        paired: r.paired,
+        forwardingKinds: [...r.forwardingKinds],
+      })),
+  validateToken: (token: string) =>
+    getAimy()
+      .invoke({ _tag: "messaging.validateToken", token })
+      .then((r) => ({
+        ok: r.ok,
+        ...(r.botUsername !== undefined ? { botUsername: r.botUsername } : {}),
+        ...(r.error !== undefined ? { error: r.error } : {}),
+      })),
+  issueCode: () =>
+    getAimy()
+      .invoke({ _tag: "messaging.issueCode" })
+      .then((r) => ({ code: r.code, expiresAt: r.expiresAt })),
+  checkPairing: () =>
+    getAimy()
+      .invoke({ _tag: "messaging.checkPairing" })
+      .then((r) => ({ paired: r.paired })),
+  getForwarding: () =>
+    getAimy()
+      .invoke({ _tag: "messaging.getForwarding" })
+      .then((r) => ({ kinds: [...r.kinds] })),
+  setForwarding: (kinds: ReadonlyArray<string>) =>
+    getAimy()
+      .invoke({ _tag: "messaging.setForwarding", kinds: [...kinds] })
+      .then(() => undefined),
+  testMessage: () =>
+    getAimy()
+      .invoke({ _tag: "messaging.testMessage" })
+      .then((r) => ({
+        ok: r.ok,
+        ...(r.error !== undefined ? { error: r.error } : {}),
+      })),
+}
+
 /** The full IPC-backed service set for the composed app. */
 export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(SafetyKernel, ipcSafetyKernel),
@@ -340,5 +385,7 @@ export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(LearningTimeline, ipcLearningTimeline),
   Layer.succeed(ExportInterpreter, ipcExportInterpreter),
   Layer.succeed(OnboardingPersistence, ipcOnboardingPersistence),
-  Layer.succeed(DevtoolsRelay, ipcDevtoolsRelay)
+  Layer.succeed(DevtoolsRelay, ipcDevtoolsRelay),
+  Layer.succeed(MessagingIpc, ipcMessaging)
 )
+

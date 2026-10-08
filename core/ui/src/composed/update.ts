@@ -42,6 +42,9 @@ import { update as sovereigntyUpdate } from "../sovereignty/index.js"
 import type { SovereigntyMessage, SovereigntyModel } from "../sovereignty/index.js"
 import { update as timelineUpdate } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
+import { update as messagingUpdate, Message as MessagingMsg } from "../messaging/index.js"
+import type { MessagingMessage, MessagingModel } from "../messaging/index.js"
+import type { MessagingIpc } from "../messaging/seam.js"
 import type { DevtoolsRelay } from "../devtools/seam.js"
 import { AppMessage } from "./messages.js"
 import type { AppModel } from "./model.js"
@@ -57,6 +60,7 @@ export type AppServices =
   | ExportInterpreter
   | OnboardingPersistence
   | DevtoolsRelay
+  | MessagingIpc
 
 // The shell's update validates `unknown`; the typed envelope is a no-op pass.
 // The shell's update validates `unknown` itself (rejection gate), so the fold
@@ -131,6 +135,14 @@ const foldBanners = Update.foldChild({
   toParentMessage: (message) => AppMessage.GotBanners({ message }),
 })
 
+const foldMessaging = Update.foldChild({
+  update: (childModel: MessagingModel, input: MessagingMessage) =>
+    messagingUpdate(childModel, input),
+  read: (model: AppModel) => Option.some(model.messaging),
+  write: (model, messaging) => ({ ...model, messaging }),
+  toParentMessage: (message) => AppMessage.GotMessaging({ message }),
+})
+
 export const update = (
   model: AppModel,
   rawMessage: unknown,
@@ -154,6 +166,15 @@ export const update = (
     GotTimeline: ({ message }) => foldTimeline(model, message),
     GotJobs: ({ message }) => foldJobs(model, message),
     GotBanners: ({ message }) => foldBanners(model, message),
-    SelectPanel: ({ panel }) => ({ model: { ...model, activePanel: panel } }),
+    GotMessaging: ({ message }) => foldMessaging(model, message),
+    SelectPanel: ({ panel }) => {
+      if (panel !== "messaging") return { model: { ...model, activePanel: panel } }
+      // Opening the messaging panel refreshes its status from main.
+      const withPanel = { ...model, activePanel: panel }
+      return foldMessaging(
+        withPanel,
+        MessagingMsg.StatusRequested({})
+      )
+    },
   })
 }

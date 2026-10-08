@@ -21,6 +21,8 @@ import type { OnboardingMessage } from "../onboarding/index.js"
 import { Message as OnboardingMsg } from "../onboarding/index.js"
 import type { BannersMessageType, JobsMessageType } from "../ops/index.js"
 import { BannersMessage, JobsMessage } from "../ops/index.js"
+import type { MessagingMessage } from "../messaging/index.js"
+import { Message as MessagingMsg } from "../messaging/index.js"
 import type { SovereigntyMessage } from "../sovereignty/index.js"
 import { Message as SovereigntyMsg } from "../sovereignty/index.js"
 import type { TimelineMessage } from "../timeline/index.js"
@@ -37,6 +39,7 @@ export const AppMessage = defineMessageUnion({
   GotTimeline: { message: TimelineMsg },
   GotJobs: { message: JobsMessage },
   GotBanners: { message: BannersMessage },
+  GotMessaging: { message: MessagingMsg },
   SelectPanel: { panel: PanelId },
 })
 export type AppMessage = typeof AppMessage.Type
@@ -52,4 +55,5 @@ export type {
   ShellMessage,
   SovereigntyMessage,
   TimelineMessage,
+  MessagingMessage,
 }

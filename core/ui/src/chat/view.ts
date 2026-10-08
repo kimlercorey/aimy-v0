@@ -136,6 +136,17 @@ export const chatPanelView = (session: SessionSlice, h: H) => {
     h.header([h.Class("chat-header")], [
       h.span([h.Class("session-id")], [`session ${session.sessionId}`]),
       h.span([h.Class("branch-id")], [`branch ${session.branchId}`]),
+      h.button(
+        [
+          h.Class(session.voiceEnabled ? "voice-toggle voice-on" : "voice-toggle voice-off"),
+          h.Title(session.voiceEnabled ? "Voice off" : "Voice on — speak each reply"),
+          h.OnClick(Message.VoiceToggled({ enabled: !session.voiceEnabled })),
+        ],
+        [session.voiceEnabled ? "🔊 voice" : "🔇 voice"]
+      ),
+      ...(session.speakingStreamId !== undefined
+        ? [h.span([h.Class("speaking-indicator")], ["speaking…"])]
+        : []),
       contextMeterView(h, session.contextMeter),
     ]),
     h.div(

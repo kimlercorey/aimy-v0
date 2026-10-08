@@ -20,11 +20,71 @@ import type { Banner } from "../../../comms/index.js"
 import type { DialVector } from "../../../asc-engine/index.js"
 import type { LearningNode } from "../../../learning/src/index.js"
 import type { JobDescriptor, JobStatus } from "../../../jobs/src/index.js"
+import type { AUFrame } from "../../../asc-channels/src/index.js"
+import type { TtsHealth, Voice } from "../../../tts/src/index.js"
 
 // ── Commands (renderer → main, request/response) ────────────────────────────
 
 export interface ChatSendResult {
   readonly streamId: string
+}
+
+/** One FACS keyframe, JSON-safe for the bridge. */
+export interface ExpressionCueWire {
+  readonly atMs: number
+  readonly frame: AUFrame
+}
+
+/** The simultaneous-channels payload for one settled turn. */
+export interface ChatChannelsResult {
+  readonly streamId: string
+  /** Speakable text (markdown stripped), for captioning. */
+  readonly spoken: string
+  /** WAV bytes as base64; absent when TTS was unavailable. */
+  readonly audioBase64?: string | undefined
+  /** Set exactly when audioBase64 is absent: why. */
+  readonly audioUnavailableReason?: string | undefined
+  readonly expressions: ReadonlyArray<ExpressionCueWire>
+  readonly durationMs: number
+}
+
+export interface TtsHealthResult {
+  readonly health: TtsHealth
+}
+
+export interface TtsVoicesResult {
+  readonly voices: ReadonlyArray<Voice>
+}
+
+export interface MessagingStatusResult {
+  readonly configured: boolean
+  readonly botUsername?: string | undefined
+  readonly paired: boolean
+  readonly forwardingKinds: ReadonlyArray<string>
+}
+
+export interface MessagingValidateResult {
+  readonly ok: boolean
+  readonly botUsername?: string | undefined
+  readonly error?: string | undefined
+}
+
+export interface MessagingCodeResult {
+  readonly code: string
+  readonly expiresAt: string
+}
+
+export interface MessagingPairingResult {
+  readonly paired: boolean
+}
+
+export interface MessagingForwardingResult {
+  readonly kinds: ReadonlyArray<string>
+}
+
+export interface MessagingTestResult {
+  readonly ok: boolean
+  readonly error?: string | undefined
 }
 
 export interface BannersListResult {
@@ -95,6 +155,16 @@ export type IpcCommand =
   | { _tag: "timeline.list" }
   | { _tag: "config.get" }
   | { _tag: "config.set"; baseUrl: string; model: string }
+  | { _tag: "tts.health" }
+  | { _tag: "tts.voices" }
+  | { _tag: "tts.setVoice"; voiceId: string }
+  | { _tag: "messaging.status" }
+  | { _tag: "messaging.validateToken"; token: string }
+  | { _tag: "messaging.issueCode" }
+  | { _tag: "messaging.checkPairing" }
+  | { _tag: "messaging.getForwarding" }
+  | { _tag: "messaging.setForwarding"; kinds: ReadonlyArray<string> }
+  | { _tag: "messaging.testMessage" }
 
 /** The response type for each command tag (index for Track 2's handler table). */
 export interface IpcResponse {
@@ -112,6 +182,16 @@ export interface IpcResponse {
   "timeline.list": TimelineListResult
   "config.get": DesktopConfigView
   "config.set": void
+  "tts.health": TtsHealthResult
+  "tts.voices": TtsVoicesResult
+  "tts.setVoice": void
+  "messaging.status": MessagingStatusResult
+  "messaging.validateToken": MessagingValidateResult
+  "messaging.issueCode": MessagingCodeResult
+  "messaging.checkPairing": MessagingPairingResult
+  "messaging.getForwarding": MessagingForwardingResult
+  "messaging.setForwarding": void
+  "messaging.testMessage": MessagingTestResult
 }
 
 /** Helper: response type for a given command. */
@@ -123,6 +203,7 @@ export type IpcEvent =
   | { _tag: "chat.token"; streamId: string; delta: string }
   | { _tag: "chat.done"; streamId: string }
   | { _tag: "chat.error"; streamId: string; error: string }
+  | { _tag: "chat.channels"; channels: ChatChannelsResult }
   | { _tag: "banner.published"; banner: Banner }
   | { _tag: "asc.dialsUpdated"; dials: DialVector }
 
@@ -141,13 +222,24 @@ export const IPC_COMMAND_TAGS = [
   "jobs.runNow",
   "timeline.list",
   "config.get",
-  "config.set"
+  "config.set",
+  "tts.health",
+  "tts.voices",
+  "tts.setVoice",
+  "messaging.status",
+  "messaging.validateToken",
+  "messaging.issueCode",
+  "messaging.checkPairing",
+  "messaging.getForwarding",
+  "messaging.setForwarding",
+  "messaging.testMessage"
 ] as const
 
 export const IPC_EVENT_TAGS = [
   "chat.token",
   "chat.done",
   "chat.error",
+  "chat.channels",
   "banner.published",
   "asc.dialsUpdated"
 ] as const

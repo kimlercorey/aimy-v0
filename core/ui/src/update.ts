@@ -226,6 +226,56 @@ export const update = (
       },
     }),
 
+    VoiceToggled: ({ enabled }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, voiceEnabled: enabled },
+      },
+    }),
+
+    ChannelsReceived: ({ streamId, audioBase64, audioUnavailableReason, expressions }) => ({
+      // The audio plays in the voice subscription (a side effect); the model
+      // holds the payload transiently until playback starts or is skipped.
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          pendingChannels: { streamId, audioBase64, audioUnavailableReason, expressions: [...expressions] },
+        },
+      },
+    }),
+
+    SpeechStarted: ({ streamId }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, speakingStreamId: streamId },
+      },
+    }),
+
+    SpeechEnded: ({ streamId }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          speakingStreamId:
+            model.session.speakingStreamId === streamId ? undefined : model.session.speakingStreamId,
+        },
+      },
+    }),
+
+    ChannelsConsumed: ({ streamId }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          pendingChannels:
+            model.session.pendingChannels?.streamId === streamId
+              ? undefined
+              : model.session.pendingChannels,
+        },
+      },
+    }),
+
     ChatListScrolled: ({ scrollTop }) => ({
       model: {
         ...model,

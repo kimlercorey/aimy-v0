@@ -148,4 +148,12 @@ export const update = (
     PreviewRendererChanged: ({ renderer }) => ({
       model: { ...model, renderer },
     }),
+
+    ExpressionFrameShown: ({ frame }) => ({
+      model: { ...model, expressionFrame: frame },
+    }),
+
+    ExpressionFrameCleared: () => ({
+      model: { ...model, expressionFrame: undefined },
+    }),
   })

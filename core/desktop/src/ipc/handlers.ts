@@ -93,6 +93,11 @@ import {
   type IpcResponse
 } from "./protocol.js"
 import { loadSovereigntyStore, type SovereigntyStore } from "./sovereignty.js"
+import { makeTtsService } from "../../../tts/src/index.js"
+import { HttpClient } from "../../../web-retrieval/src/http.js"
+import { makeMessagingGateway, type MessagingGateway } from "../main/messaging.js"
+import { fanOutChannels } from "../main/channels.js"
+import type { ChatChannelsResult } from "./protocol.js"
 
 // ── Error hygiene ───────────────────────────────────────────────────────────
 
@@ -115,6 +120,11 @@ export interface ChatStreams {
    * becomes a `chat.token` event via `push`, then `chat.done`; a stream
    * failure becomes `chat.error` with a clean message. Returns the streamId.
    * The pump is detached — `start` returns as soon as the stream exists.
+   *
+   * When `onSettled` is provided, the full turn text is accumulated and the
+   * callback's result (the simultaneous-channels payload) is pushed as a
+   * `chat.channels` event right after `chat.done`. Channels never fail the
+   * turn: an undefined result simply means no channels event.
    */
   readonly start: (
     sessionId: string,
@@ -127,7 +137,10 @@ export interface ChatStreams {
   readonly activeIds: () => ReadonlyArray<string>
 }
 
-export const createChatStreams = (engine: DesktopEngine): ChatStreams => {
+export const createChatStreams = (
+  engine: DesktopEngine,
+  onSettled?: (streamId: string, text: string) => Promise<ChatChannelsResult | undefined>
+): ChatStreams => {
   const active = new Map<string, AsyncIterator<ChatChunk>>()
 
   const start: ChatStreams["start"] = (sessionId, input, push) => {
@@ -136,11 +149,13 @@ export const createChatStreams = (engine: DesktopEngine): ChatStreams => {
     const iterator = engine.chatStream(sessionId, input)[Symbol.asyncIterator]()
     active.set(streamId, iterator)
     void (async (): Promise<void> => {
+      let text = ""
       try {
         for (;;) {
           const next = await iterator.next()
           if (next.done === true) break
           if (next.value._tag === "Token") {
+            text += next.value.delta
             push({ _tag: "chat.token", streamId, delta: next.value.delta })
           }
           // Non-token chunks (ToolCall, Done) have no IPC event — the
@@ -148,7 +163,13 @@ export const createChatStreams = (engine: DesktopEngine): ChatStreams => {
         }
         // A cancelled stream is already gone from the map: no `done` after
         // a cancel, so the renderer never sees terminal state twice.
-        if (active.has(streamId)) push({ _tag: "chat.done", streamId })
+        if (active.has(streamId)) {
+          push({ _tag: "chat.done", streamId })
+          if (onSettled !== undefined) {
+            const channels = await onSettled(streamId, text).catch(() => undefined)
+            if (channels !== undefined) push({ _tag: "chat.channels", channels })
+          }
+        }
       } catch (error) {
         if (active.has(streamId)) {
           push({ _tag: "chat.error", streamId, error: toCleanMessage(error) })
@@ -292,6 +313,7 @@ export interface IpcWireDeps extends DesktopServices {
   readonly engine: DesktopEngine
   readonly chatStreams: ChatStreams
   readonly sovereignty: SovereigntyStore
+  readonly messaging: MessagingGateway
 }
 
 export interface InvokeContext {
@@ -438,7 +460,48 @@ export const createHandlerTable = (deps: IpcWireDeps): HandlerTable => {
       const file = desktopConfigPath()
       fs.mkdirSync(path.dirname(file), { recursive: true })
       fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 })
-    }
+    },
+    "tts.health": async () => ({
+      health: await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          return yield* makeTtsService({ http }).health()
+        })
+      )
+    }),
+    "tts.voices": async () => ({
+      voices: await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          return yield* makeTtsService({ http }).voices()
+        })
+      )
+    }),
+    "tts.setVoice": async (payload) => {
+      await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          yield* makeTtsService({ http }).setVoice(reqString(payload, "voiceId"))
+        })
+      )
+    },
+    "messaging.status": async () => deps.messaging.status(),
+    "messaging.validateToken": async (payload) => {
+      const token = reqString(payload, "token")
+      if (token.length > 200) throw new Error("aimy: token implausibly long")
+      return deps.messaging.validateToken(token)
+    },
+    "messaging.issueCode": async () => deps.messaging.issueCode(),
+    "messaging.checkPairing": async () => deps.messaging.checkPairing(),
+    "messaging.getForwarding": async () => deps.messaging.getForwarding(),
+    "messaging.setForwarding": async (payload) => {
+      const kinds = payload["kinds"]
+      if (!Array.isArray(kinds) || !kinds.every((k): k is string => typeof k === "string")) {
+        throw new Error('aimy: command field "kinds" must be an array of strings')
+      }
+      await deps.messaging.setForwarding(kinds)
+    },
+    "messaging.testMessage": async () => deps.messaging.testMessage()
   }
 }
 
@@ -542,17 +605,32 @@ export const registerIpcWithDeps = (
 
 /**
  * Register every IPC command on the real `ipcMain`, backed by the
- * `DesktopEngine` plus the desktop-owned services booted here.
+ * `DesktopEngine` plus the desktop-owned services booted here. The
+ * messaging gateway's runtime (inbound listener + banner forwarder)
+ * starts on boot when a token and a paired chat exist.
  */
 export const registerIpc: (ipcMain: Electron.IpcMain, engine: DesktopEngine) => void = (
   ipcMain,
   engine
 ) => {
-  const chatStreams = createChatStreams(engine)
-  registerIpcWithDeps(ipcMain, engine, async () => ({
-    ...(await bootDesktopServices()),
-    engine,
-    chatStreams,
-    sovereignty: loadSovereigntyStore()
-  }))
+  registerIpcWithDeps(ipcMain, engine, async () => {
+    const services = await bootDesktopServices()
+    const chatStreams = createChatStreams(engine, (streamId, text) =>
+      fanOutChannels({ engine, asc: services.asc }, streamId, text)
+    )
+    const messaging = makeMessagingGateway({
+      engine,
+      locker: services.locker,
+      comms: services.comms,
+      paths: services.paths
+    })
+    messaging.startRuntime()
+    return {
+      ...services,
+      engine,
+      chatStreams,
+      sovereignty: loadSovereigntyStore(),
+      messaging
+    }
+  })
 }

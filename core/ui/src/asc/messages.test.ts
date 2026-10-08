@@ -39,6 +39,10 @@ describe("ASC messages: computed, not chosen (structural)", () => {
         "DiagnosticRunCompleted",
         "DialComputationArchived",
         "ErrorTermFired",
+        // Display-only: the voice channel drives the preview through the
+        // turn's AU timeline. Never carries dials, never writes them.
+        "ExpressionFrameCleared",
+        "ExpressionFrameShown",
         "OtherModelGuardFired",
         "PreviewRendererChanged",
         "TuningChangeFailed",

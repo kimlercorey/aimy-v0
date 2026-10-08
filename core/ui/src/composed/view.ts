@@ -30,6 +30,9 @@ import {
 } from "../ops/index.js"
 import { view as sovereigntyView } from "../sovereignty/view.js"
 import type { SovereigntyMessage, SovereigntyModel } from "../sovereignty/index.js"
+import { view as messagingView } from "../messaging/view.js"
+import { Message as MessagingSliceMsg } from "../messaging/index.js"
+import type { MessagingModel } from "../messaging/index.js"
 import { timelineSubmodelView } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
 import { AppMessage } from "./messages.js"
@@ -41,6 +44,9 @@ const shellSubmodelView = defineView<ShellModel, ShellMessage>((model, h) =>
 const ascSubmodelView = defineView<AscSlice, AscMessage>((model, h) => ascSection(model, h))
 const sovereigntySubmodelView = defineView<SovereigntyModel, SovereigntyMessage>(
   (model, h) => sovereigntyView(model, h),
+)
+const messagingSubmodelView = defineView<MessagingModel, MessagingSliceMsg>(
+  (model, h) => messagingView(model, h),
 )
 const exportSubmodelView = defineView<ExportModel, ExportMessage>((model, h) =>
   exportView(model, h),
@@ -70,6 +76,7 @@ const NAV_ITEMS: ReadonlyArray<{ readonly id: PanelId; readonly label: string }>
   { id: "timeline", label: "Timeline" },
   { id: "jobs", label: "Jobs" },
   { id: "banners", label: "Banners" },
+  { id: "messaging", label: "Messaging" },
   { id: "sovereignty", label: "Sovereignty" },
   { id: "export", label: "Export" },
 ]
@@ -155,6 +162,18 @@ const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
           model: model.sovereignty,
           view: sovereigntySubmodelView,
           toParentMessage: (message) => AppMessage.GotSovereignty({ message }),
+        }),
+      )
+    case "messaging":
+      return panel(
+        h,
+        "app-messaging",
+        "messaging",
+        h.submodel({
+          slotId: "app-messaging",
+          model: model.messaging,
+          view: messagingSubmodelView,
+          toParentMessage: (message) => AppMessage.GotMessaging({ message }),
         }),
       )
     case "export":

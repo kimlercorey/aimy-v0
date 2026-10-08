@@ -73,6 +73,26 @@ export const Message = defineMessageUnion({
     reason: Schema.String,
   },
 
+  /** Voice channel: the user toggled auto-play of turn audio. */
+  VoiceToggled: { enabled: Schema.Boolean },
+  /** The `chat.channels` event landed for a settled turn. */
+  ChannelsReceived: {
+    streamId: Schema.String,
+    audioBase64: Schema.optional(Schema.String),
+    audioUnavailableReason: Schema.optional(Schema.String),
+    expressions: Schema.Array(
+      Schema.Struct({
+        atMs: Schema.Number,
+        frame: Schema.Record(Schema.String, Schema.Number),
+      })
+    ),
+  },
+  /** Speech started / ended (drives the speaking indicator). */
+  SpeechStarted: { streamId: Schema.String },
+  SpeechEnded: { streamId: Schema.String },
+  /** The voice subscription took (or skipped) the pending channels. */
+  ChannelsConsumed: { streamId: Schema.String },
+
   SessionBranched: {
     fromId: Schema.String,
     newSessionId: Schema.String,

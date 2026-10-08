@@ -150,6 +150,20 @@ export type DiagnosticSummary = typeof DiagnosticSummary.Type
 export const RendererSelection = Schema.Literals(["abstract", "avatar"])
 export type RendererSelection = typeof RendererSelection.Type
 
+/** One FACS AU frame — the wire shape the channels fan-out produces. */
+export const AUFrameSchema = Schema.Struct({
+  browRaise: Schema.Number,
+  browLower: Schema.Number,
+  eyeOpen: Schema.Number,
+  lidTighten: Schema.Number,
+  smile: Schema.Number,
+  mouthCornerDepress: Schema.Number,
+  lipPress: Schema.Number,
+  jawDrop: Schema.Number,
+  headTiltDeg: Schema.Number,
+})
+export type AUFrame = typeof AUFrameSchema.Type
+
 /** The full ASC view slice (§3.1 `asc`). */
 export const AscSlice = Schema.Struct({
   /** Live dial vector, READ-ONLY. Only the ASC pipeline writes dials. */
@@ -165,6 +179,13 @@ export const AscSlice = Schema.Struct({
   diagnostic: Schema.NullOr(DiagnosticSummary),
   renderer: RendererSelection,
   interfaceVersion: Schema.String,
+  /**
+   * Live expression override: while a voice turn plays, the channels
+   * fan-out drives the preview through the utterance's AU timeline instead
+   * of the dial-derived frame. Cleared when speech ends — the dials (the
+   * ASC truth) take over again.
+   */
+  expressionFrame: Schema.optional(AUFrameSchema),
 })
 export type AscSlice = typeof AscSlice.Type
 

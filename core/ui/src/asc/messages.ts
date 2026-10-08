@@ -32,7 +32,7 @@
 import { Schema } from "effect"
 import { defineMessageUnion } from "foldkit/message"
 
-import { ArchivedComputation, ErrorTermEntry, GuardFlagEntry } from "./model.js"
+import { ArchivedComputation, AUFrameSchema, ErrorTermEntry, GuardFlagEntry } from "./model.js"
 
 export const Message = defineMessageUnion({
   DialComputationArchived: {
@@ -68,6 +68,15 @@ export const Message = defineMessageUnion({
   PreviewRendererChanged: {
     renderer: Schema.Literals(["abstract", "avatar"]),
   },
+  /**
+   * The voice channel drives the expression preview through the turn's AU
+   * timeline while speech plays. This overrides the dial-derived frame for
+   * display only — it never writes dials (ASC boundary S1/S7 hold).
+   */
+  ExpressionFrameShown: {
+    frame: AUFrameSchema,
+  },
+  ExpressionFrameCleared: {},
 })
 
 export type AscMessage = typeof Message.Type

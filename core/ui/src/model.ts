@@ -76,6 +76,30 @@ export const SessionSlice = Schema.Struct({
   contextMeter: ContextMeter,
   composer: Schema.Struct({ draft: Schema.String }),
   listWindow: ListWindow,
+  /**
+   * Voice channel: when true, settled assistant turns auto-play their TTS
+   * audio (the `chat.channels` event). Off by default — voice is opt-in.
+   */
+  voiceEnabled: Schema.Boolean,
+  /** Id of the turn currently speaking, if any (speaking indicator). */
+  speakingStreamId: Schema.optional(Schema.String),
+  /**
+   * The last `chat.channels` payload awaiting playback. Transient: cleared
+   * when speech starts (or when voice is off). Audio is base64 WAV.
+   */
+  pendingChannels: Schema.optional(
+    Schema.Struct({
+      streamId: Schema.String,
+      audioBase64: Schema.optional(Schema.String),
+      audioUnavailableReason: Schema.optional(Schema.String),
+      expressions: Schema.Array(
+        Schema.Struct({
+          atMs: Schema.Number,
+          frame: Schema.Record(Schema.String, Schema.Number),
+        })
+      ),
+    })
+  ),
 })
 export type SessionSlice = typeof SessionSlice.Type
 
@@ -212,6 +236,7 @@ export const initialModel = (): Model => ({
     },
     composer: { draft: "" },
     listWindow: { anchorIndex: 0, overscan: 8 },
+    voiceEnabled: false,
   },
   memoryView: freshPlaceholder("memoryView"),
   moduleRegistry: freshPlaceholder("moduleRegistry"),

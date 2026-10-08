@@ -38,6 +38,11 @@ import {
   Model as SovereigntyModel,
 } from "../sovereignty/index.js"
 import {
+  initialModel as initialMessagingModel,
+  MessagingModelSchema,
+  type MessagingModel,
+} from "../messaging/index.js"
+import {
   initialModel as initialTimelineModel,
   Model as TimelineModel,
 } from "../timeline/index.js"
@@ -49,6 +54,7 @@ export const PanelId = Schema.Literals([
   "timeline",
   "jobs",
   "banners",
+  "messaging",
   "sovereignty",
   "export",
 ])
@@ -64,6 +70,7 @@ export const AppModel = Schema.Struct({
   timeline: TimelineModel,
   jobs: JobsModel,
   banners: BannersModel,
+  messaging: MessagingModelSchema,
   activePanel: PanelId,
 })
 export type AppModel = typeof AppModel.Type
@@ -79,5 +86,6 @@ export const initialAppModel = (): AppModel => ({
   timeline: structuredClone(initialTimelineModel),
   jobs: structuredClone(initialJobsModel),
   banners: structuredClone(initialBannersModel),
+  messaging: initialMessagingModel(),
   activePanel: "chat",
 })

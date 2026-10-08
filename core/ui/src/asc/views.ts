@@ -237,7 +237,9 @@ const tuningSection = (h: HtmlBuilder<AscMessage>, model: AscSlice): Html =>
   ])
 
 const previewSection = (h: HtmlBuilder<AscMessage>, model: AscSlice): Html => {
-  const frame = dialsToAUFrame(model.dials)
+  // While a voice turn plays, the channels fan-out drives the preview
+  // through the utterance's AU timeline; otherwise the dial-derived frame.
+  const frame = model.expressionFrame ?? dialsToAUFrame(model.dials)
   return h.section([h.Class("asc-preview")], [
     h.h2([], ["Expression preview"]),
     h.div([h.Class("renderer-toggle")], [
