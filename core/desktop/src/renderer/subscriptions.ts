@@ -443,7 +443,10 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
     {
       modelToDependencies: (model) => {
         const chunks = model.shell.session.pendingAudioChunks
-        if (chunks.length === 0 || !model.shell.session.voiceEnabled) {
+        // Narration is explicit (model calls `narrate` tool) — if audio chunks
+        // arrive, play them. The voice toggle gates the automatic fan-out
+        // (now disabled), not explicit narration requests.
+        if (chunks.length === 0) {
           return { streamId: "", voiceEnabled: false, chunks: [], drained: false }
         }
         // Group by streamId — play the first stream's chunks.
