@@ -131,4 +131,23 @@ describe("forwarder", () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.text).toContain("Alert")
   })
+
+  it("queues failed sends and flushes on recovery", async () => {
+    const registry = makePairingRegistry(dir)
+    await pairChat(registry)
+    let fail = true
+    const sent: Array<string> = []
+    const flaky: Channel = {
+      name: "telegram" as ChannelName,
+      listen: () => Effect.void as never,
+      send: (_to, text) => (fail ? Effect.fail(new Error("down") as never) : Effect.sync(() => { sent.push(text) })),
+    }
+    const fw = makeForwarder({ registry, channel: flaky, comms: stubComms([]), dir })
+    await run(fw.forward(banner("critical", "Queued")))
+    expect(sent).toHaveLength(0) // failed → queued, not lost
+    fail = false
+    await run(fw.flush())
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain("Queued")
+  })
 })

@@ -26,6 +26,7 @@ import type {
   PairedChat,
 } from "./types.js"
 import type { PairingRegistryShape } from "./pairing.js"
+import { makeRateLimiter, type RateLimiter } from "./ratelimit.js"
 
 /** Narrow turn interface — AgentLoop satisfies this structurally. */
 export interface TurnRunner {
@@ -36,6 +37,8 @@ export interface DispatchDeps {
   readonly registry: PairingRegistryShape
   readonly runner: TurnRunner
   readonly channel: Channel
+  /** Optional prompt rate limiter (unpaired chats). Defaults to 1/min/chat. */
+  readonly limiter?: RateLimiter | undefined
 }
 
 /** Deterministic session per chat: the Telegram thread is its own session. */
@@ -98,6 +101,7 @@ export const handleInbound = (
     displayName,
     pairedAt: "",
   })
+  const limiter = deps.limiter ?? makeRateLimiter()
 
   return (msg) =>
     Effect.gen(function* () {
@@ -121,7 +125,10 @@ export const handleInbound = (
           )
           return
         }
-        yield* sendQuiet(deps.channel, to(msg.chatId, msg.fromDisplayName), PAIRING_PROMPT)
+        // Unpaired, not a code: rate-limited pairing prompt (spam guard).
+        if (limiter.allowPrompt(`${msg.channel}:${msg.chatId}`, Date.now())) {
+          yield* sendQuiet(deps.channel, to(msg.chatId, msg.fromDisplayName), PAIRING_PROMPT)
+        }
         return
       }
 

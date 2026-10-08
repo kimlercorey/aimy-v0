@@ -167,4 +167,16 @@ describe("handleInbound", () => {
     expect(sent[0]?.text).toContain("Something went wrong")
     expect(sent[0]?.text).not.toContain("boom")
   })
+
+  it("unpaired spam → one pairing prompt per minute (rate-limited)", async () => {
+    const registry = makePairingRegistry(dir)
+    const { runner, calls } = stubRunner("hi")
+    const { channel, sent } = stubChannel()
+    const handle = handleInbound({ registry, runner, channel })
+    await run(handle(msg("spam one", "chat-9")))
+    await run(handle(msg("spam two", "chat-9")))
+    await run(handle(msg("spam three", "chat-9")))
+    expect(calls).toHaveLength(0)
+    expect(sent).toHaveLength(1) // only the first prompt went out
+  })
 })

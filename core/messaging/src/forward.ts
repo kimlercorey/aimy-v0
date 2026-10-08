@@ -47,6 +47,8 @@ export interface Forwarder {
   readonly setPrefs: (prefs: ForwardingPrefs) => Effect.Effect<void, RegistryError>
   /** Forward one banner if prefs allow. Never fails the caller. */
   readonly forward: (banner: Banner) => Effect.Effect<void, never>
+  /** Attempt the queued backlog once (the background flusher calls this). */
+  readonly flush: () => Effect.Effect<void, never>
   /** Subscribe to the comms hub and forward matching banners. Runs until scope closes. */
   readonly run: () => Effect.Effect<void, never, Scope.Scope>
 }
@@ -55,6 +57,11 @@ export const makeForwarder = (deps: ForwardDeps): Forwarder => {
   const file = `${deps.dir}/${PREFS_FILE}`
   let prefs: ForwardingPrefs = DEFAULT_FORWARDING_PREFS
   let loaded = false
+  /** Bounded outbound queue: banners that failed to send, retried by the flusher. */
+  const pending: Array<{ banner: Banner; attempts: number }> = []
+  const MAX_QUEUE = 50
+  const MAX_ATTEMPTS = 10
+  const FLUSH_INTERVAL_MS = 30_000
 
   const load: Effect.Effect<void, never> = Effect.gen(function* () {
     if (loaded) return
@@ -90,17 +97,66 @@ export const makeForwarder = (deps: ForwardDeps): Forwarder => {
       catch: (e) => new RegistryError({ reason: `prefs write failed: ${String(e)}` }),
     })
 
+  const enqueue = (banner: Banner): void => {
+    if (pending.length >= MAX_QUEUE) {
+      const dropped = pending.shift()
+      Effect.runSync(
+        Effect.logWarning(
+          `forwarding queue full — dropped oldest banner ${dropped?.banner.id} to make room`
+        )
+      )
+    }
+    pending.push({ banner, attempts: 0 })
+  }
+
+  const trySend = (banner: Banner): Effect.Effect<boolean, never> =>
+    Effect.gen(function* (): Generator<Effect.Effect<unknown, never>, boolean, unknown> {
+      const chat = yield* deps.registry.getPaired(deps.channel.name)
+      if (chat === undefined) return true // unpaired mid-flight: drop quietly
+      const ok: boolean = yield* deps.channel.send(chat, renderBanner(banner)).pipe(
+        Effect.map(() => true),
+        Effect.catch((e) =>
+          Effect.succeed(false).pipe(
+            Effect.tap(() => Effect.logWarning(`forwarding failed for banner ${banner.id}: ${e.reason}`))
+          )
+        )
+      )
+      return ok
+    }).pipe(Effect.catch(() => Effect.succeed(true)))
+
+  const flushOnce: Effect.Effect<void, never> =
+    Effect.gen(function* () {
+      while (pending.length > 0) {
+        const head = pending[0]
+        if (head === undefined) break
+        const sent = yield* trySend(head.banner)
+        if (sent) {
+          pending.shift()
+        } else if (head.attempts + 1 >= MAX_ATTEMPTS) {
+          pending.shift()
+          yield* Effect.logWarning(
+            `forwarding gave up on banner ${head.banner.id} after ${MAX_ATTEMPTS} attempts`
+          )
+        } else {
+          head.attempts += 1
+          break // back off until the next flush cycle
+        }
+      }
+    }).pipe(Effect.catch(() => Effect.void))
+
+  const flusher: Effect.Effect<void, never> =
+    Effect.gen(function* () {
+      yield* Effect.sleep(FLUSH_INTERVAL_MS)
+      yield* flushOnce
+      return yield* flusher
+    }).pipe(Effect.catch(() => Effect.void))
+
   const forward: Forwarder["forward"] = (banner) =>
     Effect.gen(function* () {
       yield* load
       if (!shouldForward(prefs, banner)) return
-      const chat = yield* deps.registry.getPaired(deps.channel.name)
-      if (chat === undefined) return
-      yield* deps.channel.send(chat, renderBanner(banner)).pipe(
-        Effect.catch((e) =>
-          Effect.logWarning(`forwarding failed for banner ${banner.id}: ${e.reason}`)
-        )
-      )
+      const sent = yield* trySend(banner)
+      if (!sent) enqueue(banner)
     }).pipe(Effect.catch(() => Effect.void))
 
   return {
@@ -112,12 +168,15 @@ export const makeForwarder = (deps: ForwardDeps): Forwarder => {
         yield* save(p)
       }),
     forward,
+    flush: () => flushOnce,
     run: () =>
-      Effect.flatMap(deps.comms.subscribe(), (stream) =>
-        Stream.runForEach(stream, (event: BannerEvent) =>
+      Effect.gen(function* () {
+        yield* Effect.forkDetach(flusher)
+        const stream = yield* deps.comms.subscribe()
+        yield* Stream.runForEach(stream, (event: BannerEvent) =>
           event.type === "published" ? forward(event.banner) : Effect.void
         )
-      ).pipe(Effect.catch(() => Effect.void)) as Effect.Effect<void, never, Scope.Scope>,
+      }).pipe(Effect.catch(() => Effect.void)) as Effect.Effect<void, never, Scope.Scope>,
   }
 }
 
