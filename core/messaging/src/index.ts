@@ -12,3 +12,4 @@
 export * from "./errors.js"
 export * from "./types.js"
 export * from "./pairing.js"
+export * from "./dispatch.js"
