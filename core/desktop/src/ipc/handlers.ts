@@ -150,19 +150,25 @@ export const createChatStreams = (
     if (active.has(streamId)) throw new Error(`chat stream id collision: ${streamId}`)
     const iterator = engine.chatStream(sessionId, input)[Symbol.asyncIterator]()
     active.set(streamId, iterator)
+    console.log(`[aimy] chat.start: stream=${streamId} session=${sessionId} inputLen=${input.length}`)
     void (async (): Promise<void> => {
       let text = ""
+      let tokenCount = 0
       try {
         for (;;) {
           const next = await iterator.next()
           if (next.done === true) break
           if (next.value._tag === "Token") {
             text += next.value.delta
+            tokenCount += 1
             push({ _tag: "chat.token", streamId, delta: next.value.delta })
+          } else {
+            console.log(`[aimy] chat.chunk: stream=${streamId} tag=${next.value._tag}`)
           }
           // Non-token chunks (ToolCall, Done) have no IPC event — the
           // protocol carries tokens plus terminal state only.
         }
+        console.log(`[aimy] chat.done: stream=${streamId} tokens=${tokenCount} textLen=${text.length}`)
         // A cancelled stream is already gone from the map: no `done` after
         // a cancel, so the renderer never sees terminal state twice.
         if (active.has(streamId)) {
@@ -171,8 +177,11 @@ export const createChatStreams = (
             const channels = await onSettled(streamId, text).catch(() => undefined)
             if (channels !== undefined) push({ _tag: "chat.channels", channels })
           }
+        } else {
+          console.log(`[aimy] chat.done: stream=${streamId} was cancelled, skipping done event`)
         }
       } catch (error) {
+        console.error(`[aimy] chat.error: stream=${streamId} error=${String(error)}`)
         if (active.has(streamId)) {
           push({ _tag: "chat.error", streamId, error: toCleanMessage(error) })
         }
@@ -185,7 +194,13 @@ export const createChatStreams = (
 
   const cancel: ChatStreams["cancel"] = async (streamId) => {
     const iterator = active.get(streamId)
-    if (iterator === undefined) throw new Error(`unknown chat stream: ${streamId}`)
+    if (iterator === undefined) {
+      // Idempotent: cancelling an already-finished stream is a no-op, not an error.
+      // The renderer's cleanup finalizer fires cancel on subscription end, which races
+      // stream completion. Logging at debug level keeps the log useful.
+      console.debug(`[aimy] chat.cancel: stream ${streamId} already gone (race, ignoring)`)
+      return
+    }
     active.delete(streamId)
     await iterator.return?.()
   }
@@ -621,7 +636,7 @@ const tagOf = (payload: unknown): unknown =>
 export const registerIpcWithDeps = (
   ipcMain: Electron.IpcMain,
   engine: DesktopEngine,
-  getDeps: () => Promise<IpcWireDeps>
+  getDeps: (broadcast: (evt: IpcEvent) => void) => Promise<IpcWireDeps>
 ): void => {
   // Every live renderer we've heard from — `banner.published` broadcasts here.
   const senders = new Set<WebContents>()
@@ -640,7 +655,7 @@ export const registerIpcWithDeps = (
   }
 
   let depsPromise: Promise<IpcWireDeps> | undefined
-  const getDepsOnce = (): Promise<IpcWireDeps> => (depsPromise ??= getDeps())
+  const getDepsOnce = (): Promise<IpcWireDeps> => (depsPromise ??= getDeps(broadcast))
 
   // Banner forwarding starts as soon as the services are up (fire-and-forget).
   void getDepsOnce().then(
@@ -704,12 +719,51 @@ export const registerIpc: (
   const serverPy = path.resolve(here, "..", "..", "..", "tts", "server", "tts-server.py")
   let tts: TtsEngine | undefined
 
-  registerIpcWithDeps(ipcMain, engine, async () => {
+  registerIpcWithDeps(ipcMain, engine, async (broadcast) => {
     const services = await bootDesktopServices()
     tts = makeTtsEngine({ serverPy })
     const chatStreams = createChatStreams(engine, (streamId, text) =>
       fanOutChannels({ engine, asc: services.asc, tts: tts! }, streamId, text)
     )
+
+    // Voice narration queue: the `narrate` tool enqueues text here;
+    // synthesized audio streams back as ordered `chat.audioChunk` events.
+    const { NarrationQueue } = await import("../../../asc-channels/src/narration-queue.js")
+    const narrationQueue = new NarrationQueue(
+      {
+        synthesize: async (text: string): Promise<Uint8Array> => {
+          // Direct to the TTS server (same endpoint the fan-out uses).
+          const res = await fetch("http://127.0.0.1:8001/speak", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, voice_id: "default" })
+          })
+          if (!res.ok) throw new Error(`TTS synthesize failed: ${res.status}`)
+          const data = (await res.json()) as { audio_base64?: string; error?: string }
+          if (data.error !== undefined) throw new Error(data.error)
+          if (data.audio_base64 === undefined) throw new Error("TTS returned no audio")
+          const bin = atob(data.audio_base64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          return bytes
+        }
+      },
+      (audio) => {
+        // Emit ordered audio chunk to renderers for gapless playback.
+        const b64 = Buffer.from(audio.audio).toString("base64")
+        broadcast({
+          _tag: "chat.audioChunk",
+          streamId: "narration",
+          sequence: audio.sequence,
+          audioBase64: b64
+        })
+      },
+      (id, reason) => {
+        console.error(`[aimy] narration ${id} failed: ${reason}`)
+      }
+    )
+    // Wire the queue into the agent loop's narration sink.
+    engine.setNarrationSink((text: string) => narrationQueue.enqueue(text))
     const messaging = makeMessagingGateway({
       engine,
       locker: services.locker,

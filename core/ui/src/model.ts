@@ -100,6 +100,20 @@ export const SessionSlice = Schema.Struct({
       ),
     })
   ),
+  /**
+   * Ordered narration audio chunks awaiting gapless playback.
+   * From the `narrate` tool via `chat.audioChunk` events.
+   * Each entry: { streamId, sequence, audioBase64 }.
+   */
+  pendingAudioChunks: Schema.Array(
+    Schema.Struct({
+      streamId: Schema.String,
+      sequence: Schema.Number,
+      audioBase64: Schema.String,
+    })
+  ),
+  /** Set when `chat.audioDrained` arrives (no more chunks for the stream). */
+  audioDrainedStreamIds: Schema.Array(Schema.String),
   /** Voice settings panel (engine install + voice clone management). */
   voicePanelOpen: Schema.Boolean,
   /**
@@ -264,6 +278,8 @@ export const initialModel = (): Model => ({
     voicePanelOpen: false,
     ttsEngine: { state: "unknown" },
     voices: [],
+    pendingAudioChunks: [],
+    audioDrainedStreamIds: [],
   },
   memoryView: freshPlaceholder("memoryView"),
   moduleRegistry: freshPlaceholder("moduleRegistry"),

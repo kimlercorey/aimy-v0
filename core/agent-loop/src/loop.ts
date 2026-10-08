@@ -68,8 +68,10 @@ import {
   resolveToolTier,
   runTool,
   type AgentToolDef,
-  type BuiltinToolContext
+  type BuiltinToolContext,
+  type NarrationSink
 } from "./tools.js"
+import type { BackgroundJobRegistry } from "./background-job.js"
 
 /** The honest error union of the stack this turn drives. Real types only. */
 export type AgentLoopError =
@@ -213,6 +215,18 @@ interface Deps {
    * (a round = parse + gate + execute + synthesize). Default 3.
    */
   readonly maxToolRounds: number
+  /**
+   * Background job registry (additive): when present, the `job.spawn` tool
+   * can fork async work. Absent in hosts without background execution
+   * (bare CLI harness). Threaded into BuiltinToolContext per turn.
+   */
+  readonly backgroundJobs?: BackgroundJobRegistry | undefined
+  /**
+   * Voice narration sink (additive): when present, the `narrate` tool
+   * enqueues voice-only messages. Absent in hosts without voice.
+   * Threaded into BuiltinToolContext per turn.
+   */
+  readonly narration?: NarrationSink | undefined
 }
 
 /**
@@ -241,7 +255,9 @@ const makeAgentLoop = ({
   asc,
   ascOpts,
   extraTools,
-  maxToolRounds
+  maxToolRounds,
+  backgroundJobs,
+  narration
 }: Deps): AgentLoopService => {
   const streamSource = makeStreamSource(streamProviders)
 
@@ -316,7 +332,13 @@ const makeAgentLoop = ({
         const tailPart: Stream.Stream<ChatChunk, AgentLoopError> = Stream.unwrap(
           Effect.gen(function* () {
             const turnId = crypto.randomUUID()
-            const toolCtx: BuiltinToolContext = { sessionId, turnCount, turnId }
+            const toolCtx: BuiltinToolContext = {
+              sessionId,
+              turnCount,
+              turnId,
+              ...(backgroundJobs !== undefined ? { backgroundJobs } : {}),
+              ...(narration !== undefined ? { narration } : {})
+            }
             const out: Array<ChatChunk> = []
             const executed: Array<ExecutedToolCall> = []
             const blocked: Array<BlockedToolCall> = []
@@ -592,6 +614,8 @@ export const layerAgentLoop = (opts?: {
   readonly honesty?: AgentLoopHonestyOpts | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
   readonly maxToolRounds?: number | undefined
+  readonly backgroundJobs?: BackgroundJobRegistry | undefined
+  readonly narration?: NarrationSink | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService> =>
   Layer.effect(
     AgentLoop,
@@ -610,7 +634,9 @@ export const layerAgentLoop = (opts?: {
         asc: Option.none(),
         ascOpts: undefined,
         extraTools: opts?.extraTools ?? [],
-        maxToolRounds: opts?.maxToolRounds ?? 3
+        maxToolRounds: opts?.maxToolRounds ?? 3,
+        backgroundJobs: opts?.backgroundJobs,
+        narration: opts?.narration
       })
     })
   )
@@ -627,6 +653,8 @@ export const layerAgentLoopWithHonesty = (opts?: {
   readonly honesty?: AgentLoopHonestyOpts | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
   readonly maxToolRounds?: number | undefined
+  readonly backgroundJobs?: BackgroundJobRegistry | undefined
+  readonly narration?: NarrationSink | undefined
 }): Layer.Layer<AgentLoop, never, InferencePool | ModuleHooks | MemoryService | HonestyService> =>
   Layer.effect(
     AgentLoop,
@@ -645,7 +673,9 @@ export const layerAgentLoopWithHonesty = (opts?: {
         asc: Option.none(),
         ascOpts: undefined,
         extraTools: opts?.extraTools ?? [],
-        maxToolRounds: opts?.maxToolRounds ?? 3
+        maxToolRounds: opts?.maxToolRounds ?? 3,
+        backgroundJobs: opts?.backgroundJobs,
+        narration: opts?.narration
       })
     })
   )

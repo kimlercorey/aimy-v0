@@ -195,6 +195,63 @@ const pumpVoice = (deps: VoiceDeps): Stream.Stream<AppMessage> => {
   return Stream.fromAsyncIterable(messages, unreachableStreamError)
 }
 
+interface ChunkDeps {
+  readonly streamId: string
+  readonly voiceEnabled: boolean
+  readonly chunks: ReadonlyArray<{ sequence: number; audioBase64: string }>
+  readonly drained: boolean
+}
+
+/**
+ * Gapless playback of ordered narration audio chunks (from the `narrate`
+ * tool). Chunks play in sequence order, chained via onended — no gaps.
+ * When drained and the queue empties, speech ends.
+ */
+const pumpAudioChunks = (deps: ChunkDeps): Stream.Stream<AppMessage> => {
+  const messages = (async function* (): AsyncGenerator<AppMessage> {
+    const { streamId, chunks, drained } = deps
+    if (chunks.length === 0) return
+
+    // Sort by sequence to ensure order even if events arrived out of order.
+    const ordered = [...chunks].sort((a, b) => a.sequence - b.sequence)
+
+    yield AppMessage.GotShell({
+      message: ShellMessage.SpeechStarted({ streamId }),
+    })
+
+    const playedSequences: Array<number> = []
+    for (const chunk of ordered) {
+      const audio = new Audio(`data:audio/wav;base64,${chunk.audioBase64}`)
+      try {
+        await audio.play()
+      } catch {
+        // Skip failed chunk, continue with next.
+        continue
+      }
+      await new Promise<void>((resolve) => {
+        audio.onended = () => resolve()
+        audio.onerror = () => resolve()
+      })
+      playedSequences.push(chunk.sequence)
+    }
+
+    // Mark played chunks consumed so they don't replay.
+    if (playedSequences.length > 0) {
+      yield AppMessage.GotShell({
+        message: ShellMessage.AudioChunksConsumed({ streamId, sequences: playedSequences }),
+      })
+    }
+
+    // If drained, this was the last batch — end speech.
+    // Otherwise more chunks may arrive; the subscription re-fires.
+    if (drained) {
+      yield AppMessage.GotShell({ message: ShellMessage.SpeechEnded({ streamId }) })
+    }
+  })()
+
+  return Stream.fromAsyncIterable(messages, unreachableStreamError)
+}
+
 /**
  * Always-on: initial slice refreshes + pushed main→renderer events.
  * Refreshes ride as *Requested messages through update so each slice's own
@@ -238,6 +295,30 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
                       atMs: e.atMs,
                       frame: { ...e.frame } as Record<string, number>,
                     })),
+                  }),
+                })
+              )
+              break
+            }
+            case "chat.audioChunk": {
+              // Ordered narration audio chunk — queued for gapless playback.
+              // Handled by the dedicated audio chunk pump (see below).
+              push(
+                AppMessage.GotShell({
+                  message: ShellMessage.AudioChunkReceived({
+                    streamId: evt.streamId,
+                    sequence: evt.sequence,
+                    audioBase64: evt.audioBase64,
+                  }),
+                })
+              )
+              break
+            }
+            case "chat.audioDrained": {
+              push(
+                AppMessage.GotShell({
+                  message: ShellMessage.AudioDrainedReceived({
+                    streamId: evt.streamId,
                   }),
                 })
               )
@@ -335,6 +416,46 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
               voiceEnabled: deps.voiceEnabled,
               audioBase64: deps.audioBase64,
               expressions: deps.expressions.map((e) => ({ atMs: e.atMs, frame: { ...e.frame } })),
+            }),
+    }
+  ),
+  audioChunkPump: entry(
+    {
+      streamId: Schema.String,
+      voiceEnabled: Schema.Boolean,
+      chunks: Schema.Array(
+        Schema.Struct({
+          sequence: Schema.Number,
+          audioBase64: Schema.String,
+        })
+      ),
+      drained: Schema.Boolean,
+    },
+    {
+      modelToDependencies: (model) => {
+        const chunks = model.shell.session.pendingAudioChunks
+        if (chunks.length === 0 || !model.shell.session.voiceEnabled) {
+          return { streamId: "", voiceEnabled: false, chunks: [], drained: false }
+        }
+        // Group by streamId — play the first stream's chunks.
+        const streamId = chunks[0]!.streamId
+        const streamChunks = chunks.filter((c) => c.streamId === streamId)
+        const drained = model.shell.session.audioDrainedStreamIds.includes(streamId)
+        return {
+          streamId,
+          voiceEnabled: true as const,
+          chunks: streamChunks.map((c) => ({ sequence: c.sequence, audioBase64: c.audioBase64 })),
+          drained,
+        }
+      },
+      dependenciesToStream: (deps) =>
+        deps.streamId === "" || deps.chunks.length === 0
+          ? Stream.empty
+          : pumpAudioChunks({
+              streamId: deps.streamId,
+              voiceEnabled: deps.voiceEnabled,
+              chunks: deps.chunks,
+              drained: deps.drained,
             }),
     }
   )

@@ -30,9 +30,11 @@ const extra: AgentToolDef = {
 
 describe("extensible tool registry", () => {
   it("built-ins are unchanged and the default prompt lists only them", () => {
-    expect(builtinToolNames).toEqual(["clock.now", "session.info"])
+    expect(builtinToolNames).toEqual(["clock.now", "session.info", "job.spawn", "narrate"])
     expect(SYSTEM_PROMPT).toContain("clock.now")
     expect(SYSTEM_PROMPT).toContain("session.info")
+    expect(SYSTEM_PROMPT).toContain("job.spawn")
+    expect(SYSTEM_PROMPT).toContain("narrate")
     expect(SYSTEM_PROMPT).not.toContain("retrieval.query")
   })
 

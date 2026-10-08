@@ -187,6 +187,55 @@ const boot = async (): Promise<void> => {
   }
   ipcCleanupHandle = registerIpc(ipcMain, engine)
   console.log(`smoke: boot complete, SMOKE=${SMOKE}`)
+
+  // LLM server health check (skip in smoke test — stub has no health endpoint).
+  // If the model server isn't responding, offer a restart before opening the window.
+  if (!SMOKE) {
+    const { checkLlmHealth, LLM_BACKENDS, LlmServerManager } = await import("./llm-server.js")
+    const { readDesktopConfig } = await import("./engine.js")
+    const cfg = readDesktopConfig()
+    const backend = LLM_BACKENDS[cfg.llmBackend ?? "splash"]
+    const healthy = await checkLlmHealth(cfg.baseUrl, backend.healthPath)
+    if (!healthy) {
+      const startCommand = cfg.llmStartCommand ?? ""
+      const buttons = startCommand.trim() !== "" ? ["Restart server", "Continue offline"] : ["Continue offline"]
+      const { response } = await dialog.showMessageBox({
+        type: "warning",
+        title: "LLM server not responding",
+        message: `${backend.name} isn't answering at ${cfg.baseUrl}.`,
+        detail: startCommand.trim() !== ""
+          ? "You can restart it now, or continue offline (chat won't work until it's back)."
+          : "Set a start command in ~/.aimy/desktop.json (llmStartCommand) to enable one-click restart.\n\nChat won't work until the server is back.",
+        buttons,
+        defaultId: 0,
+        cancelId: buttons.length - 1
+      })
+      if (response === 0 && startCommand.trim() !== "") {
+        // User chose "Restart server".
+        const manager = new LlmServerManager({
+          backend: cfg.llmBackend ?? "splash",
+          baseUrl: cfg.baseUrl,
+          startCommand
+        })
+        try {
+          await manager.start()
+          await dialog.showMessageBox({
+            type: "info",
+            title: "LLM server restarted",
+            message: `${backend.name} is responding at ${cfg.baseUrl}.`,
+            buttons: ["OK"]
+          })
+        } catch (error) {
+          await dialog.showErrorBox(
+            "LLM server restart failed",
+            `Could not restart the server:\n\n${String(error)}\n\nStart it manually, then chat.`
+          )
+        }
+      }
+      // "Continue offline" — the window opens; chat will fail honestly until the server is back.
+    }
+  }
+
   const win = createWindow()
   console.log("smoke: window created")
   if (SMOKE) await runSmokeFlow(win)

@@ -16,6 +16,7 @@
  */
 import { Effect } from "effect"
 import type { CapabilityTier } from "../../module-seam/src/index.js"
+import type { BackgroundJobRegistry } from "./background-job.js"
 
 /** What a tool may observe about the turn it runs in. */
 export interface BuiltinToolContext {
@@ -24,6 +25,28 @@ export interface BuiltinToolContext {
   readonly turnCount: number
   /** The current turn's id (for ledger attribution). */
   readonly turnId: string
+  /**
+   * Background job registry, when the host provides one. Tools that need
+   * to fork async work (e.g. `job.spawn`) use this; tools must degrade
+   * gracefully when it is absent (v1 seam: present in desktop, absent in
+   * bare CLI harness).
+   */
+  readonly backgroundJobs?: BackgroundJobRegistry | undefined
+  /**
+   * Voice narration sink, when the host provides one. The `narrate` tool
+   * enqueues text here; the host is responsible for TTS synthesis and
+   * ordered playback. Absent in hosts without voice (bare CLI).
+   */
+  readonly narration?: NarrationSink | undefined
+}
+
+/**
+ * Minimal voice narration sink. The host adapts its real TTS queue
+ * (e.g. asc-channels' NarrationQueue) to this interface.
+ */
+export interface NarrationSink {
+  /** Queue text for speech. Returns an ID; empty string if rejected. */
+  readonly enqueue: (text: string) => string
 }
 
 export interface AgentToolDef {
@@ -62,6 +85,100 @@ const defs: Array<[string, AgentToolDef]> = [
       argsHint: "{}",
       run: (_args, ctx) =>
         Effect.succeed({ sessionId: ctx.sessionId, turnCount: ctx.turnCount })
+    }
+  ],
+  [
+    "job.spawn",
+    {
+      name: "job.spawn",
+      tier: "T0",
+      description:
+        "Start a long-running task in the background and return immediately with a job ID. " +
+        "Use this when the user asks for something that takes minutes (deep research, long analysis) " +
+        "so the conversation stays unblocked. The job runs independently; the user is notified on completion.",
+      argsHint:
+        '{ "description": "Deep research on sustainable bricks", "tool": "retrieval.query", "args": { "query": "..." }, "estimateMinutes": 30 }',
+      run: (args, ctx) => {
+        const registry = ctx.backgroundJobs
+        if (registry === undefined) {
+          return Effect.fail(
+            new Error("job.spawn unavailable: no background job registry in this host")
+          )
+        }
+        const description = args["description"]
+        const toolName = args["tool"]
+        const toolArgs = args["args"]
+        const estimateMinutes = args["estimateMinutes"]
+        if (typeof description !== "string" || description.trim() === "") {
+          return Effect.fail(new Error("job.spawn: description must be a non-empty string"))
+        }
+        if (typeof toolName !== "string" || toolName.trim() === "") {
+          return Effect.fail(new Error("job.spawn: tool must be a non-empty string"))
+        }
+        if (toolArgs !== undefined && (typeof toolArgs !== "object" || toolArgs === null)) {
+          return Effect.fail(new Error("job.spawn: args must be an object when provided"))
+        }
+        const tool = findTool(toolName)
+        if (tool === undefined) {
+          return Effect.fail(new Error(`job.spawn: unknown tool ${JSON.stringify(toolName)}`))
+        }
+        const estimateMs =
+          typeof estimateMinutes === "number" && estimateMinutes > 0
+            ? Math.round(estimateMinutes * 60_000)
+            : undefined
+        // Fork the tool execution — this returns the job ID immediately.
+        // The tool runs in background; completion lands in the registry.
+        return registry
+          .spawn({
+            description: description.trim(),
+            sessionId: ctx.sessionId,
+            turnId: ctx.turnId,
+            estimateMs,
+            work: tool.run(
+              (toolArgs ?? {}) as Readonly<Record<string, unknown>>,
+              ctx
+            )
+          })
+          .pipe(
+            Effect.map((jobId) => ({
+              jobId,
+              description: description.trim(),
+              ...(estimateMs !== undefined
+                ? { estimatedReadyIn: `${Math.round(estimateMs / 60_000)} minutes` }
+                : {})
+            }))
+          )
+      }
+    }
+  ],
+  [
+    "narrate",
+    {
+      name: "narrate",
+      tier: "T0",
+      description:
+        "Speak a voice-only message to the user — conversational narration that does NOT appear in chat. " +
+        "Use for acknowledgments ('looking into that now…'), transitions ('finished the list — want me to dig deeper?'), " +
+        "emotional beats ('giggles — don't worry, it'll be quick'), and summaries while details render visually. " +
+        "HUMANIZE, don't transcribe: never read code, URLs, emails, or raw data aloud. " +
+        "Instead describe what it is and point to chat ('I've put the code in chat — it fetches the profile by username'). " +
+        "Write what Zen would SAY out loud, conversational and natural — contractions, warmth, personality. " +
+        "This is fire-and-forget: it queues for speech and returns immediately.",
+      argsHint: '{ "text": "OK, looking into that now…" }',
+      run: (args, ctx) => {
+        const text = args["text"]
+        if (typeof text !== "string" || text.trim() === "") {
+          return Effect.fail(new Error("narrate: text must be a non-empty string"))
+        }
+        const sink = ctx.narration
+        if (sink === undefined) {
+          // No voice in this host — narration is a no-op, not an error.
+          // The chat text still carries the information.
+          return Effect.succeed({ narrated: false, reason: "no narration sink in this host" })
+        }
+        const id = sink.enqueue(text.trim())
+        return Effect.succeed({ narrated: id !== "", narrationId: id })
+      }
     }
   ]
 ]
@@ -118,7 +235,13 @@ export const runBuiltinTool = (
 export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): string => {
   const lines = [
     `- clock.now — current ISO-8601 timestamp. args: {}`,
-    `- session.info — { sessionId, turnCount } for this session. args: {}`
+    `- session.info — { sessionId, turnCount } for this session. args: {}`,
+    `- job.spawn — start a long-running task in the background and return immediately with a job ID. ` +
+      `Use for work taking minutes (deep research) so the conversation stays unblocked. ` +
+      `args: { "description": "...", "tool": "<tool-name>", "args": { }, "estimateMinutes": 30 }`,
+    `- narrate — speak a voice-only message (not shown in chat). Use for acknowledgments, transitions, ` +
+      `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
+      `args: { "text": "OK, looking into that now…" }`
   ]
   for (const t of extraTools ?? []) {
     lines.push(`- ${t.name} — ${t.description} args: ${t.argsHint}`)

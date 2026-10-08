@@ -17,7 +17,9 @@ import {
   AgentLoop,
   layerAgentLoopWithHonesty,
   type AgentLoopHonestyOpts,
-  type AgentToolDef
+  type AgentToolDef,
+  type BackgroundJobRegistry,
+  type NarrationSink
 } from "../../agent-loop/src/index.js"
 import { HonestyService, HonestyServiceInMemory } from "../../honesty/index.js"
 import {
@@ -193,6 +195,8 @@ export const buildChatStack = (opts: {
   readonly honestyOpts?: AgentLoopHonestyOpts | undefined
   readonly httpLayer?: Layer.Layer<HttpClient> | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
+  readonly backgroundJobs?: BackgroundJobRegistry | undefined
+  readonly narration?: NarrationSink | undefined
 }): ChatStack => {
   const provider = new LocalHttpProvider({ name: "chat-local", baseUrl: opts.baseUrl, model: opts.model })
   const retrievalHookCounts: RetrievalHookCounts = { beforeToolCall: 0, afterToolCall: 0 }
@@ -239,7 +243,9 @@ export const buildChatStack = (opts: {
     layerAgentLoopWithHonesty({
       streamProviders: [provider as Provider],
       honesty: opts.honestyOpts,
-      extraTools: opts.extraTools
+      extraTools: opts.extraTools,
+      backgroundJobs: opts.backgroundJobs,
+      narration: opts.narration
     }),
     base
   )

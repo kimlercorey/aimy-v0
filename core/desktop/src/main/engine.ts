@@ -27,6 +27,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { AgentLoop, type ChatChunk } from "../../../agent-loop/src/index.js"
+import { makeBackgroundJobRegistry } from "../../../agent-loop/src/background-job.js"
 import { buildChatStack, type ChatStack } from "../../../chat/src/stack.js"
 import {
   bootRetrievalModule,
@@ -70,17 +71,29 @@ export interface DesktopEngine {
   readonly run: <A, E>(effect: Effect.Effect<A, E, EngineRequirements>) => Promise<A>
   readonly chatStream: (sessionId: string, input: string) => AsyncIterable<ChatChunk>
   readonly shutdown: () => Promise<void>
+  /**
+   * Wire the voice narration sink. Called by IPC handlers once the TTS
+   * engine is ready. Before this is called, `narrate` tool calls degrade
+   * gracefully (no-op with a reason, not an error).
+   */
+  readonly setNarrationSink: (fn: (text: string) => string) => void
 }
 
 export interface DesktopConfig {
   readonly baseUrl: string
   readonly model: string
+  /** LLM backend selection and server lifecycle (v1: splash). */
+  readonly llmBackend?: "splash" | "lmstudio" | "ollama" | undefined
+  /** Shell command to start the LLM server. Empty = no restart offered. */
+  readonly llmStartCommand?: string | undefined
 }
 
 /** Splash (the local model server) + a placeholder model name. */
 export const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   baseUrl: "http://127.0.0.1:8000",
-  model: "default"
+  model: "default",
+  llmBackend: "splash",
+  llmStartCommand: "/opt/homebrew/bin/splash serve --model incoai/Qwen3.8-27B-Splash --default-reasoning-effort none --max-context 64K"
 }
 
 export const desktopConfigPath = (): string => path.join(os.homedir(), ".aimy", "desktop.json")
@@ -89,10 +102,17 @@ export const desktopConfigPath = (): string => path.join(os.homedir(), ".aimy", 
 export const readDesktopConfig = (configFile: string = desktopConfigPath()): DesktopConfig => {
   try {
     const raw = JSON.parse(fs.readFileSync(configFile, "utf8")) as Partial<DesktopConfig>
+    const llmBackend = raw.llmBackend
     return {
       baseUrl:
         typeof raw.baseUrl === "string" && raw.baseUrl !== "" ? raw.baseUrl : DEFAULT_DESKTOP_CONFIG.baseUrl,
-      model: typeof raw.model === "string" && raw.model !== "" ? raw.model : DEFAULT_DESKTOP_CONFIG.model
+      model: typeof raw.model === "string" && raw.model !== "" ? raw.model : DEFAULT_DESKTOP_CONFIG.model,
+      llmBackend:
+        llmBackend === "splash" || llmBackend === "lmstudio" || llmBackend === "ollama"
+          ? llmBackend
+          : DEFAULT_DESKTOP_CONFIG.llmBackend,
+      llmStartCommand:
+        typeof raw.llmStartCommand === "string" ? raw.llmStartCommand : DEFAULT_DESKTOP_CONFIG.llmStartCommand
     }
   } catch {
     return DEFAULT_DESKTOP_CONFIG
@@ -131,10 +151,32 @@ export const bootDesktopEngine = async (opts?: {
   let retrievalTool: RetrievalTool | undefined
   const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
 
+  // Background job registry: process-lifetime, shared across turns.
+  // Spawned jobs (via `job.spawn` tool) outlive the turn that created them.
+  const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
+
+  // Narration sink: mutable ref populated by IPC handlers once the TTS
+  // engine is ready. Before that, `narrate` calls degrade gracefully
+  // (the tool reports "no narration sink" instead of failing).
+  let narrationEnqueue: ((text: string) => string) | undefined
+  const narrationSink = {
+    enqueue: (text: string): string => {
+      const fn = narrationEnqueue
+      if (fn === undefined) return ""
+      return fn(text)
+    }
+  }
+  // Exposed for handlers.ts to wire up once TTS is available.
+  const setNarrationSink = (fn: (text: string) => string): void => {
+    narrationEnqueue = fn
+  }
+
   const stack: ChatStack = buildChatStack({
     baseUrl: config.baseUrl,
     model: config.model,
-    extraTools: [retrievalAgentTool]
+    extraTools: [retrievalAgentTool],
+    backgroundJobs,
+    narration: narrationSink
   })
   const { layer, provider } = stack
 
@@ -165,6 +207,7 @@ export const bootDesktopEngine = async (opts?: {
           layer
         )
       ),
-    shutdown: (): Promise<void> => runtime.dispose()
+    shutdown: (): Promise<void> => runtime.dispose(),
+    setNarrationSink
   }
 }

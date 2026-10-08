@@ -227,7 +227,8 @@ const makeFakeEngine = (
     chatStream: (_sessionId: string, _input: string): AsyncIterable<ChatChunk> => ({
       [Symbol.asyncIterator]: () => script()
     }),
-    shutdown: (): Promise<void> => Promise.resolve()
+    shutdown: (): Promise<void> => Promise.resolve(),
+    setNarrationSink: (): void => undefined
   }
 }
 
@@ -408,10 +409,10 @@ describe("ipc command round-trips", () => {
         () => deps.chatStreams.activeIds().length === 0,
         "both round-trip streams drained"
       )
-      // Cancelling a completed stream is a clean error: terminal state is terminal.
+      // Cancelling a completed stream is idempotent: terminal state is terminal.
       await expect(
         invoke("aimy:chat.cancel", { _tag: "chat.cancel", streamId: sendRes.streamId })
-      ).rejects.toThrow(/unknown chat stream/)
+      ).resolves.toBeUndefined()
 
       // banners: publish directly, then list/dismiss through the channel.
       const banner = await Effect.runPromise(
@@ -551,11 +552,13 @@ describe("ipc command round-trips", () => {
     await expect(t.invoke("aimy:chat.send", null)).rejects.toThrow(/rejected payload/)
   })
 
-  it("unknown chat stream cancel is a clean error", async () => {
+  it("unknown chat stream cancel is idempotent (no-op)", async () => {
     const t = await setup(scriptOf([]))
+    // Cancelling a non-existent stream resolves cleanly — the renderer's
+    // cleanup finalizer races stream completion, so this must not throw.
     await expect(
       t.invoke("aimy:chat.cancel", { _tag: "chat.cancel", streamId: "no-such-stream" })
-    ).rejects.toThrow(/unknown chat stream/)
+    ).resolves.toBeUndefined()
   })
 })
 

@@ -87,6 +87,21 @@ export const Message = defineMessageUnion({
       })
     ),
   },
+  /** An ordered narration audio chunk arrived (from `narrate` tool). */
+  AudioChunkReceived: {
+    streamId: Schema.String,
+    sequence: Schema.Number,
+    audioBase64: Schema.String,
+  },
+  /** No more audio chunks will arrive for this stream. */
+  AudioDrainedReceived: {
+    streamId: Schema.String,
+  },
+  /** The audio chunk pump finished playing a batch — remove them. */
+  AudioChunksConsumed: {
+    streamId: Schema.String,
+    sequences: Schema.Array(Schema.Number),
+  },
   /** Speech started / ended (drives the speaking indicator). */
   SpeechStarted: { streamId: Schema.String },
   SpeechEnded: { streamId: Schema.String },

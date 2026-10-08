@@ -297,6 +297,46 @@ export const update = (
       },
     }),
 
+    AudioChunkReceived: ({ streamId, sequence, audioBase64 }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          pendingAudioChunks: [
+            ...model.session.pendingAudioChunks,
+            { streamId, sequence, audioBase64 },
+          ],
+        },
+      },
+    }),
+
+    AudioDrainedReceived: ({ streamId }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          audioDrainedStreamIds: model.session.audioDrainedStreamIds.includes(streamId)
+            ? model.session.audioDrainedStreamIds
+            : [...model.session.audioDrainedStreamIds, streamId],
+        },
+      },
+    }),
+
+    AudioChunksConsumed: ({ streamId, sequences }) => {
+      const seqSet = new Set(sequences)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            pendingAudioChunks: model.session.pendingAudioChunks.filter(
+              (c) => !(c.streamId === streamId && seqSet.has(c.sequence))
+            ),
+          },
+        },
+      }
+    },
+
     /* -- voice panel -------------------------------------------- */
 
     VoicePanelToggled: ({ open }) => ({

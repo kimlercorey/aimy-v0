@@ -238,6 +238,8 @@ export type IpcEvent =
   | { _tag: "chat.done"; streamId: string }
   | { _tag: "chat.error"; streamId: string; error: string }
   | { _tag: "chat.channels"; channels: ChatChannelsResult }
+  | { _tag: "chat.audioChunk"; streamId: string; sequence: number; audioBase64: string }
+  | { _tag: "chat.audioDrained"; streamId: string }
   | { _tag: "tts.installProgress"; progress: TtsInstallProgressEvent }
   | { _tag: "banner.published"; banner: Banner }
   | { _tag: "asc.dialsUpdated"; dials: DialVector }
@@ -279,6 +281,8 @@ export const IPC_EVENT_TAGS = [
   "chat.done",
   "chat.error",
   "chat.channels",
+  "chat.audioChunk",
+  "chat.audioDrained",
   "tts.installProgress",
   "banner.published",
   "asc.dialsUpdated"
