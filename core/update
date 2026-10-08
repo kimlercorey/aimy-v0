@@ -55,9 +55,10 @@ npm run desktop:preload
 
 echo "→ relaunching (dev mode)..."
 # vite serves the renderer in the background; electron runs the fresh main.
+# Both are log-redirected so the terminal stays usable.
 npx vite --config desktop/vite.config.ts >/tmp/aimy-vite.log 2>&1 &
 VITE_PID=$!
-AIMY_DEV=1 npx electron dist/desktop/src/main/main.js &
+AIMY_DEV=1 npx electron dist/desktop/src/main/main.js >/tmp/aimy-electron.log 2>&1 &
 ELECTRON_PID=$!
 echo "✓ Aimy restarted (dev mode). vite pid $VITE_PID, electron pid $ELECTRON_PID"
-echo "  Logs: /tmp/aimy-vite.log"
+echo "  Logs: /tmp/aimy-vite.log /tmp/aimy-electron.log"
