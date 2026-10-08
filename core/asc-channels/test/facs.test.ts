@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { AU_NAMES, dialsToAUFrame, frameActivation } from "./facs.js"
+import { AU_NAMES, dialsToAUFrame, frameActivation } from "../src/facs.js"
 
 describe("dialsToAUFrame", () => {
   it("maps the neutral vector to the hand-computed frame", () => {

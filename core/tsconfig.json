@@ -47,6 +47,7 @@
     "messaging/src/**/*",
     "messaging-telegram/src/**/*",
     "tts/src/**/*",
+    "asc-channels/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]
