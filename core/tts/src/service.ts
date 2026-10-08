@@ -8,7 +8,7 @@
 import { Effect } from "effect"
 import { chunkText } from "./chunk.js"
 import { concatWav } from "./wav.js"
-import { fetchHealth, fetchVoices, speakChunk, type TtsClientDeps } from "./client.js"
+import { fetchHealth, fetchVoices, speakChunk, addVoiceRemote, type TtsClientDeps } from "./client.js"
 import { InvalidTtsArgs, TtsServerError } from "./errors.js"
 import { TTS_SERVER_DEFAULT_URL, type TtsServiceShape, type Voice } from "./types.js"
 
@@ -65,6 +65,8 @@ export const makeTtsService = (deps: TtsServiceDeps): TtsServiceShape => {
         }
         activeVoiceId = voiceId
       }),
+
+    addVoice: (name, wav) => addVoiceRemote(client, name, wav),
 
     health: () => fetchHealth(client),
   }

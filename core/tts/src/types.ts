@@ -26,6 +26,11 @@ export interface TtsServiceShape {
   readonly speak: (text: string, voiceId?: string) => Effect.Effect<Uint8Array, TtsError>
   readonly voices: () => Effect.Effect<ReadonlyArray<Voice>, TtsError>
   readonly setVoice: (voiceId: string) => Effect.Effect<void, TtsError>
+  /**
+   * Add a voice reference from WAV bytes (stored server-side under
+   * ~/.aimy/voices/). Returns the new voice. Name: 1–40 chars.
+   */
+  readonly addVoice: (name: string, wav: Uint8Array) => Effect.Effect<Voice, TtsError>
   readonly health: () => Effect.Effect<TtsHealth, TtsError>
 }
 

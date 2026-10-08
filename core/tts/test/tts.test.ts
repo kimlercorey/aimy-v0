@@ -158,4 +158,13 @@ describe("tts service", () => {
     const e = await run(Effect.flip(svc.setVoice("nope")))
     expect(e).toBeInstanceOf(InvalidTtsArgs)
   })
+
+  it("addVoice validates before any server call", async () => {
+    speakCalls = 0
+    const svc = makeTtsService({ http: mockHttp([wavA]) })
+    const e1 = await run(Effect.flip(svc.addVoice("  ", wavA)))
+    expect(e1).toBeInstanceOf(InvalidTtsArgs)
+    const e2 = await run(Effect.flip(svc.addVoice("kimler", new Uint8Array([1, 2]))))
+    expect(e2).toBeInstanceOf(InvalidTtsArgs)
+  })
 })

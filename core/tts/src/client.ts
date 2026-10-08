@@ -12,7 +12,7 @@
  */
 import { Effect } from "effect"
 import type { HttpClientShape } from "../../web-retrieval/src/http.js"
-import { TtsServerError, TtsServerUnreachable } from "./errors.js"
+import { TtsServerError, TtsServerUnreachable, InvalidTtsArgs } from "./errors.js"
 import type { TtsHealth, Voice } from "./types.js"
 
 export interface TtsClientDeps {
@@ -118,6 +118,48 @@ export const fetchVoices = (
         name: v["name"] as string,
         isDefault: v["is_default"] === true,
       }))
+  })
+
+/** Add a voice reference. Server validates name/audio; 400s surface as TtsServerError. */
+export const addVoiceRemote = (
+  deps: TtsClientDeps,
+  name: string,
+  wav: Uint8Array
+): Effect.Effect<Voice, TtsServerUnreachable | TtsServerError | InvalidTtsArgs> =>
+  Effect.gen(function* () {
+    if (name.trim() === "") {
+      return yield* Effect.fail(new InvalidTtsArgs({ reason: "addVoice: name must not be empty" }))
+    }
+    if (wav.length < 1000) {
+      return yield* Effect.fail(
+        new InvalidTtsArgs({ reason: "addVoice: reference audio too short (need a real WAV)" })
+      )
+    }
+    let b64 = ""
+    const CHUNK = 0x8000
+    for (let i = 0; i < wav.length; i += CHUNK) {
+      b64 += String.fromCharCode(...wav.subarray(i, i + CHUNK))
+    }
+    const res = yield* requestJson(deps, "POST", "/voices/add", {
+      name: name.trim(),
+      audio_base64: btoa(b64),
+    })
+    let parsed: { voice?: unknown; error?: unknown }
+    try {
+      parsed = JSON.parse(res.text) as { voice?: unknown; error?: unknown }
+    } catch {
+      return yield* Effect.fail(new TtsServerError({ reason: "/voices/add returned unparseable JSON" }))
+    }
+    if (typeof parsed.error === "string") {
+      return yield* Effect.fail(new TtsServerError({ reason: `/voices/add: ${parsed.error}` }))
+    }
+    const v = parsed.voice as Record<string, unknown> | undefined
+    if (v === undefined || typeof v["id"] !== "string" || typeof v["name"] !== "string") {
+      return yield* Effect.fail(
+        new TtsServerError({ reason: `/voices/add HTTP ${res.status}: no voice returned` })
+      )
+    }
+    return { id: v["id"] as string, name: v["name"] as string, isDefault: false }
   })
 
 /** Health that never fails: unreachable is a result ({ reachable: false }), not an error. */
