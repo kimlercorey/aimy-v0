@@ -45,6 +45,7 @@
     "web-retrieval/src/**/*",
     "deep-research/src/**/*",
     "messaging/src/**/*",
+    "messaging-telegram/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]
