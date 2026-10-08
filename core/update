@@ -53,11 +53,27 @@ npm run build
 npm run desktop:assets
 npm run desktop:preload
 
-echo "→ relaunching (dev mode)..."
-# vite serves the renderer in the background; electron runs the fresh main.
+echo "→ starting vite dev server..."
 # Both are log-redirected so the terminal stays usable.
 npx vite --config desktop/vite.config.ts >/tmp/aimy-vite.log 2>&1 &
 VITE_PID=$!
+
+echo "→ waiting for vite (http://127.0.0.1:5173)..."
+READY=0
+for _ in $(seq 1 60); do
+  if curl -sf -o /dev/null http://127.0.0.1:5173 2>/dev/null; then
+    READY=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$READY" != "1" ]]; then
+  echo "✗ vite dev server did not come up within 60s."
+  echo "  Check /tmp/aimy-vite.log (vite pid $VITE_PID)"
+  exit 1
+fi
+
+echo "→ launching electron..."
 AIMY_DEV=1 npx electron dist/desktop/src/main/main.js >/tmp/aimy-electron.log 2>&1 &
 ELECTRON_PID=$!
 echo "✓ Aimy restarted (dev mode). vite pid $VITE_PID, electron pid $ELECTRON_PID"
