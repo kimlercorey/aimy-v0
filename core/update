@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# core/update — pull latest, rebuild, restart the Aimy desktop app.
+#
+# Usage:
+#   ./update            pull + rebuild + relaunch (dev mode, fast)
+#   ./update --dist     pull + full packaged build (dmg/AppImage); slower,
+#                       run this when you want the real installer artifact
+#
+# Fails loudly instead of half-updating: if the pull can't fast-forward
+# (local changes or divergence), it stops and tells you.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+DIST=0
+if [[ "${1:-}" == "--dist" ]]; then
+  DIST=1
+fi
+
+echo "→ pulling latest..."
+if ! git pull --ff-only; then
+  echo "✗ pull failed (local changes or diverged branch)."
+  echo "  Stash or commit your changes, then run ./update again."
+  exit 1
+fi
+
+echo "→ checking dependencies..."
+if ! git diff --quiet HEAD@{1} HEAD -- package.json package-lock.json 2>/dev/null; then
+  echo "  lockfile changed, reinstalling..."
+  npm ci
+else
+  echo "  unchanged, skipping."
+fi
+
+echo "→ stopping any running Aimy..."
+# Packaged app (macOS/Windows/Linux builds)
+pkill -x "Aimy" 2>/dev/null || true
+pkill -x "aimy" 2>/dev/null || true
+# Dev-mode electron running this repo's main.js
+pkill -f "dist/desktop/src/main/main.js" 2>/dev/null || true
+sleep 1
+
+if [[ "$DIST" == "1" ]]; then
+  echo "→ building packaged app (this takes a few minutes)..."
+  npm run dist
+  echo "✓ done — installer is in desktop/release/"
+  echo "  Install it, then launch Aimy from your Applications folder."
+  exit 0
+fi
+
+echo "→ rebuilding..."
+npm run build
+npm run desktop:assets
+npm run desktop:preload
+
+echo "→ relaunching (dev mode)..."
+# vite serves the renderer in the background; electron runs the fresh main.
+npx vite --config desktop/vite.config.ts >/tmp/aimy-vite.log 2>&1 &
+VITE_PID=$!
+AIMY_DEV=1 npx electron dist/desktop/src/main/main.js &
+ELECTRON_PID=$!
+echo "✓ Aimy restarted (dev mode). vite pid $VITE_PID, electron pid $ELECTRON_PID"
+echo "  Logs: /tmp/aimy-vite.log"
