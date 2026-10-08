@@ -46,6 +46,7 @@
     "deep-research/src/**/*",
     "messaging/src/**/*",
     "messaging-telegram/src/**/*",
+    "tts/src/**/*",
     "ui/**/*",
     "desktop/**/*"
   ]
