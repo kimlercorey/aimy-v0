@@ -48,6 +48,11 @@ export const ChatMessage = Schema.Struct({
    */
   narratedTexts: Schema.optional(Schema.Array(Schema.String)),
   /**
+   * Human-readable summary per tool call, parallel to toolsUsed (2026-10-11).
+   * Each tool tag's hover tooltip shows toolSummaries[k]. Formatted, not raw JSON.
+   */
+  toolSummaries: Schema.optional(Schema.Array(Schema.String)),
+  /**
    * Images attached to this message (2026-10-11: drag-and-drop).
    * Rendered as thumbnails in the bubble; sent to vision-capable models.
    */

@@ -1583,6 +1583,17 @@ textarea.composer-input {
   border-color: var(--action);
 }
 
+/* ── Copy button positioning (2026-10-11) ──────────────────────────── */
+/* Always top-right of the bubble. The button was drifting to vertical
+   center on tall bubbles — enforce absolute positioning against .msg. */
+.msg { position: relative; }
+.msg-copy-btn {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  transform: none !important;
+}
+
 /* ── Mic pre-roll status dot (2026-10-11) ───────────────────────────── */
 /* Tiny indicator on the mic button showing the 500ms lead-in buffer state.
    Positioned top-right, separate visual channel from the button's STT-engine
@@ -1611,4 +1622,38 @@ textarea.composer-input {
 @keyframes preroll-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* Tool introspection tags (2026-10-11): every tool in the footer gets a
+ * hover tooltip. The .tool-tip span is a hidden text source only — main.ts
+ * positions a fixed div (.tool-tip-fixed) from bubble geometry. */
+.tool-tag {
+  cursor: help;
+  border-bottom: 1px dotted var(--text-dim);
+}
+/* Legacy narrate-tag kept for backwards compat (now uses tool-tag). */
+.narrate-tag {
+  cursor: help;
+  border-bottom: 1px dotted var(--text-dim);
+}
+/* Fixed-position tooltip div (positioned by main.ts from bubble geometry).
+ * Must NOT be inside the chat flow — it's appended to document.body. */
+.tool-tip-fixed,
+.narrate-tip-fixed {
+  display: none;
+  position: fixed;
+  width: 300px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
 }

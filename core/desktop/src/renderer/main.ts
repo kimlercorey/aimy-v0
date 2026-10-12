@@ -246,46 +246,47 @@ const boot = (): void => {
     true
   )
 
-  // Narrate hover tooltip (2026-10-11 debugging aid): CSS percentage
-  // positioning proved unreliable across layouts, so the tooltip is a
-  // single fixed div positioned from measured bubble geometry. Hovering a
-  // .narrate-tag shows the spoken text in the gutter right of the bubble;
-  // it hides when the pointer leaves the tag/tooltip or on scroll.
-  let narrateTipEl: HTMLDivElement | null = null
-  const getNarrateTipEl = (): HTMLDivElement => {
-    if (narrateTipEl === null) {
-      narrateTipEl = document.createElement("div")
-      narrateTipEl.className = "narrate-tip-fixed"
-      document.body.appendChild(narrateTipEl)
+  // Tool hover tooltip (2026-10-11): CSS percentage positioning proved
+  // unreliable across layouts, so the tooltip is a single fixed div
+  // positioned from measured bubble geometry. Hovering a .narrate-tag or
+  // .tool-tag shows the summary in the gutter right of the bubble; it hides
+  // when the pointer leaves the tag/tooltip or on scroll.
+  let toolTipEl: HTMLDivElement | null = null
+  const getToolTipEl = (): HTMLDivElement => {
+    if (toolTipEl === null) {
+      toolTipEl = document.createElement("div")
+      toolTipEl.className = "tool-tip-fixed"
+      document.body.appendChild(toolTipEl)
     }
-    return narrateTipEl
+    return toolTipEl
   }
-  const hideNarrateTip = (): void => {
-    if (narrateTipEl !== null) narrateTipEl.style.display = "none"
+  const hideToolTip = (): void => {
+    if (toolTipEl !== null) toolTipEl.style.display = "none"
   }
   document.addEventListener("mouseover", (e) => {
     const target = e.target as HTMLElement
-    const el = getNarrateTipEl()
+    const el = getToolTipEl()
     // Hovering the tooltip itself: keep it visible (lets the user read/copy).
     if (target === el || el.contains(target)) return
     if (!(target instanceof Element)) {
-      hideNarrateTip()
+      hideToolTip()
       return
     }
-    const tag = target.closest(".narrate-tag")
+    // Both .narrate-tag (legacy) and .tool-tag (generalized 2026-10-11).
+    const tag = target.closest(".narrate-tag, .tool-tag")
     if (!tag) {
-      hideNarrateTip()
+      hideToolTip()
       return
     }
-    const source = tag.querySelector(".narrate-tip")
+    const source = tag.querySelector(".narrate-tip, .tool-tip")
     const bubble = tag.closest(".msg-row")?.querySelector(".msg")
-    const spoken = source?.textContent?.trim()
-    if (!spoken || !bubble) {
-      hideNarrateTip()
+    const text = source?.textContent?.trim()
+    if (!text || !bubble) {
+      hideToolTip()
       return
     }
     const rect = bubble.getBoundingClientRect()
-    el.textContent = spoken
+    el.textContent = text
     el.style.display = "block"
     // Gutter right of the bubble; clamp to viewport.
     const width = 300
@@ -294,7 +295,7 @@ const boot = (): void => {
     el.style.top = `${Math.max(8, rect.top)}px`
   })
   // Scrolling detaches the fixed tooltip from its bubble — hide it.
-  document.addEventListener("scroll", hideNarrateTip, true)
+  document.addEventListener("scroll", hideToolTip, true)
 
   // Copy button on message bubbles (2026-10-11): one click copies the clean
   // text (voice tags stripped, code blocks kept with language tags). The

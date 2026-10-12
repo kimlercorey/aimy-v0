@@ -50,6 +50,30 @@ export const parseWav = (wav: Uint8Array): ParsedWav => {
 }
 
 /**
+ * Duration in seconds from WAV bytes, parsed from the fmt header.
+ * (2026-10-11): The OMA server outputs 48kHz while the local server outputs
+ * 24kHz — never assume the rate. Falls back to the 24kHz assumption if the
+ * header is unparseable.
+ */
+export const wavDurationSec = (wav: Uint8Array): number => {
+  try {
+    const { header, pcm } = parseWav(wav)
+    // fmt chunk: sample rate at offset 24, channels at 22, bits/sample at 34
+    // (offsets relative to start of file; header starts at 0).
+    const numChannels = header[22]! | (header[23]! << 8)
+    const sampleRate = header[24]! | (header[25]! << 8) | (header[26]! << 16) | (header[27]! << 24)
+    const bitsPerSample = header[34]! | (header[35]! << 8)
+    if (sampleRate > 0 && numChannels > 0 && bitsPerSample > 0) {
+      return pcm.length / (sampleRate * numChannels * (bitsPerSample / 8))
+    }
+  } catch {
+    // Fall through to the fallback.
+  }
+  // Fallback: 24kHz 16-bit mono assumption (legacy behavior).
+  return wav.length / 48000
+}
+
+/**
  * Concatenate WAV files (same format) into one. Pure. Throws on malformed
  * input or empty list.
  */

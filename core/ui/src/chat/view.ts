@@ -18,6 +18,7 @@ import type { ChatMessage, ContextMeter, SessionSlice } from "../model.js"
 import { sanitizeTerminalOutput, visibleWindow } from "../rendering.js"
 import { Message } from "../messages.js"
 import { icon } from "../icons.js"
+import { extractToolCalls } from "../tool-calls.js"
 
 /** Format an STT engine ID (e.g. "parakeet-mlx-0.6b-v2") for display. */
 const sttDisplayName = (engineId: string | undefined): string => {
@@ -119,30 +120,32 @@ const messageRow = (h: H, m: ChatMessage) => {
   // the ```aimy-tool fence into the bubble as an ugly code block).
   const parsed = m.role === "assistant"
     ? parseMessageTools(m.text)
-    : { text: m.text, toolsUsed: m.toolsUsed ?? [], narratedTexts: m.narratedTexts ?? [] }
+    : { text: m.text, toolsUsed: m.toolsUsed ?? [], narratedTexts: m.narratedTexts ?? [], toolSummaries: m.toolSummaries ?? [] }
   // Prefer stored metadata; fall back to parsed.
   const toolsUsed = m.toolsUsed && m.toolsUsed.length > 0 ? m.toolsUsed : parsed.toolsUsed
   const narratedTexts = m.narratedTexts && m.narratedTexts.length > 0 ? m.narratedTexts : parsed.narratedTexts
+  const toolSummaries = m.toolSummaries && m.toolSummaries.length > 0 ? m.toolSummaries : parsed.toolSummaries
   // ALWAYS use parsed.text — m.text may still contain the tool-call fence.
   const displayText = parsed.text
 
   const body = looksLikeMarkdown(displayText)
     ? h.div([h.Class("msg-body markdown-body"), h.InnerHTML(renderMarkdown(displayText))], [])
     : h.div([h.Class("msg-body")], [sanitizeTerminalOutput(displayText)])
-  // Footer nodes: tool names, with each "narrate" tag carrying a hover
-  // tooltip of what was spoken (2026-10-11 debug aid). The k-th "narrate"
-  // tag maps to narratedTexts[k]; tags without a matching text stay plain.
+  // Footer nodes: every tool tag gets a hover tooltip with its summary
+  // (2026-10-11: introspection for all tools, not just narrate). The k-th
+  // tag maps to toolSummaries[k]; tags without a summary stay plain.
+  // The .tool-tip span is a hidden text source — main.ts positions a fixed
+  // div from bubble geometry (CSS positioning proved unreliable).
   const footerNodes: Array<string | ReturnType<H["span"]>> = []
   {
-    let narrateIdx = 0
     toolsUsed.forEach((tool, idx) => {
       if (idx > 0) footerNodes.push(", ")
-      const spoken = tool === "narrate" ? narratedTexts[narrateIdx++] : undefined
-      if (spoken !== undefined) {
+      const summary = toolSummaries[idx]
+      if (summary !== undefined && summary.length > 0) {
         footerNodes.push(
-          h.span([h.Class("narrate-tag")], [
-            "narrate",
-            h.span([h.Class("narrate-tip")], [spoken]),
+          h.span([h.Class("tool-tag")], [
+            tool,
+            h.span([h.Class("tool-tip"), h.Style({ display: "none" })], [summary]),
           ])
         )
       } else {
@@ -830,11 +833,18 @@ const contextMeterView = (h: H, meter: ContextMeter) => {
  * block streams in token-by-token, causing layout jumping and showing raw
  * JSON. Remove complete fences, incomplete trailing fences (mid-stream),
  * and bare JSON tool calls. Returns empty if only tool calls so far.
+ *
+ * Uses extractToolCalls (balanced-brace parser) for bare JSON — the old
+ * regex \{[^}]*\} broke on nested objects (2026-10-11).
  */
 const stripStreamingToolCalls = (text: string): string => {
   let cleaned = text.replace(/```aimy-tool[\s\S]*?```/g, "")
   cleaned = cleaned.replace(/```aimy-tool[\s\S]*$/, "")
-  cleaned = cleaned.replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[^}]*\}\s*\}/g, "")
+  // Bare JSON: use the robust parser from tool-calls.ts instead of regex.
+  const calls = extractToolCalls(cleaned)
+  for (const c of calls) {
+    cleaned = cleaned.replace(c.raw, "")
+  }
   return cleaned.trim()
 }
 

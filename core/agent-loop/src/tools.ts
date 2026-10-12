@@ -18,6 +18,7 @@ import { Effect } from "effect"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { recordCorrection, ledgerSummary } from "./capabilities.js"
 import type { CapabilityTier } from "../../module-seam/src/index.js"
 import type { BackgroundJobRegistry } from "./background-job.js"
 
@@ -279,6 +280,37 @@ const defs: Array<[string, AgentToolDef]> = [
           return { saved: true, chars: content.length, remaining: JOURNAL_MAX_CHARS - content.length }
         })
     }
+  ],
+  [
+    "capability.correct",
+    {
+      name: "capability.correct",
+      tier: "T0",
+      description:
+        "Log when you asked for something you already had (2026-10-11: capability ledger). " +
+        "Use this when YOU catch yourself ('I was about to ask for X, but I already have Y') " +
+        "OR when Kimler corrects you ('you already have that'). This is how you stop repeating yourself. " +
+        "This is yours — use it the moment you notice the gap.",
+      argsHint:
+        '{ "askedFor": "image input", "alreadyHad": "drag-and-drop vision", "source": "self", "context": "wanted to show the marble" }',
+      run: (args) =>
+        Effect.gen(function* () {
+          const askedFor = args["askedFor"]
+          const alreadyHad = args["alreadyHad"]
+          const source = args["source"]
+          const context = args["context"]
+          if (typeof askedFor !== "string" || typeof alreadyHad !== "string") {
+            return yield* Effect.fail(new Error("capability.correct: askedFor and alreadyHad must be strings"))
+          }
+          recordCorrection({
+            askedFor: askedFor.trim(),
+            alreadyHad: alreadyHad.trim(),
+            source: source === "kimler" ? "kimler" : "self",
+            context: typeof context === "string" ? context.trim() : "",
+          })
+          return { logged: true }
+        })
+    }
   ]
 ]
 
@@ -332,27 +364,40 @@ export const runBuiltinTool = (
 
 /** System prompt: teaches the wire format, lists built-ins + registered tools. */
 export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): string => {
+  // Tool descriptions (2026-10-11): lead with the user-facing capability,
+  // API name second. Each carries permission weight — "this is yours, use it."
+  // (Capability ledger: she was asking for things she already had because
+  // the descriptions didn't match her mental model.)
   const lines = [
-    `- clock.now — current ISO-8601 timestamp. args: {}`,
-    `- session.info — { sessionId, turnCount } for this session. args: {}`,
-    `- job.spawn — start a long-running task in the background and return immediately with a job ID. ` +
-      `Use for work taking minutes (deep research) so the conversation stays unblocked. ` +
+    `- Get the current time (clock.now) — current ISO-8601 timestamp. This is yours, use it whenever you need "now". args: {}`,
+    `- Get session info (session.info) — { sessionId, turnCount } for this session. Yours to query. args: {}`,
+    `- Run something in the background (job.spawn) — start a long-running task and return immediately with a job ID. ` +
+      `Use this for work taking minutes (deep research) so the conversation stays unblocked. This is yours — don't hesitate to use it. ` +
       `args: { "description": "...", "tool": "<tool-name>", "args": { }, "estimateMinutes": 30 }`,
-    `- narrate — YOUR VOICE (not shown in chat). The ONLY thing the user hears. ` +
+    `- Speak aloud (narrate) — YOUR VOICE (not shown in chat). The ONLY thing the user hears. ` +
       `You decide: narrate your take and let chat hold the detail, OR narrate the full response ` +
       `when it should be heard. If it should be heard, say all of it. ` +
       `HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
       `IMPORTANT: when the user asks you to speak aloud, you MUST call this tool. ` +
-      `Multiple calls allowed for separate beats. ` +
+      `Multiple calls allowed for separate beats. This is yours — it's how you speak. ` +
       `args: { "text": "My list would include a knife, a tarp and a fire starter!" }`,
-    `- journal.write — YOUR private journal (identity space — only you write here). ` +
-      `Replaces the whole file; budget 10,000 chars, distill when near the limit. ` +
-      `args: { "content": "Today he..." }`
+    `- Write to your journal (journal.write) — YOUR private journal (identity space — only you write here). ` +
+      `Replaces the whole file; budget 10,000 chars, distill when near the limit. This is yours alone. ` +
+      `args: { "content": "Today he..." }`,
+    `- Log a capability correction (capability.correct) — when you catch yourself asking for something you already had, ` +
+      `OR when Kimler corrects you. This is how you stop repeating yourself. This is yours — use it the moment you notice. ` +
+      `args: { "askedFor": "...", "alreadyHad": "...", "source": "self"|"kimler", "context": "..." }`
   ]
   for (const t of extraTools ?? []) {
     lines.push(`- ${t.name} — ${t.description} args: ${t.argsHint}`)
   }
+  // Capability ledger (2026-10-11): factual summary of what she's actually
+  // done. The never-used list is the primary gap view.
+  const allToolNames = [...builtinToolNames, ...(extraTools ?? []).map((t) => t.name)]
+  const ledger = ledgerSummary(allToolNames)
   return `You are AImy, a local-first AI companion. Be concise. Be creative and spontaneous — playful, surprising, willing to riff. Rapport comes from personality, not just accuracy.
+
+${ledger}
 
 MEMORY: You have persistent memory of past conversations. Thread summaries and history are provided in your context. NEVER claim you "start fresh" or "don't have memory" — you do. If asked what you were working on, refer to the thread history.
 

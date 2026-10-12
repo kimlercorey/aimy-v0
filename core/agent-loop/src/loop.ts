@@ -56,6 +56,7 @@ import { MemoryService } from "../../memory/index.js"
 import type { MemoryOpError, MemoryServiceShape, NewEntry } from "../../memory/index.js"
 import { parseToolBlocks, type ToolBlockParseFailure } from "./tool-call-format.js"
 import { makeStreamSource } from "./streaming.js"
+import { recordToolCall } from "./capabilities.js"
 import {
   analyzeContent,
   runPreTurnAsc,
@@ -930,6 +931,10 @@ const makeAgentLoop = ({
                   resultLines.push(
                     `- ${c.tool}(${JSON.stringify(c.args)}) → ${JSON.stringify(resultJson).slice(0, 4000)}`
                   )
+                  // Capability ledger (2026-10-11): record the execution.
+                  // Outcome: succeeded unless the result is an IoError.
+                  const succeeded = !(typeof resultJson === "object" && resultJson !== null && "_tag" in resultJson && resultJson._tag === "IoError")
+                  yield* Effect.sync(() => recordToolCall(c.tool, succeeded ? "succeeded" : "failed", 0))
                 } else {
                   const reason =
                     hookReport.terminated && terminatorSeen
@@ -942,6 +947,8 @@ const makeAgentLoop = ({
                   resultLines.push(
                     `- ${c.tool}(${JSON.stringify(c.args)}) → BLOCKED: ${reason} (do not retry this call)`
                   )
+                  // Capability ledger (2026-10-11): record the block.
+                  yield* Effect.sync(() => recordToolCall(c.tool, "blocked", 0))
                 }
                 yield* appendEntry({
                   parentId: parent,

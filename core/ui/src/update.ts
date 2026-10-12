@@ -246,18 +246,19 @@ export const update = (
       // first, then split the clean text into blocks.
       // Defensive: if parsing fails, fall back to single block with raw text
       // (2026-10-10: responses vanishing).
-      let parsed: { text: string; toolsUsed: string[]; narratedTexts: string[] }
+      let parsed: { text: string; toolsUsed: string[]; narratedTexts: string[]; toolSummaries: string[] }
       let blocks: string[]
       try {
         parsed = parseMessageTools(text)
         blocks = splitBlocks(parsed.text)
       } catch (e) {
         console.error(`[aimy] StreamSettled: parse failed (${e instanceof Error ? e.message : e}), using raw text`)
-        parsed = { text, toolsUsed: [], narratedTexts: [] }
+        parsed = { text, toolsUsed: [], narratedTexts: [], toolSummaries: [] }
         blocks = [text]
       }
       const toolsUsed = parsed.toolsUsed
       const narratedTexts = parsed.narratedTexts
+      const toolSummaries = parsed.toolSummaries
       // Emotion tags to emoji (2026-10-10): [happy] -> 😊 for display.
       // Tags are stripped for TTS (voice carries the emotion via exaggeration).
       const EMOTION_EMOJI: Record<string, string> = {
@@ -283,6 +284,8 @@ export const update = (
         ...(toolsUsed.length > 0 && i === nonEmptyBlocks.length - 1 ? { toolsUsed } : {}),
         // Spoken texts for the narrate hover tooltip (2026-10-11 debug aid).
         ...(narratedTexts.length > 0 && i === nonEmptyBlocks.length - 1 ? { narratedTexts } : {}),
+        // Human-readable tool summaries for hover introspection (2026-10-11).
+        ...(toolSummaries.length > 0 && i === nonEmptyBlocks.length - 1 ? { toolSummaries } : {}),
       }))
       // Voice: narrate-only (2026-10-11). Auto-speech disabled; the `narrate`
       // tool is the sole voice channel. Chat blocks are visual-only.
@@ -928,15 +931,20 @@ export const update = (
       // Same barge-in semantics as UserSentMessage (2026-10-11).
       const interrupted =
         model.session.streaming.active || model.session.speakingStreamId !== undefined
+      const newMessages = [
+        ...model.session.messages,
+        { id, role: "user" as const, text: draft, at: Date.now() },
+      ]
       return {
         model: {
           ...model,
           session: {
             ...model.session,
-            messages: [
-              ...model.session.messages,
-              { id, role: "user", text: draft, at: Date.now() },
-            ],
+            messages: newMessages,
+            // Pin the window to the newest message (2026-10-11: VoiceDraftConfirmed
+            // was missing this, causing the user bubble to fall outside the
+            // visible window and appear to "vanish" while responses merged).
+            listWindow: { ...model.session.listWindow, anchorIndex: newMessages.length - 1 },
             composer: { draft: "", attachments: [] },
             voiceDraft: false,
             speakingStreamId: undefined,

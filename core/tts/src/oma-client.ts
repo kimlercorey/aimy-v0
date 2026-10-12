@@ -26,6 +26,7 @@
 import { Effect } from "effect"
 import type { HttpClientShape } from "../../web-retrieval/src/http.js"
 import { TtsServerError, TtsServerUnreachable } from "./errors.js"
+import { wavDurationSec } from "./wav.js"
 
 export interface OmaTtsParams {
   readonly cfgWeight: number
@@ -153,14 +154,19 @@ const postSynthesize = (
     })
     const bytes = buf.byteLength
     const bytesPerChar = textLen > 0 ? (bytes / textLen).toFixed(0) : "0"
-    // 24kHz 16-bit mono = 48000 bytes/sec. Normal speech ~15 chars/sec
-    // → ~3200 bytes/char is expected. >6000 suggests abnormally long audio.
-    const audioSec = (bytes / 48000).toFixed(1)
+    // Duration from the WAV header (2026-10-11): OMA outputs 48kHz, local
+    // outputs 24kHz — the old hardcoded 48000 bytes/sec (24kHz) was 2x wrong
+    // for OMA. Normal speech ~15 chars/sec.
+    const wavBytes = new Uint8Array(buf)
+    const durationSec = wavDurationSec(wavBytes)
+    const audioSec = durationSec.toFixed(1)
     console.log(`[aimy] OMA synthesize OK: ${bytes} bytes (${audioSec}s audio) for ${textLen} chars = ${bytesPerChar} bytes/char`)
-    if (textLen > 0 && bytes / textLen > 6000) {
-      console.warn(`[aimy] OMA synthesize WARNING: ${bytesPerChar} bytes/char exceeds 6000 — audio abnormally long for text length!`)
+    // Abnormally long audio: >0.3 sec/char is very slow speech (normal ~0.067).
+    // Rate-aware via the parsed duration, not bytes/char (which varies by sample rate).
+    if (textLen > 0 && durationSec / textLen > 0.3) {
+      console.warn(`[aimy] OMA synthesize WARNING: ${(durationSec / textLen).toFixed(2)} sec/char exceeds 0.3 — audio abnormally long for text length!`)
     }
-    return new Uint8Array(buf)
+    return wavBytes
   })
 
 export const omaHealth = (
