@@ -226,8 +226,15 @@ export interface ExportReceiptShape {
  * Commands the renderer may invoke. Each variant's `_tag` is the IPC channel
  * name; the response is the paired `*Result` (or `void`) below.
  */
+/** One image for a chat turn (2026-10-11: drag-and-drop vision). */
+export interface ChatImageWire {
+  readonly dataUrl: string
+  readonly mimeType: string
+  readonly name: string
+}
+
 export type IpcCommand =
-  | { _tag: "chat.send"; sessionId: string; input: string }
+  | { _tag: "chat.send"; sessionId: string; input: string; images?: ReadonlyArray<ChatImageWire> | undefined }
   | { _tag: "chat.cancel"; streamId: string }
   | { _tag: "banners.list" }
   | { _tag: "banners.dismiss"; id: string }

@@ -154,8 +154,14 @@ export interface AgentLoopService {
   /**
    * Run one single-step turn for `sessionId`: stream tokens, execute any
    * tool calls the model emitted, persist the turn, emit `Done`.
+   * Images (2026-10-11): vision attachments as data URLs, sent as
+   * OpenAI-style image_url content parts when the provider supports them.
    */
-  readonly chat: (sessionId: string, input: string) => Stream.Stream<ChatChunk, AgentLoopError>
+  readonly chat: (
+    sessionId: string,
+    input: string,
+    images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>
+  ) => Stream.Stream<ChatChunk, AgentLoopError>
 }
 
 export class AgentLoop extends Context.Service<AgentLoop, AgentLoopService>()(
@@ -198,6 +204,11 @@ const historyMessages = (
   entries: ReadonlyArray<{ readonly kind: string; readonly payload: Readonly<Record<string, unknown>> }>
 ): Array<Message> => {
   const out: Array<Message> = []
+  // Skip the wake exchange (2026-10-11): the silent wake turn's user prompt
+  // (payload.wake=true) and ALL its assistant responses (one per tool round)
+  // are internal — they must not appear in history, or the model repeats
+  // the wake thoughts.
+  let inWakeExchange = false
   for (const e of entries) {
     if (e.kind === "summary") {
       // Hierarchical summary: collapsed older messages. Include as a system
@@ -212,8 +223,19 @@ const historyMessages = (
       continue
     }
     if (e.kind !== "message") continue
-    const { role, text } = e.payload
+    const { role, text, wake } = e.payload as { role?: unknown; text?: unknown; wake?: unknown }
     if ((role === "user" || role === "assistant") && typeof text === "string") {
+      // Wake user prompt: enter wake-exchange mode, skip it.
+      if (role === "user" && wake === true) {
+        inWakeExchange = true
+        continue
+      }
+      // Non-wake user message: exit wake-exchange mode.
+      if (role === "user") {
+        inWakeExchange = false
+      }
+      // Skip all assistant messages inside the wake exchange.
+      if (inWakeExchange) continue
       // Skip empty assistant messages — they're noise from failed turns and
       // teach the model to return empty. Only keep messages with content.
       if (role === "assistant" && text.trim().length === 0) continue
@@ -226,8 +248,17 @@ const historyMessages = (
 /**
  * Rough token estimate: ~4 characters per token for English text.
  * Conservative (over-estimates) to avoid context overflow.
+ * For multimodal content, sums text parts + estimates 1000 tokens per image.
  */
-const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
+const estimateTokens = (content: string | ReadonlyArray<{ type: string; text?: string }>): number => {
+  if (typeof content === "string") return Math.ceil(content.length / 4)
+  let total = 0
+  for (const part of content) {
+    if (part.type === "text" && part.text) total += Math.ceil(part.text.length / 4)
+    else if (part.type === "image_url") total += 1000 // rough vision token estimate
+  }
+  return total
+}
 
 /**
  * Truncate conversation history to fit within a token budget.
@@ -525,7 +556,11 @@ const makeAgentLoop = ({
       console.log(`[aimy] auto-archive: done for ${oldSessionId}`)
     })
 
-  const chat = (sessionId: string, input: string): Stream.Stream<ChatChunk, AgentLoopError> =>
+  const chat = (
+    sessionId: string,
+    input: string,
+    images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>
+  ): Stream.Stream<ChatChunk, AgentLoopError> =>
     Stream.unwrap(
       Effect.gen(function* () {
         // Interruption marker (2026-10-11): the renderer prepends
@@ -570,7 +605,16 @@ const makeAgentLoop = ({
         const userEntry = yield* memory.append(sessionId, {
           parentId,
           kind: "message",
-          payload: { role: "user", text: cleanInput }
+          payload: {
+            role: "user",
+            text: cleanInput,
+            // Mark wake turns so historyMessages filters the exchange out.
+            // The wake is internal; it must not pollute the model's context.
+            ...(isWakeTurn ? { wake: true } : {}),
+            ...(images !== undefined && images.length > 0
+              ? { images: images.map((i) => ({ name: i.name, mimeType: i.mimeType })) }
+              : {}),
+          }
         } satisfies NewEntry)
         // Turns, not messages: a multi-round turn persists several assistant
         // messages (one per synthesis pass), but every turn begins with
@@ -686,11 +730,27 @@ const makeAgentLoop = ({
             `(${history.length} → ${truncatedHistory.length}) to fit context`)
         }
 
+        // User message: multimodal when images are attached (2026-10-11).
+        const userMessage: Message = images !== undefined && images.length > 0
+          ? {
+              role: "user",
+              content: [
+                { type: "text", text: cleanInput },
+                ...images.map((img) => ({
+                  type: "image_url" as const,
+                  image_url: { url: img.dataUrl },
+                })),
+              ],
+            }
+          : { role: "user", content: cleanInput }
+        if (images !== undefined && images.length > 0) {
+          console.log(`[aimy] turn with ${images.length} image(s): ${images.map((i) => i.name).join(", ")}`)
+        }
         const request: GenerateRequest = {
           messages: [
             { role: "system", content: fullSystemPrompt },
             ...truncatedHistory,
-            { role: "user", content: cleanInput }
+            userMessage,
           ],
           params: {},
           maxTokens: 2048
@@ -816,8 +876,15 @@ const makeAgentLoop = ({
               const { calls: rawCalls, failures } = parseToolBlocks(text)
               parseFailures.push(...failures)
               // Enforce once-per-turn narrate: keep the first, drop the rest.
+              // Wake turns (2026-10-11): drop ALL narrate — the wake is
+              // silent. Draining tokens doesn't stop tool execution, so the
+              // wake was voicing its introspection on every reboot.
               const calls = rawCalls.filter((c) => {
                 if (c.tool !== "narrate") return true
+                if (isWakeTurn) {
+                  console.log(`[aimy] voice: dropping narrate in wake turn ${turnId} (silent wake)`)
+                  return false
+                }
                 if (narrateFired) {
                   console.log(`[aimy] voice: dropping duplicate narrate in turn ${turnId} (once-per-turn)`)
                   return false
@@ -831,7 +898,11 @@ const makeAgentLoop = ({
                 turn: { turnId, module: MODULE },
                 contextMessages: conversation.map((m) => ({
                   role: m.role,
-                  content: m.content
+                  // TurnSpec is text-only (tool context); multimodal content
+                  // becomes a placeholder. The model sees the full parts.
+                  content: typeof m.content === "string"
+                    ? m.content
+                    : m.content.map((p) => p.type === "text" ? p.text : "[image]").join(" "),
                 })),
                 toolCalls: calls.map((c, i) => ({
                   id: `${turnId}:r${round}:${i}`,

@@ -1303,3 +1303,312 @@ input[type="text"], input:not([type]) {
   max-width: 100%;
   overflow-x: hidden;
 }
+/* Working indicator (2026-10-11): shown while streaming tool calls with no
+   user-facing text yet. Subtle pulse, no layout jumping. */
+.working-shimmer {
+  color: var(--text-dim);
+  font-style: italic;
+  animation: working-pulse 1.5s ease-in-out infinite;
+}
+@keyframes working-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+/* Composer textarea (2026-10-11): multi-line input. Starts single-line,
+   auto-grows via JS up to 5 lines, then scrolls. User resize disabled
+   (JS owns height). */
+textarea.composer-input {
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.4;
+  max-height: 100px;
+  font-family: inherit;
+}
+
+/* ── Chat visual redesign (2026-10-11) ───────────────────────────────
+ * Rounded bubbles, clear speaker separation, breathing room. Keeps the
+ * design tokens (dark theme, action cyan, AIMY green, hairlines). */
+.msg-row {
+  margin-bottom: 16px;
+}
+.msg-row .msg {
+  border-radius: 12px;
+  padding: 10px 14px;
+  position: relative;
+}
+/* Assistant: panel background, green left accent. */
+.msg-row .msg-assistant {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid #00ff41;
+  margin-right: 20%;
+}
+/* User: tinted action background, right-aligned. */
+.msg-row .msg-user {
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  margin-left: 20%;
+}
+/* Speaker labels: small, uppercase, dim — not dominant. */
+.msg-role {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+  margin-bottom: 6px;
+  display: block;
+}
+/* Message text: 14px, comfortable line height. */
+.msg-body {
+  font-size: 14px;
+  line-height: 1.55;
+}
+/* ── Markdown typography (2026-10-11) ──────────────────────────────
+ * GitHub-style readability for chat bubbles, adapted for the dark theme
+ * and compact bubble context. Based on github-markdown-css principles:
+ * clear hierarchy, generous whitespace, scannable structure. */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: break-word;
+  /* Override the .msg-body pre-wrap — markdown HTML has its own block
+     structure; pre-wrap would preserve source newlines as extra space. */
+  white-space: normal;
+}
+.markdown-body > *:first-child { margin-top: 0 !important; }
+.markdown-body > *:last-child { margin-bottom: 0 !important; }
+/* Headings: clear hierarchy, breathing room. */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 20px;
+  margin-bottom: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.markdown-body h1 { font-size: 1.4em; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.markdown-body h2 { font-size: 1.25em; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.markdown-body h3 { font-size: 1.12em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: 0.9em; color: var(--text-dim); }
+.markdown-body h6 { font-size: 0.85em; color: var(--text-dim); }
+/* Paragraphs: breathing room between blocks. */
+.markdown-body p { margin-top: 0; margin-bottom: 12px; }
+/* Lists: tight but scannable (Kimler spec: 1.0–1.15 spacing, no blank li gaps). */
+.markdown-body ul,
+.markdown-body ol {
+  margin-top: 0;
+  margin-bottom: 12px;
+  padding-left: 1.6em;
+}
+.markdown-body li { margin-bottom: 2px; line-height: 1.5; }
+.markdown-body li > p { margin-bottom: 6px; }
+.markdown-body ul ul,
+.markdown-body ul ol,
+.markdown-body ol ol,
+.markdown-body ol ul { margin-top: 4px; margin-bottom: 4px; }
+/* Blockquotes: thin left line (AImy design language), no box. */
+.markdown-body blockquote {
+  margin: 0 0 12px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.markdown-body blockquote > *:last-child { margin-bottom: 0; }
+/* Code: inline and fenced. */
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: rgba(110, 118, 129, 0.18);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+.markdown-body pre {
+  margin-top: 0;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--action-dim);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+/* Tables: clean grid. */
+.markdown-body table {
+  border-collapse: collapse;
+  margin-bottom: 12px;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.markdown-body th,
+.markdown-body td {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+}
+.markdown-body th {
+  background: var(--bg-panel);
+  font-weight: 600;
+  text-align: left;
+}
+.markdown-body tr:nth-child(even) td { background: rgba(110, 118, 129, 0.06); }
+/* Horizontal rule: subtle. */
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+/* Links: action color, underline on hover. */
+.markdown-body a {
+  color: var(--action);
+  text-decoration: none;
+}
+.markdown-body a:hover { text-decoration: underline; }
+/* Strong/em: keep semantic weight. */
+.markdown-body strong { font-weight: 600; color: var(--text); }
+/* Images in markdown: rounded, max-width. */
+.markdown-body img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+/* Code blocks: rounded, padded, keep thin left-line. */
+.msg-body pre {
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+/* Streaming caret: gentle pulse. */
+.stream-caret {
+  animation: caret-pulse 1.2s ease-in-out infinite;
+}
+@keyframes caret-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+/* Copy button: vertically centered on bubble edge. */
+.msg-copy-btn {
+  top: 50% !important;
+  transform: translateY(-50%);
+}
+/* Tool footer: a bit more separation from the bubble. */
+.msg-tools {
+  margin-top: 6px;
+}
+
+/* ── Image drag-and-drop (2026-10-11) ─────────────────────────────── */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(34, 211, 238, 0.08);
+  border: 2px dashed var(--action);
+  border-radius: 12px;
+  margin: 12px;
+  font-size: 18px;
+  color: var(--action);
+  pointer-events: none;
+}
+.composer-attachments {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+.composer-attachment {
+  position: relative;
+  width: 48px;
+  height: 48px;
+}
+.composer-attachment-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.composer-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-attachment-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.msg-images {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.msg-image-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+}
+.msg-image-thumb:hover {
+  border-color: var(--action);
+}
+
+/* ── Mic pre-roll status dot (2026-10-11) ───────────────────────────── */
+/* Tiny indicator on the mic button showing the 500ms lead-in buffer state.
+   Positioned top-right, separate visual channel from the button's STT-engine
+   color coding. */
+.mic-btn { position: relative; }
+.mic-preroll-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.mic-preroll-dot.preroll-warming {
+  background: #f59e0b; /* amber */
+  animation: preroll-pulse 1.2s ease-in-out infinite;
+}
+.mic-preroll-dot.preroll-ready {
+  background: #22c55e; /* green */
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.6);
+}
+.mic-preroll-dot.preroll-unavailable {
+  background: #6b7280; /* grey */
+}
+@keyframes preroll-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}

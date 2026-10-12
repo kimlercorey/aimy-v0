@@ -94,6 +94,26 @@ let isRecording = false
 // Pre-roll: 500ms of audio before the button press.
 const PREROLL_SAMPLES = 16000 * 0.5
 
+/**
+ * Warm up mic capture in the background (2026-10-11): the pre-roll ring
+ * buffer needs ~500ms of audio BEFORE the first PTT press. If capture only
+ * starts on first press, the buffer is empty and the first words are lost.
+ * Call at startup; failures are non-fatal (PTT will try again on press).
+ * Broadcasts `aimy:mic-preroll` CustomEvent so the UI can show the dot.
+ */
+export const warmupMicCapture = (): void => {
+  ensureMicCapture().then(
+    () => {
+      console.log("[mic] warmupMicCapture: pre-roll active")
+      window.dispatchEvent(new CustomEvent("aimy:mic-preroll", { detail: { status: "ready" } }))
+    },
+    (e) => {
+      console.log(`[mic] warmupMicCapture: deferred (${e instanceof Error ? e.message : e})`)
+      window.dispatchEvent(new CustomEvent("aimy:mic-preroll", { detail: { status: "unavailable" } }))
+    }
+  )
+}
+
 const ensureMicCapture = async (): Promise<void> => {
   if (audioCtx !== undefined && micStream !== undefined) return
   console.log("[mic] ensureMicCapture: requesting microphone...")

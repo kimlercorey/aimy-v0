@@ -69,7 +69,11 @@ export type EngineRequirements =
  */
 export interface DesktopEngine {
   readonly run: <A, E>(effect: Effect.Effect<A, E, EngineRequirements>) => Promise<A>
-  readonly chatStream: (sessionId: string, input: string) => AsyncIterable<ChatChunk>
+  readonly chatStream: (
+    sessionId: string,
+    input: string,
+    images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>
+  ) => AsyncIterable<ChatChunk>
   readonly shutdown: () => Promise<void>
   /**
    * Wire the voice narration sink. Called by IPC handlers once the TTS
@@ -261,10 +265,14 @@ export const bootDesktopEngine = async (opts?: {
   return {
     run: <A, E>(effect: Effect.Effect<A, E, EngineRequirements>): Promise<A> =>
       runtime.runPromise(effect),
-    chatStream: (sessionId: string, input: string): AsyncIterable<ChatChunk> =>
+    chatStream: (
+      sessionId: string,
+      input: string,
+      images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>
+    ): AsyncIterable<ChatChunk> =>
       Stream.toAsyncIterable(
         Stream.provide(
-          Stream.unwrap(Effect.map(AgentLoop, (loop) => loop.chat(sessionId, input))),
+          Stream.unwrap(Effect.map(AgentLoop, (loop) => loop.chat(sessionId, input, images))),
           layer
         )
       ),

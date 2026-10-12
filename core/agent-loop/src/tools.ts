@@ -367,6 +367,8 @@ print("hello")
 
 This applies to all languages: python, javascript, typescript, bash, etc. The fences enable syntax highlighting and proper rendering.
 
+MARKDOWN STRUCTURE: Write responses in clean, scannable markdown. Use ## headings to separate sections in longer answers. Use bullet lists (-) for enumerations and numbered lists (1.) for sequences. Wrap terminal output, logs, and command output in fenced code blocks (\`\`\`text or no language tag) — NEVER paste raw terminal lines as plain prose. Use \`inline code\` for filenames, commands, technical terms, and paths. Use **bold** sparingly for key terms. Keep paragraphs short — one idea per paragraph.
+
 To call a tool, emit a fenced block with one JSON object:
 
 \`\`\`aimy-tool

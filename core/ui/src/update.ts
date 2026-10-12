@@ -113,12 +113,17 @@ export const update = (
       model: {
         ...model,
         // Manual edit clears the voice-draft flag (user took over).
-        session: { ...model.session, composer: { draft: text }, voiceDraft: false },
+        // Preserve attachments (2026-10-11).
+        session: {
+          ...model.session,
+          composer: { draft: text, attachments: model.session.composer.attachments },
+          voiceDraft: false,
+        },
       },
     }),
 
-    UserSentMessage: ({ id, text, at }) => {
-      if (text.trim().length === 0) return { model }
+    UserSentMessage: ({ id, text, at, images }) => {
+      if (text.trim().length === 0 && (images ?? []).length === 0) return { model }
       const sessionId = model.session.sessionId
       // Derive subject from AImy's perspective: what the user is asking about
       const subject = text.trim().slice(0, 50) + (text.trim().length > 50 ? "…" : "")
@@ -130,17 +135,22 @@ export const update = (
       // it can weave the unfinished thought into its reply.
       const interrupted =
         model.session.streaming.active || model.session.speakingStreamId !== undefined
+      // Attachments: use message images if provided, else composer staged.
+      const msgImages = images ?? model.session.composer.attachments
+      const newMessages = [
+        ...model.session.messages,
+        { id, role: "user" as const, text, at, ...(msgImages.length > 0 ? { images: msgImages } : {}) },
+      ]
       return {
         model: {
           ...model,
           session: {
             ...model.session,
             subject,
-            messages: [
-              ...model.session.messages,
-              { id, role: "user", text, at },
-            ],
-            composer: { draft: "" },
+            messages: newMessages,
+            // Pin the window to the newest message (column-reverse: bottom).
+            listWindow: { ...model.session.listWindow, anchorIndex: newMessages.length - 1 },
+            composer: { draft: "", attachments: [] },
             voiceDraft: false,
             // Clear speaking indicator: user interrupted, narration stopped.
             speakingStreamId: undefined,
@@ -153,7 +163,15 @@ export const update = (
         commands: [
           // Stop any ongoing narration: user interrupted, don't resume old content.
           StopNarration(),
-          SendToInference({ correlationId: id, sessionId, input: text, voiceEnabled: model.session.voiceEnabled, viaVoice, interrupted }),
+          SendToInference({
+            correlationId: id,
+            sessionId,
+            input: text,
+            voiceEnabled: model.session.voiceEnabled,
+            viaVoice,
+            interrupted,
+            images: msgImages,
+          }),
           PersistMemory({ correlationId: `${id}:user`, sessionId, role: "user", text }),
         ],
       }
@@ -402,6 +420,13 @@ export const update = (
           speakingStreamId:
             model.session.speakingStreamId === streamId ? undefined : model.session.speakingStreamId,
         },
+      },
+    }),
+
+    MicPreRollChanged: ({ status }) => ({
+      model: {
+        ...model,
+        session: { ...model.session, micPreRoll: status },
       },
     }),
 
@@ -867,7 +892,7 @@ export const update = (
         session: {
           ...model.session,
           micTranscribing: false,
-          composer: { draft: model.session.composer.draft + text },
+          composer: { draft: model.session.composer.draft + text, attachments: model.session.composer.attachments },
           // Mark draft as voice-originated: enables click-to-send /
           // right-click-to-discard. Cleared on manual edit or send.
           voiceDraft: true,
@@ -888,7 +913,7 @@ export const update = (
         session: {
           ...model.session,
           voiceDraft: false,
-          composer: { draft: "" },
+          composer: { draft: "", attachments: [] },
         },
       },
     }),
@@ -912,7 +937,7 @@ export const update = (
               ...model.session.messages,
               { id, role: "user", text: draft, at: Date.now() },
             ],
-            composer: { draft: "" },
+            composer: { draft: "", attachments: [] },
             voiceDraft: false,
             speakingStreamId: undefined,
             pendingAudioChunks: [],
@@ -920,7 +945,7 @@ export const update = (
         },
         commands: [
           StopNarration(),
-          SendToInference({ correlationId: id, sessionId, input: draft, voiceEnabled: model.session.voiceEnabled, viaVoice: false, interrupted }),
+          SendToInference({ correlationId: id, sessionId, input: draft, voiceEnabled: model.session.voiceEnabled, viaVoice: false, interrupted, images: [] }),
           PersistMemory({ correlationId: `${id}:user`, sessionId, role: "user", text: draft }),
         ],
       }
@@ -1486,18 +1511,27 @@ export const update = (
       },
     }),
 
-    ChatListScrolled: ({ scrollTop }) => ({
-      model: {
-        ...model,
-        session: {
-          ...model.session,
-          listWindow: {
-            ...model.session.listWindow,
-            anchorIndex: Math.max(0, Math.floor(scrollTop / ESTIMATED_ROW_PX)),
+    ChatListScrolled: ({ scrollTop }) => {
+      // Column-reverse layout (2026-10-10): scrollTop=0 is the visual BOTTOM
+      // (newest messages). The anchor must count from the end, not the start.
+      // Without this inversion, scrolling up renders the wrong window and
+      // bubbles vanish (2026-10-11).
+      const total = model.session.messages.length
+      const fromBottom = Math.floor(scrollTop / ESTIMATED_ROW_PX)
+      const anchorIndex = Math.max(0, total - 1 - fromBottom)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            listWindow: {
+              ...model.session.listWindow,
+              anchorIndex,
+            },
           },
         },
-      },
-    }),
+      }
+    },
 
     PermissionRequested: ({ requestId, tool, argsSummary, riskTier, context, at }) => {
       if (model.permissions.pending.some((p) => p.requestId === requestId)) {
@@ -1601,6 +1635,41 @@ export const update = (
     MemoryPersisted: (_msg) => ({ model }),
 
     MemoryPersistFailed: (_msg) => ({ model }),
+
+    /* ── Image attachments (2026-10-11: drag-and-drop) ─────────────── */
+    ImageDropped: ({ id, dataUrl, name, mimeType }) => {
+      // Max 4 images per message.
+      const current = model.session.composer.attachments
+      if (current.length >= 4) return { model }
+      // 10MB total limit (approximate via dataUrl length).
+      const totalBytes = current.reduce((n, a) => n + a.dataUrl.length, 0) + dataUrl.length
+      if (totalBytes > 10 * 1024 * 1024 * 1.37) return { model } // base64 ~1.37x
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            composer: {
+              ...model.session.composer,
+              attachments: [...current, { id, dataUrl, name, mimeType }],
+            },
+          },
+        },
+      }
+    },
+
+    AttachmentRemoved: ({ id }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          composer: {
+            ...model.session.composer,
+            attachments: model.session.composer.attachments.filter((a) => a.id !== id),
+          },
+        },
+      },
+    }),
   })
 }
 

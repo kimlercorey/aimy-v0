@@ -32,11 +32,32 @@ export interface ParsedMessage {
 
 /**
  * Extract tool calls from model output text.
- * Finds `{"tool": "name", "args": {...}}` JSON objects.
+ * Primary: ```aimy-tool fenced blocks parsed as JSON (robust to nested
+ * braces and `}` in strings). Fallback: regex for bare JSON tool calls.
  */
 export const extractToolCalls = (text: string): ParsedToolCall[] => {
   const calls: ParsedToolCall[] = []
-  // Match {"tool": "...", "args": {...}} — non-greedy for args.
+  // Fenced blocks: ```aimy-tool\n{...}\n``` — parse the JSON properly.
+  const fencePattern = /```aimy-tool\s*\n([\s\S]*?)\n```/g
+  let fenceMatch: RegExpExecArray | null
+  while ((fenceMatch = fencePattern.exec(text)) !== null) {
+    const json = (fenceMatch[1] ?? "").trim()
+    try {
+      const obj = JSON.parse(json) as { tool?: unknown; args?: unknown }
+      if (typeof obj.tool === "string" && obj.tool.length > 0) {
+        const args = (obj.args !== null && typeof obj.args === "object" && !Array.isArray(obj.args))
+          ? obj.args as Record<string, unknown>
+          : {}
+        calls.push({ tool: obj.tool, args })
+        continue
+      }
+    } catch {
+      // Malformed JSON in fence — fall through to regex below.
+    }
+  }
+  if (calls.length > 0) return calls
+  // Fallback: bare {"tool": "...", "args": {...}} not in a fence.
+  // Note: fragile if args contain nested `}` — the fence path is preferred.
   const pattern = /\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{[^}]*\})\s*\}/g
   let match: RegExpExecArray | null
   while ((match = pattern.exec(text)) !== null) {
@@ -71,6 +92,9 @@ const stripArtifacts = (text: string): string =>
     // model emits the fence marker without backticks, leaking it into chat).
     // Word-boundary match: catches line-start AND inline ("do.aimy-tool").
     .replace(/\baimy-tool\b\s*/g, "")
+    // Stray /// block separators (2026-10-11: model emits them at response
+    // start or mid-text where the split regex doesn't catch them).
+    .replace(/^\s*\/\/\/\s*$/gm, "")
     .trim()
 
 /**
@@ -84,12 +108,27 @@ const stripArtifacts = (text: string): string =>
  * If no markers present, returns the whole text as a single block.
  */
 export const splitBlocks = (text: string): string[] => {
-  const blocks = text
+  // Strip a leading /// marker (2026-10-11: the model sometimes starts the
+  // response with it, and the split regex requires surrounding newlines).
+  const withoutLeading = text.replace(/^\s*\/\/\/\s*\n?/, "")
+  const blocks = withoutLeading
     .split(/\n\s*\/\/\/\s*\n/)
     .map((b) => stripArtifacts(b))
     .filter((b) => b.length > 0)
-  return blocks.length > 0 ? blocks : [stripArtifacts(text)]
+  return blocks.length > 0 ? blocks : [stripArtifacts(withoutLeading)]
 }
+
+/** Remove fenced tool-call blocks and bare tool JSON from display text. */
+const stripToolCalls = (text: string): string =>
+  text
+    // Replace with a paragraph break (not empty string): if the model puts
+    // the fence inline without surrounding newlines, empty-string removal
+    // joins the surrounding words without a space (2026-10-11: "into?The").
+    .replace(/```aimy-tool[\s\S]*?```/g, "\n\n")
+    .replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[^}]*\}\s*\}/g, "\n\n")
+    // Collapse 3+ newlines to 2 (paragraph break); preserve word spacing.
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 
 export const parseMessageTools = (rawText: string): ParsedMessage => {
   const calls = extractToolCalls(rawText)
@@ -118,8 +157,8 @@ export const parseMessageTools = (rawText: string): ParsedMessage => {
   const narrateCall = calls.find((c) => c.tool === "narrate")
   if (narrateCall && typeof narrateCall.args["text"] === "string") {
     const narrateText = narrateCall.args["text"] as string
-    // Remove the tool JSON from the raw text, keep any surrounding text.
-    const textWithoutTools = rawText.replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[^}]*\}\s*\}/g, "").trim()
+    // Remove the tool calls from the raw text, keep any surrounding text.
+    const textWithoutTools = stripToolCalls(rawText)
     // If there's remaining text outside the tool call, prefer it;
     // otherwise use the narrate text.
     const displayText = stripArtifacts(textWithoutTools || narrateText)
@@ -127,6 +166,6 @@ export const parseMessageTools = (rawText: string): ParsedMessage => {
   }
 
   // Generic: strip tool JSON, keep remaining text.
-  const text = rawText.replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[^}]*\}\s*\}/g, "").trim()
+  const text = stripToolCalls(rawText)
   return { text: stripArtifacts(text || rawText), toolsUsed, narratedTexts }
 }

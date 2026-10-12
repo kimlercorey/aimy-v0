@@ -17,6 +17,17 @@ import { Schema } from "effect"
 /* session slice (owned by this track)                                 */
 /* ------------------------------------------------------------------ */
 
+/** One image attached to a message (2026-10-11: drag-and-drop vision). */
+export const ChatImage = Schema.Struct({
+  id: Schema.String,
+  /** Base64 data URL (downscaled client-side, max 1568px longest edge). */
+  dataUrl: Schema.String,
+  /** Original filename for display. */
+  name: Schema.String,
+  mimeType: Schema.String,
+})
+export type ChatImage = typeof ChatImage.Type
+
 /** One transcript row. `role: "tool"` rows are rendered from observed tool calls. */
 export const ChatMessage = Schema.Struct({
   id: Schema.String,
@@ -36,6 +47,11 @@ export const ChatMessage = Schema.Struct({
    * tag's hover tooltip shows narratedTexts[k].
    */
   narratedTexts: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Images attached to this message (2026-10-11: drag-and-drop).
+   * Rendered as thumbnails in the bubble; sent to vision-capable models.
+   */
+  images: Schema.optional(Schema.Array(ChatImage)),
 })
 export type ChatMessage = typeof ChatMessage.Type
 
@@ -172,8 +188,17 @@ export const SessionSlice = Schema.Struct({
   ),
   streaming: StreamingState,
   contextMeter: ContextMeter,
-  composer: Schema.Struct({ draft: Schema.String }),
+  composer: Schema.Struct({
+    draft: Schema.String,
+    /** Images staged for the next message (2026-10-11: drag-and-drop). */
+    attachments: Schema.Array(ChatImage),
+  }),
   listWindow: ListWindow,
+  /**
+   * Mic pre-roll status (2026-10-11): is the 500ms lead-in buffer capturing?
+   * warming = capture starting, ready = pre-roll active, unavailable = denied/failed.
+   */
+  micPreRoll: Schema.Literals(["warming", "ready", "unavailable"]),
   /**
    * Voice channel: when true, settled assistant turns auto-play their TTS
    * audio (the `chat.channels` event). Off by default — voice is opt-in.
@@ -462,8 +487,13 @@ export const initialModel = (): Model => {
       ceiling: 64000,
       compactionThreshold: 56000,
     },
-    composer: { draft: "" },
-    listWindow: { anchorIndex: 0, overscan: 8 },
+    composer: { draft: "", attachments: [] },
+    // Anchor starts at max: visibleWindow clamps to newest message.
+    // (Column-reverse layout: we want the bottom/newest visible on load.)
+    listWindow: { anchorIndex: Number.MAX_SAFE_INTEGER, overscan: 8 },
+    // Mic pre-roll (2026-10-11): is the 500ms lead-in buffer capturing?
+    // warming = capture starting, ready = pre-roll active, unavailable = denied/failed.
+    micPreRoll: "warming",
     voiceEnabled: (() => {
       try {
         return localStorage.getItem("aimy.voiceEnabled") === "1"

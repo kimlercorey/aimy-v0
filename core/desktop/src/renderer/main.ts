@@ -23,7 +23,7 @@ import {
 } from "../../../ui/src/composed/index.js"
 
 import { getAimy } from "./ipc.js"
-import { ipcResources } from "./resources.js"
+import { ipcResources, warmupMicCapture } from "./resources.js"
 import { subscriptions, stopAllAudio } from "./subscriptions.js"
 
 const escapeHtml = (raw: string): string =>
@@ -61,6 +61,93 @@ const boot = (): void => {
   })
   Runtime.run(app)
 
+  // Mic warmup (2026-10-11): prime the pre-roll ring buffer at startup so
+  // the first PTT press doesn't lose its lead-in. Non-blocking; the mic
+  // permission prompt appears once, and PTT retries on press if denied.
+  warmupMicCapture()
+
+  // Image drag-and-drop (2026-10-11): drop images onto the chat to attach
+  // them to the next message. Downscaled client-side to max 1568px.
+  const isImageFile = (f: File): boolean =>
+    f.type === "image/png" || f.type === "image/jpeg" || f.type === "image/gif" || f.type === "image/webp"
+  const downscaleImage = (file: File): Promise<{ dataUrl: string; mimeType: string }> =>
+    new Promise((resolve, reject) => {
+      // Use FileReader (data: URL) instead of blob: URL — the CSP img-src
+      // directive allows data: but not blob: (2026-10-11: blob URLs were
+      // blocked, causing "image load failed").
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const img = new Image()
+        img.onload = () => {
+          const maxEdge = 1568
+          const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
+          const w = Math.round(img.width * scale)
+          const h = Math.round(img.height * scale)
+          const canvas = document.createElement("canvas")
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext("2d")
+          if (!ctx) { reject(new Error("no 2d context")); return }
+          ctx.drawImage(img, 0, 0, w, h)
+          // JPEG for photos (smaller), PNG for others (preserve transparency).
+          const mimeType = file.type === "image/png" || file.type === "image/gif" ? file.type : "image/jpeg"
+          resolve({ dataUrl: canvas.toDataURL(mimeType, 0.85), mimeType })
+        }
+        img.onerror = () => reject(new Error("image load failed"))
+        img.src = dataUrl
+      }
+      reader.onerror = () => reject(new Error("file read failed"))
+      reader.readAsDataURL(file)
+    })
+  let dropOverlay: HTMLElement | null = null
+  document.addEventListener("dragover", (e) => {
+    // Always preventDefault so the drop event fires (dataTransfer.types
+    // is unreliable during dragover in some browsers).
+    if (!e.dataTransfer) return
+    e.preventDefault()
+    const hasFiles = [...e.dataTransfer.types].includes("Files")
+    if (!hasFiles && e.dataTransfer.files.length === 0) return
+    if (!dropOverlay) {
+      dropOverlay = document.createElement("div")
+      dropOverlay.className = "drop-overlay"
+      dropOverlay.textContent = "Drop images"
+      document.body.appendChild(dropOverlay)
+    }
+  })
+  document.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget === null && dropOverlay) {
+      dropOverlay.remove()
+      dropOverlay = null
+    }
+  })
+  document.addEventListener("drop", (e) => {
+    if (dropOverlay) { dropOverlay.remove(); dropOverlay = null }
+    if (!e.dataTransfer) return
+    e.preventDefault()
+    const files = [...e.dataTransfer.files].filter(isImageFile)
+    console.log(`[aimy] drop: ${e.dataTransfer.files.length} files, ${files.length} images`)
+    if (files.length === 0) return
+    // Downscale, then dispatch a DOM event. The `imageDrop` subscription
+    // in subscriptions.ts picks it up and yields the ImageDropped message
+    // through the proper foldkit channel (no app-object internals).
+    void (async () => {
+      for (const file of files.slice(0, 4)) {
+        try {
+          const { dataUrl, mimeType } = await downscaleImage(file)
+          window.dispatchEvent(new CustomEvent("aimy:image-dropped", {
+            detail: {
+              id: `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              dataUrl, name: file.name, mimeType,
+            },
+          }))
+        } catch (err) {
+          console.error("[aimy] image drop failed:", err)
+        }
+      }
+    })()
+  })
+
   // Version badge (lower right) — shows git hash + build time
   // so Kimler can verify he's seeing the latest build.
   const ver = (window as any).AIMY_VERSION as string | undefined
@@ -86,8 +173,27 @@ const boot = (): void => {
         console.log("[aimy] user started typing — pausing narration")
         stopAllAudio("user-typing")
       }
+      // Auto-grow the composer textarea (2026-10-11): up to 5 lines,
+      // then the scrollbar appears (CSS max-height: 100px).
+      if (target.tagName === "TEXTAREA" && target.classList.contains("composer-input")) {
+        const ta = target as HTMLTextAreaElement
+        ta.style.height = "auto"
+        ta.style.height = Math.min(ta.scrollHeight, 100) + "px"
+      }
     }
   })
+
+  // Composer newline (2026-10-11): Cmd/Ctrl/Shift+Enter inserts a newline.
+  // Runs in capture phase before foldkit's OnKeyDownPreventDefault swallows
+  // the event — stopPropagation lets the textarea handle it natively.
+  document.addEventListener("keydown", (e) => {
+    const target = e.target as HTMLElement
+    if (target.tagName !== "TEXTAREA" || !target.classList.contains("composer-input")) return
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+      e.stopPropagation()
+      // Don't preventDefault — let the textarea insert the newline.
+    }
+  }, true)
 
   // Pause narration on mic/PTT start (2026-10-11): speaking over AImy
   // should cut her off, not layer on top. Mirrors the PTT config in

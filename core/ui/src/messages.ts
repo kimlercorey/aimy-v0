@@ -16,6 +16,7 @@
  */
 import { Schema } from "effect"
 import { defineMessageUnion } from "foldkit/message"
+import { ChatImage } from "./model.js"
 
 /** Token usage incl. reasoning tokens (Pi #9409); optional until the loop reports it. */
 export const Usage = Schema.Struct({
@@ -36,6 +37,21 @@ export const Message = defineMessageUnion({
     text: Schema.String,
     /** Epoch millis, set by the dispatcher — update never calls Date.now for replay state. */
     at: Schema.Number,
+    /** Images attached via drag-and-drop (2026-10-11). */
+    images: Schema.optional(Schema.Array(ChatImage)),
+  },
+
+  /** An image was dropped onto the chat (2026-10-11). */
+  ImageDropped: {
+    id: Schema.String,
+    dataUrl: Schema.String,
+    name: Schema.String,
+    mimeType: Schema.String,
+  },
+
+  /** Remove a staged attachment from the composer (2026-10-11). */
+  AttachmentRemoved: {
+    id: Schema.String,
   },
 
   /** Dispatched by the SendToInference command; arms the streaming state. */
@@ -48,6 +64,8 @@ export const Message = defineMessageUnion({
     viaVoice: Schema.Boolean,
     /** True if this turn barged in on a previous response (2026-10-11). */
     interrupted: Schema.optional(Schema.Boolean),
+    /** Images attached via drag-and-drop (2026-10-11). */
+    images: Schema.optional(Schema.Array(ChatImage)),
   },
 
   /** One streamed delta. update appends it to streaming.text — nothing else. */
@@ -111,6 +129,10 @@ export const Message = defineMessageUnion({
   /** Speech started / ended (drives the speaking indicator). */
   SpeechStarted: { streamId: Schema.String },
   SpeechEnded: { streamId: Schema.String },
+  /** Mic pre-roll capture status changed (warming/ready/unavailable). */
+  MicPreRollChanged: {
+    status: Schema.Literals(["warming", "ready", "unavailable"]),
+  },
   /** The voice subscription took (or skipped) the pending channels. */
   ChannelsConsumed: { streamId: Schema.String },
 
@@ -370,6 +392,8 @@ export type Message = typeof Message.Type
 export const MESSAGE_TAGS = [
   "ComposerDraftChanged",
   "UserSentMessage",
+  "ImageDropped",
+  "AttachmentRemoved",
   "StreamStarted",
   "StreamChunkReceived",
   "StreamToolCallObserved",
@@ -384,4 +408,5 @@ export const MESSAGE_TAGS = [
   "PermissionDenied",
   "MemoryPersisted",
   "MemoryPersistFailed",
+  "MicPreRollChanged",
 ] as const

@@ -109,7 +109,10 @@ const httpStatusError = async (name: string, response: Response): Promise<Infere
 
 interface ChatBody {
   readonly model: string
-  readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>
+  readonly messages: ReadonlyArray<{
+    readonly role: string
+    readonly content: string | ReadonlyArray<{ readonly type: string; readonly text?: string; readonly image_url?: { readonly url: string } }>
+  }>
   readonly max_tokens: number
   readonly stream?: boolean
   readonly [key: string]: unknown

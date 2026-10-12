@@ -25,8 +25,10 @@ export interface StubCall {
   readonly at: number
 }
 
-const countTokens = (text: string): number =>
-  text.split(/\s+/).filter((t) => t.length > 0).length
+const countTokens = (content: string | ReadonlyArray<{ type: string; text?: string }>): number => {
+  if (typeof content === "string") return content.split(/\s+/).filter((t) => t.length > 0).length
+  return content.reduce((n, p) => n + (p.type === "text" && p.text ? p.text.split(/\s+/).filter((t) => t.length > 0).length : 10), 0)
+}
 
 export class StubProvider implements Provider {
   readonly kind = "local" as const

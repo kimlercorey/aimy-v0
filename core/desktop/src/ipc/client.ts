@@ -11,12 +11,12 @@
  * `chat.done` arrives, throws the clean message on `chat.error`, and
  * `cancel()` interrupts the main-side stream and ends iteration.
  */
-import type { IpcCommand, IpcCommandResult, IpcEvent, WindowAimy } from "./protocol.js"
+import type { ChatImageWire, IpcCommand, IpcCommandResult, IpcEvent, WindowAimy } from "./protocol.js"
 
 export interface IpcClient {
   readonly invoke: <C extends IpcCommand>(cmd: C) => Promise<IpcCommandResult<C>>
   readonly subscribe: (handler: (evt: IpcEvent) => void) => () => void
-  readonly chatStream: (sessionId: string, input: string) => ChatStreamHandle
+  readonly chatStream: (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>) => ChatStreamHandle
 }
 
 /** A live chat stream: token deltas as an AsyncIterable, plus `cancel()`. */
@@ -42,7 +42,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
 
   type ChatIpcEvent = Extract<IpcEvent, { _tag: "chat.token" | "chat.done" | "chat.error" }>
 
-  const chatStream = (sessionId: string, input: string): ChatStreamHandle => {
+  const chatStream = (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>): ChatStreamHandle => {
     const queue: Array<ChatOutcome> = []
     /**
      * Chat events that arrived before the `chat.send` response told us our
@@ -102,7 +102,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
 
     // Kick off the stream. A rejected chat.send surfaces as a stream error
     // rather than a hang.
-    void invoke({ _tag: "chat.send", sessionId, input }).then(
+    void invoke({ _tag: "chat.send", sessionId, input, ...(images !== undefined ? { images } : {}) }).then(
       (res) => {
         streamId = res.streamId
         // Replay pre-response events in arrival order. Synchronous, so no

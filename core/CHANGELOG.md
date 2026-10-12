@@ -1,6 +1,24 @@
 
 ---
 
+## 2026-10-11 19:20 MST
+
+**Multiline composer, chat redesign, image drag-and-drop, scroll/wake/voice fixes.**
+
+- Composer: textarea with Cmd/Ctrl/Shift+Enter for newline, plain Enter sends; auto-grows to 5 lines then scrolls.
+- Chat visual redesign: bubble layout, speaker labels, GitHub-style markdown CSS (headings, lists, code, tables, quotes).
+- System prompt: markdown structure guidance (headings, lists, fenced terminal output, inline code).
+- Image drag-and-drop: drop 1-4 images onto chat, 48px staged thumbnails, 64px in-bubble; downscaled to 1568px; flows to vision via OpenAI-style image_url parts. Fixed CSP blob: URL block (FileReader data: URLs).
+- Scroll virtualization: fixed inverted anchor for column-reverse layout (bubbles vanishing on scroll); anchor pins to newest on send/settle.
+- Wake: silent wake now drops all narrate calls; wake exchange (all rounds) filtered from history so the model doesn't echo wake thoughts.
+- PTT: mic warms up at startup so the 500ms pre-roll buffer is primed for the first press; status dot on mic button (amber warming / green ready / grey unavailable).
+- Cmd+C/Cmd+V/Cmd+A: added standard macOS application menu (was dead without it).
+- Text: fixed missing spaces when tool fences are stripped inline; fixed leading /// block separator leaking into bubbles.
+
+**Status:** Build succeeded, app restarted.
+
+---
+
 ## 2026-10-11 06:32 MST — e12cccb@06:32
 
 **Status:** Build succeeded, app restarted.
@@ -330,6 +348,102 @@ _(Zen: add what changed in this batch above this line.)_
 ---
 
 ## 2026-10-11 17:01 MST — e12cccb@17:01
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 17:17 MST — 5a13243@17:17
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 17:49 MST — 5a13243@17:49
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 17:59 MST — 5a13243@17:59
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:13 MST — 5a13243@18:13
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:19 MST — 5a13243@18:19
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:25 MST — 5a13243@18:25
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:34 MST — 5a13243@18:34
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:37 MST — 5a13243@18:37
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 18:42 MST — 5a13243@18:42
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 19:06 MST — 5a13243@19:06
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 19:13 MST — 5a13243@19:13
+
+**Status:** Build succeeded, app restarted.
+
+_(Zen: add what changed in this batch above this line.)_
+
+---
+
+## 2026-10-11 19:17 MST — 5a13243@19:17
 
 **Status:** Build succeeded, app restarted.
 

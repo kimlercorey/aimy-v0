@@ -22,9 +22,15 @@ export type ProviderKind = "local" | "cloud"
  */
 export type EgressClass = "local" | "first-party" | "vendor"
 
+/** One part of a multimodal message (2026-10-11: vision). */
+export type ContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image_url"; readonly image_url: { readonly url: string } }
+
 export interface Message {
   readonly role: "system" | "user" | "assistant"
-  readonly content: string
+  /** Text, or multimodal parts (text + image_url) for vision. */
+  readonly content: string | ReadonlyArray<ContentPart>
 }
 
 export interface GenerateRequest {

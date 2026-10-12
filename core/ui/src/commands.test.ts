@@ -41,13 +41,13 @@ const memoryShape = (append: MemoryServiceShape["append"]): MemoryServiceShape =
 
 describe("SendToInference", () => {
   it("builds a named command carrying the correlation id", () => {
-    const cmd = SendToInference({ correlationId: "m1", sessionId: "s1", input: "hi", voiceEnabled: false, viaVoice: false, interrupted: false })
+    const cmd = SendToInference({ correlationId: "m1", sessionId: "s1", input: "hi", voiceEnabled: false, viaVoice: false, interrupted: false, images: [] })
     expect(cmd.name).toBe("SendToInference")
     expect(cmd.args).toMatchObject({ correlationId: "m1", sessionId: "s1" })
   })
 
   it("dispatches StreamStarted with the correlation id as streamId", async () => {
-    const cmd = SendToInference({ correlationId: "m1", sessionId: "s1", input: "hi", voiceEnabled: false, viaVoice: false, interrupted: false })
+    const cmd = SendToInference({ correlationId: "m1", sessionId: "s1", input: "hi", voiceEnabled: false, viaVoice: false, interrupted: false, images: [] })
     const msg = await run(cmd.effect)
     expect(msg._tag).toBe("StreamStarted")
     expect(msg).toMatchObject({ streamId: "m1", sessionId: "s1", input: "hi" })

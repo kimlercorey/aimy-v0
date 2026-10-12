@@ -114,15 +114,17 @@ export const cleanCopyText = (text: string): string =>
 
 const messageRow = (h: H, m: ChatMessage) => {
   // Parse tool calls from the raw text (2026-10-10): extract user-facing
-  // text and tool metadata. The bubble shows only the text; tool names
-  // render as a faint right-aligned indicator BELOW the bubble (outside it).
+  // text and tool metadata. The bubble shows ONLY the parsed text — never
+  // raw tool JSON (2026-10-11: using m.text when toolsUsed existed leaked
+  // the ```aimy-tool fence into the bubble as an ugly code block).
   const parsed = m.role === "assistant"
     ? parseMessageTools(m.text)
     : { text: m.text, toolsUsed: m.toolsUsed ?? [], narratedTexts: m.narratedTexts ?? [] }
   // Prefer stored metadata; fall back to parsed.
   const toolsUsed = m.toolsUsed && m.toolsUsed.length > 0 ? m.toolsUsed : parsed.toolsUsed
   const narratedTexts = m.narratedTexts && m.narratedTexts.length > 0 ? m.narratedTexts : parsed.narratedTexts
-  const displayText = m.toolsUsed && m.toolsUsed.length > 0 ? m.text : parsed.text
+  // ALWAYS use parsed.text — m.text may still contain the tool-call fence.
+  const displayText = parsed.text
 
   const body = looksLikeMarkdown(displayText)
     ? h.div([h.Class("msg-body markdown-body"), h.InnerHTML(renderMarkdown(displayText))], [])
@@ -152,12 +154,26 @@ const messageRow = (h: H, m: ChatMessage) => {
   // the narrate tooltip source — main.ts reads it on click. Voice tags
   // stripped, code blocks kept.
   const copyText = cleanCopyText(displayText)
+  // Images (2026-10-11): thumbnails at the top of the bubble, click to expand.
+  const imageNodes = (m.images ?? []).length > 0
+    ? [h.div([h.Class("msg-images")],
+        (m.images ?? []).map((img) =>
+          h.img([
+            h.Class("msg-image-thumb"),
+            h.Src(img.dataUrl),
+            h.Alt(img.name),
+            h.Title(img.name),
+          ]),
+        ),
+      )]
+    : []
   // Wrapper: bubble + tool indicator below (outside the bubble).
   return h.div([h.Class("msg-row"), h.Key(m.id)], [
     h.div([h.Class(`msg ${roleClass(m.role)}`)], [
       h.span([h.Class("msg-role")], [roleLabel(m.role)]),
       h.button([h.Class("msg-copy-btn"), h.Title("Copy message text")], [icon.copy(h)]),
       h.span([h.Class("msg-copy-source")], [copyText]),
+      ...imageNodes,
       body,
     ]),
     // Faint right-aligned tool indicator BELOW the bubble (Kimler spec 2026-10-10).
@@ -809,8 +825,35 @@ const contextMeterView = (h: H, meter: ContextMeter) => {
   )
 }
 
+/**
+ * Strip tool-call fences from streaming text (2026-10-11): the ```aimy-tool
+ * block streams in token-by-token, causing layout jumping and showing raw
+ * JSON. Remove complete fences, incomplete trailing fences (mid-stream),
+ * and bare JSON tool calls. Returns empty if only tool calls so far.
+ */
+const stripStreamingToolCalls = (text: string): string => {
+  let cleaned = text.replace(/```aimy-tool[\s\S]*?```/g, "")
+  cleaned = cleaned.replace(/```aimy-tool[\s\S]*$/, "")
+  cleaned = cleaned.replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[^}]*\}\s*\}/g, "")
+  return cleaned.trim()
+}
+
 const streamingView = (h: H, text: string) => {
-  const { stable, tail } = segmentStreamingText(text)
+  // Never render tool-call JSON while streaming (2026-10-11: fixes the
+  // ugly code-block flash and layout jumping). If only tool calls have
+  // arrived, show a subtle working indicator instead.
+  const cleanText = stripStreamingToolCalls(text)
+  if (cleanText.length === 0) {
+    return h.div([h.Class("msg-row"), h.Key("streaming")], [
+      h.div([h.Class("msg msg-assistant streaming")], [
+        h.span([h.Class("msg-role")], ["AIMY"]),
+        h.div([h.Class("msg-body")], [
+          h.span([h.Class("working-shimmer")], ["working\u2026"]),
+        ]),
+      ]),
+    ])
+  }
+  const { stable, tail } = segmentStreamingText(cleanText)
   // Render as a bubble from the start (2026-10-10: fixes raw text flash
   // before bubble formatting). Uses same structure as messageRow.
   return h.div([h.Class("msg-row"), h.Key("streaming")], [
@@ -837,8 +880,12 @@ const streamingView = (h: H, text: string) => {
 
 /**
  * Enter-to-submit decision for the composer. Pure: the view wires it to
- * OnKeyDownPreventDefault; tests exercise it directly. Shift+Enter, other
- * keys, streaming, and empty drafts all decline (None).
+ * OnKeyDownPreventDefault; tests exercise it directly.
+ *
+ * Plain Enter submits. Shift+Enter, Cmd+Enter, Ctrl+Enter insert a newline
+ * (handled by the renderer's capture-phase keydown listener in main.ts,
+ * which stops propagation before foldkit's handler swallows it). Other
+ * keys, streaming, and empty drafts decline (None).
  */
 export const composerKeySubmit = (
   draft: string,
@@ -860,18 +907,35 @@ export const composerKeySubmit = (
 const composerView = (h: H, session: SessionSlice) => {
   const draft = session.composer.draft
   const streaming = session.streaming.active
+  const attachments = session.composer.attachments
+  // Attachment thumbnails (2026-10-11): staged images above the input.
+  const attachmentStrip = attachments.length > 0
+    ? h.div([h.Class("composer-attachments")],
+        attachments.map((a) =>
+          h.div([h.Class("composer-attachment"), h.Key(a.id)], [
+            h.img([h.Class("composer-attachment-thumb"), h.Src(a.dataUrl), h.Alt(a.name)]),
+            h.button(
+              [h.Class("composer-attachment-remove"), h.Title("Remove"), h.OnClick(Message.AttachmentRemoved({ id: a.id }))],
+              ["\u00d7"],
+            ),
+          ]),
+        ),
+      )
+    : null
   return h.div([h.Class("composer-wrap")], [
+    ...(attachmentStrip ? [attachmentStrip] : []),
     h.div([h.Class("composer")], [
       h.div(
         [
           h.Class("composer-input-wrap"),
         ],
         [
-          h.input([
+          h.textarea([
           h.Class("composer-input"),
           h.Value(draft),
           h.Disabled(streaming),
           h.Placeholder("Message AImy…"),
+          h.Rows(1),
           h.OnInput((value) => Message.ComposerDraftChanged({ text: value })),
           h.OnKeyDownPreventDefault((key, modifiers) =>
             composerKeySubmit(draft, streaming, key, modifiers.shiftKey),
@@ -881,12 +945,13 @@ const composerView = (h: H, session: SessionSlice) => {
           [
             h.Class("composer-send-inside"),
             h.Title("Send (Enter)"),
-            h.Disabled(streaming || draft.trim().length === 0),
+            h.Disabled(streaming || (draft.trim().length === 0 && attachments.length === 0)),
             h.OnClick(
               Message.UserSentMessage({
                 id: `msg-${Date.now()}`,
                 text: draft,
                 at: Date.now(),
+                ...(attachments.length > 0 ? { images: attachments } : {}),
               }),
             ),
           ],
@@ -914,6 +979,9 @@ const composerView = (h: H, session: SessionSlice) => {
       // Mic input (STT) — color-coded by state:
       // green = recording/transcribing, white = ready/waiting,
       // grey = initializing/not configured, red = failed.
+      // Pre-roll dot (2026-10-11): small status dot shows the 500ms lead-in
+      // buffer state — amber pulsing = warming up, green = pre-roll active,
+      // grey = mic unavailable. Separate channel from the STT engine color.
       ...(() => {
         const stt = session.sttEngine.state
         const active = session.micRecording || session.micTranscribing
@@ -927,6 +995,17 @@ const composerView = (h: H, session: SessionSlice) => {
             : loading || !ready
               ? "icon-btn mic-btn mic-pending"
               : "icon-btn mic-btn mic-ready"
+        const preRoll = session.micPreRoll
+        const preRollDotClass = preRoll === "ready"
+          ? "mic-preroll-dot preroll-ready"
+          : preRoll === "unavailable"
+            ? "mic-preroll-dot preroll-unavailable"
+            : "mic-preroll-dot preroll-warming"
+        const preRollLabel = preRoll === "ready"
+          ? "Pre-roll active — lead-in captured"
+          : preRoll === "unavailable"
+            ? "Mic unavailable — pre-roll off"
+            : "Mic warming up — pre-roll starting…"
         const title = active
           ? (session.micRecording ? "Recording… (release to transcribe)" : "Transcribing…")
           : failed
@@ -935,7 +1014,7 @@ const composerView = (h: H, session: SessionSlice) => {
               ? "STT initializing…"
               : !ready
                 ? "STT not configured — open Voice Settings"
-                : "Dictate (speech to text)"
+                : `Dictate (speech to text). ${preRollLabel}`
         return [
           h.button(
             [
@@ -944,7 +1023,7 @@ const composerView = (h: H, session: SessionSlice) => {
               h.OnClick(Message.MicRecordToggled({})),
               h.Disabled(!ready || session.micTranscribing),
             ],
-            [icon.mic(h)],
+            [icon.mic(h), h.span([h.Class(preRollDotClass), h.Title(preRollLabel)], [])],
           ),
         ]
       })(),

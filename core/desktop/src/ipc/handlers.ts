@@ -137,7 +137,8 @@ export interface ChatStreams {
   readonly start: (
     sessionId: string,
     input: string,
-    push: (evt: IpcEvent) => void
+    push: (evt: IpcEvent) => void,
+    images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>
   ) => string
   /** Interrupt a live stream (`return()` on the engine iterator). Unknown ids throw. */
   readonly cancel: (streamId: string) => Promise<void>
@@ -152,13 +153,13 @@ export const createChatStreams = (
 ): ChatStreams => {
   const active = new Map<string, AsyncIterator<ChatChunk>>()
 
-  const start: ChatStreams["start"] = (sessionId, input, push) => {
+  const start: ChatStreams["start"] = (sessionId, input, push, images) => {
     const streamId = randomUUID()
     if (active.has(streamId)) throw new Error(`chat stream id collision: ${streamId}`)
     const startMs = Date.now()
-    const iterator = engine.chatStream(sessionId, input)[Symbol.asyncIterator]()
+    const iterator = engine.chatStream(sessionId, input, images)[Symbol.asyncIterator]()
     active.set(streamId, iterator)
-    console.log(`[aimy] chat.start: stream=${streamId} session=${sessionId} inputLen=${input.length}`)
+    console.log(`[aimy] chat.start: stream=${streamId} session=${sessionId} inputLen=${input.length} images=${images?.length ?? 0}`)
     trace?.log("main", streamId, "chat.start", { sessionId, inputLen: input.length, interrupted: input.startsWith("[AIMY-INTERRUPTED]\n") })
     void (async (): Promise<void> => {
       let text = ""
@@ -464,12 +465,18 @@ export const createHandlerTable = (
     "chat.send": async (payload, ctx) => {
       const sessionId = reqString(payload, "sessionId")
       const input = reqString(payload, "input")
+      // Images (2026-10-11: drag-and-drop vision).
+      const rawImages = (payload as { images?: unknown }).images
+      const images = Array.isArray(rawImages)
+        ? (rawImages as ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>).map((img) => ({ ...img }))
+        : undefined
       // Wake ritual (2026-10-11): first turn of a new session, when her
       // journal has content. She reads herself and settles before he speaks.
       // Awaited — she wakes up BEFORE his message is processed.
       await runWakeTurnIfNeeded(deps, sessionId)
       const streamId = deps.chatStreams.start(sessionId, input, (evt) =>
-        ctx.sender.send("aimy:event", evt)
+        ctx.sender.send("aimy:event", evt),
+        images,
       )
       return { streamId }
     },

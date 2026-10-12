@@ -30,7 +30,7 @@
  *   reachable in a shipped build.
  * ──────────────────────────────────────────────────────────────────────────
  */
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Menu, session } from "electron"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -299,7 +299,27 @@ const boot = async (): Promise<void> => {
   if (SMOKE) await runSmokeFlow(win)
 }
 
-void app.whenReady().then(boot)
+/**
+ * Standard application menu (2026-10-11): macOS requires a menu with
+ * Edit > Copy for Cmd+C to work on selected text. Without it, keyboard
+ * shortcuts for copy/paste/select-all are dead even though text selects.
+ */
+const setupMenu = (): void => {
+  const template: Array<Electron.MenuItemConstructorOptions> = [
+    ...(process.platform === "darwin"
+      ? [{ role: "appMenu" as const }]
+      : []),
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+void app.whenReady().then(() => {
+  setupMenu()
+  return boot()
+})
 
 app.on("window-all-closed", () => {
   // macOS convention: keep the app alive until explicit quit.

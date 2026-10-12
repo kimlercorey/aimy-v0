@@ -30,7 +30,11 @@ import { MemoryService } from "../../memory/service.js"
 import { SafetyKernel } from "../../permission-kernel/index.js"
 import type { JsonValue, ToolName } from "../../substrate/types.js"
 import { Message } from "./messages.js"
+import { ChatImage } from "./model.js"
 import { TtsIpc } from "./voice/seam.js"
+
+/** Named array schema so the SendToInference annotation can reference its type. */
+const ChatImageArray = Schema.Array(ChatImage)
 
 /**
  * Nameable message-instance types for the command annotations below.
@@ -66,6 +70,7 @@ export const SendToInference: CommandDefinitionWithArgs<
     voiceEnabled: typeof Schema.Boolean
     viaVoice: typeof Schema.Boolean
     interrupted: typeof Schema.Boolean
+    images: typeof ChatImageArray
   },
   Effect.Effect<StreamStartedMsg, never, never>
 > = defineCommand("SendToInference", {
@@ -80,12 +85,14 @@ export const SendToInference: CommandDefinitionWithArgs<
     viaVoice: Schema.Boolean,
     /** Whether this turn barged in on a previous response (2026-10-11). */
     interrupted: Schema.Boolean,
+    /** Images attached via drag-and-drop (2026-10-11). */
+    images: ChatImageArray,
   },
   messages: [Message.StreamStarted, Message.StreamFailed],
   interrupt: true,
-  execute: ({ correlationId, sessionId, input, voiceEnabled, viaVoice, interrupted }) =>
+  execute: ({ correlationId, sessionId, input, voiceEnabled, viaVoice, interrupted, images }) =>
     Effect.succeed(
-      Message.StreamStarted({ streamId: correlationId, sessionId, input, at: Date.now(), voiceEnabled, viaVoice, interrupted }),
+      Message.StreamStarted({ streamId: correlationId, sessionId, input, at: Date.now(), voiceEnabled, viaVoice, interrupted, ...(images.length > 0 ? { images } : {}) }),
     ),
 })
 

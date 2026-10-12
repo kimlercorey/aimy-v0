@@ -80,9 +80,15 @@ const unreachableStreamError = (_error: unknown): never => {
 const INTERRUPTED_MARKER = "[AIMY-INTERRUPTED]\n"
 
 /** One chat turn over the bridge. Deltas are sanitized at this boundary (Pi #10504). */
-const pumpChat = (shellStreamId: string, sessionId: string, input: string, interrupted: boolean): Stream.Stream<AppMessage> => {
+const pumpChat = (
+  shellStreamId: string,
+  sessionId: string,
+  input: string,
+  interrupted: boolean,
+  images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>,
+): Stream.Stream<AppMessage> => {
   const client = getClient()
-  const handle = client.chatStream(sessionId, interrupted ? INTERRUPTED_MARKER + input : input)
+  const handle = client.chatStream(sessionId, interrupted ? INTERRUPTED_MARKER + input : input, images)
   const sanitizer = new ChunkSanitizer()
   let text = ""
   let completedNaturally = false
@@ -206,6 +212,17 @@ export const stopAllAudio = (reason = "unspecified"): void => {
   activeAudioElements.clear()
 }
 
+/**
+ * Replay guard (2026-10-11): sequences marked consumed in-memory the moment
+ * they finish playing. The `AudioChunksConsumed` model update is async — if
+ * the subscription re-fires before it's processed, the new pump would replay
+ * the same chunk. This set is the synchronous source of truth; the model
+ * update is for long-term cleanup. Cleared when the queue empties or the
+ * stream changes.
+ */
+const consumedAudioSequences = new Set<number>()
+let consumedAudioStreamId = ""
+
 const pumpVoice = (deps: VoiceDeps): Stream.Stream<AppMessage> => {
   const messages = (async function* (): AsyncGenerator<AppMessage> {
     const { streamId, audioBase64, expressions } = deps
@@ -327,27 +344,33 @@ const pumpAudioChunks = (deps: ChunkDeps): Stream.Stream<AppMessage> => {
       console.log(`[aimy] audio chunk done: seq=${chunk.sequence} duration=${chunkEnd - chunkStart}ms`)
       traceLog(streamId, "audio.chunk_done", { seq: chunk.sequence, playMs: chunkEnd - chunkStart })
       playedSequences.push(chunk.sequence)
-      // Consume immediately (2026-10-11): don't batch at the end — if the
-      // generator is abandoned (subscription teardown), completed chunks
-      // would replay. Per-chunk consume is idempotent.
-      yield AppMessage.GotShell({
-        message: ShellMessage.AudioChunksConsumed({ streamId, sequences: [chunk.sequence] }),
-      })
+      // Mark consumed in-memory IMMEDIATELY (2026-10-11 replay guard).
+      // Do NOT yield here — yielding mid-loop re-triggers the subscription
+      // before the model update lands, causing a replay. The in-memory set
+      // is the synchronous guard; the model update batches at the end.
+      consumedAudioSequences.add(chunk.sequence)
     }
 
-    // On interruption, consume ALL remaining chunks so they never replay.
-    // An interrupted chunk must not come back — the subscription re-fires
-    // on non-empty pendingAudioChunks and starts the audio over (2026-10-11:
-    // replay heard when clicking copy mid-audio was this bug, not the click).
+    // On interruption, mark ALL remaining chunks consumed in-memory so they
+    // never replay. The subscription re-fires on non-empty pendingAudioChunks;
+    // without this, an interrupted chunk comes back from the start.
     if (interrupted) {
       const remaining = ordered.map((c) => c.sequence).filter((s) => !playedSequences.includes(s))
+      for (const s of remaining) consumedAudioSequences.add(s)
       if (remaining.length > 0) {
         console.log(`[aimy] audio: consuming ${remaining.length} interrupted chunks so they don't replay`)
         traceLog(streamId, "audio.chunks_consumed_on_interrupt", { sequences: remaining })
-        yield AppMessage.GotShell({
-          message: ShellMessage.AudioChunksConsumed({ streamId, sequences: remaining }),
-        })
       }
+    }
+
+    // Batch the model update at the end (single yield, no re-entrancy).
+    const allConsumed = [...playedSequences, ...(interrupted
+      ? ordered.map((c) => c.sequence).filter((s) => !playedSequences.includes(s))
+      : [])]
+    if (allConsumed.length > 0) {
+      yield AppMessage.GotShell({
+        message: ShellMessage.AudioChunksConsumed({ streamId, sequences: allConsumed }),
+      })
     }
 
     // End speech after this batch. If more chunks arrive, the subscription
@@ -535,12 +558,20 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
       streamId: Schema.String,
       sessionId: Schema.String,
       input: Schema.String,
-      interrupted: Schema.Boolean
+      interrupted: Schema.Boolean,
+      images: Schema.Array(
+        Schema.Struct({
+          dataUrl: Schema.String,
+          mimeType: Schema.String,
+          name: Schema.String,
+        })
+      ),
     },
     {
       modelToDependencies: (model) => {
         const streaming = model.shell.session.streaming
-        if (!streaming.active) return { streamId: "", sessionId: "", input: "", interrupted: false }
+        if (!streaming.active)
+          return { streamId: "", sessionId: "", input: "", interrupted: false, images: [] }
         // The user message whose id armed this stream (UserSentMessage's id
         // is the SendToInference correlationId is the StreamStarted streamId).
         const userMessage = model.shell.session.messages.find(
@@ -550,11 +581,16 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
           streamId: streaming.streamId,
           sessionId: model.shell.session.sessionId,
           input: userMessage?.text ?? "",
-          interrupted: streaming.interrupted ?? false
+          interrupted: streaming.interrupted ?? false,
+          images: (userMessage?.images ?? []).map((img) => ({
+            dataUrl: img.dataUrl,
+            mimeType: img.mimeType,
+            name: img.name,
+          })),
         }
       },
-      dependenciesToStream: ({ streamId, sessionId, input, interrupted }) =>
-        streamId === "" ? Stream.empty : pumpChat(streamId, sessionId, input, interrupted)
+      dependenciesToStream: ({ streamId, sessionId, input, interrupted, images }) =>
+        streamId === "" ? Stream.empty : pumpChat(streamId, sessionId, input, interrupted, images)
     }
   ),
   ipcEvents: entry(
@@ -622,11 +658,27 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
         // arrive, play them. The voice toggle gates the automatic fan-out
         // (now disabled), not explicit narration requests.
         if (chunks.length === 0) {
+          // Queue empty: reset the replay guard.
+          consumedAudioSequences.clear()
+          consumedAudioStreamId = ""
           return { streamId: "", voiceEnabled: false, chunks: [], drained: false }
         }
         // Group by streamId — play the first stream's chunks.
         const streamId = chunks[0]!.streamId
-        const streamChunks = chunks.filter((c) => c.streamId === streamId)
+        // New stream: reset the replay guard.
+        if (streamId !== consumedAudioStreamId) {
+          consumedAudioSequences.clear()
+          consumedAudioStreamId = streamId
+        }
+        // Filter out already-consumed sequences (2026-10-11 replay guard:
+        // the subscription can re-fire before AudioChunksConsumed is
+        // processed — the in-memory set is the synchronous truth).
+        const streamChunks = chunks.filter(
+          (c) => c.streamId === streamId && !consumedAudioSequences.has(c.sequence)
+        )
+        if (streamChunks.length === 0) {
+          return { streamId: "", voiceEnabled: false, chunks: [], drained: false }
+        }
         const drained = model.shell.session.audioDrainedStreamIds.includes(streamId)
         return {
           streamId,
@@ -774,7 +826,66 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
       },
     }
   ),
+  // Image drag-and-drop (2026-10-11): listens for the `aimy:image-dropped`
+  // DOM event (dispatched by main.ts after downscaling) and yields the
+  // ImageDropped shell message. Always active.
+  imageDrop: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpImageDrop(),
+    }
+  ),
+  // Mic pre-roll status (2026-10-11): listens for the `aimy:mic-preroll`
+  // DOM event (dispatched by warmupMicCapture) and yields MicPreRollChanged.
+  // Always active.
+  micPreRoll: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpMicPreRoll(),
+    }
+  ),
 }))
+
+/**
+ * Listens for `aimy:image-dropped` CustomEvents (from the main.ts drop
+ * handler) and yields ImageDropped messages through the foldkit channel.
+ */
+const pumpImageDrop = (): Stream.Stream<AppMessage> => {
+  console.log("[aimy] imageDrop subscription starting")
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        console.log("[aimy] imageDrop listener attached")
+        const onImageDropped = (e: Event) => {
+          const detail = (e as CustomEvent).detail as {
+            id: string
+            dataUrl: string
+            name: string
+            mimeType: string
+          }
+          console.log(`[aimy] image dropped: ${detail.name} (${detail.mimeType})`)
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.ImageDropped(detail),
+            })
+          )
+        }
+        window.addEventListener("aimy:image-dropped", onImageDropped)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:image-dropped", onImageDropped)
+            console.log("[image] drop listener removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
 
 /**
  * Scans the local network for AI services via the main process (no CORS).
@@ -1016,6 +1127,41 @@ const pumpVoiceConfirm = (): Stream.Stream<AppMessage> => {
             window.removeEventListener("mousedown", onMouseDown)
             window.removeEventListener("contextmenu", onContextMenu)
             console.log("[voice] click listeners removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Mic pre-roll status (2026-10-11): listens for `aimy:mic-preroll` events
+ * from the warmup and dispatches MicPreRollChanged so the mic button dot
+ * reflects the lead-in buffer state.
+ */
+const pumpMicPreRoll = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const push = (m: AppMessage) => Queue.offerUnsafe(queue, m)
+        const onPreRoll = (e: Event) => {
+          const status = (e as CustomEvent).detail?.status
+          if (status === "ready" || status === "unavailable" || status === "warming") {
+            console.log(`[mic] pre-roll status: ${status}`)
+            push(
+              AppMessage.GotShell({
+                message: ShellMessage.MicPreRollChanged({ status }),
+              })
+            )
+          }
+        }
+        window.addEventListener("aimy:mic-preroll", onPreRoll)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:mic-preroll", onPreRoll)
+            console.log("[mic] pre-roll listener removed")
           })
         )
         return queue

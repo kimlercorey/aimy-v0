@@ -75,7 +75,7 @@ describe("update: session lifecycle", () => {
   it("UserSentMessage appends, clears the draft, and emits inference + persist commands", () => {
     const withDraft: Model = {
       ...fresh(),
-      session: { ...fresh().session, composer: { draft: "hello" } },
+      session: { ...fresh().session, composer: { draft: "hello", attachments: [] } },
     }
     const result = update(withDraft, Message.UserSentMessage({ id: "m1", text: "hello", at: 7 }))
     expect(result.model.session.messages).toHaveLength(1)
