@@ -1,1 +1,0 @@
-window.AIMY_VERSION = "5a13243@19:17";
