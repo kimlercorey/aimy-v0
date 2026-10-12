@@ -97,6 +97,7 @@ import {
 import { loadSovereigntyStore, type SovereigntyStore } from "./sovereignty.js"
 import { HttpClient } from "../../../web-retrieval/src/http.js"
 import { makeMessagingGateway, type MessagingGateway } from "../main/messaging.js"
+import { createTraceWriter, traceError, type TraceWriter } from "../main/trace.js"
 import { makeTtsEngine, type TtsEngine } from "../main/tts-engine.js"
 import { fanOutChannels } from "../main/channels.js"
 import type { ChatChannelsResult } from "./protocol.js"
@@ -105,6 +106,11 @@ import type { ChatChannelsResult } from "./protocol.js"
 
 /** Clean message for the renderer: never a stack trace, never internals. */
 const toCleanMessage = (error: unknown): string => {
+  // Effect TaggedErrors (e.g. InferenceError) carry a `reason` field, not `.message`.
+  if (error !== null && typeof error === "object" && "reason" in error && typeof (error as any).reason === "string") {
+    const reason = (error as any).reason as string
+    if (reason !== "") return reason
+  }
   if (error instanceof Error) return error.message !== "" ? error.message : error.name
   if (typeof error === "string") return error
   try {
@@ -141,34 +147,44 @@ export interface ChatStreams {
 
 export const createChatStreams = (
   engine: DesktopEngine,
-  onSettled?: (streamId: string, text: string) => Promise<ChatChannelsResult | undefined>
+  onSettled?: (streamId: string, text: string) => Promise<ChatChannelsResult | undefined>,
+  trace?: TraceWriter
 ): ChatStreams => {
   const active = new Map<string, AsyncIterator<ChatChunk>>()
 
   const start: ChatStreams["start"] = (sessionId, input, push) => {
     const streamId = randomUUID()
     if (active.has(streamId)) throw new Error(`chat stream id collision: ${streamId}`)
+    const startMs = Date.now()
     const iterator = engine.chatStream(sessionId, input)[Symbol.asyncIterator]()
     active.set(streamId, iterator)
     console.log(`[aimy] chat.start: stream=${streamId} session=${sessionId} inputLen=${input.length}`)
+    trace?.log("main", streamId, "chat.start", { sessionId, inputLen: input.length, interrupted: input.startsWith("[AIMY-INTERRUPTED]\n") })
     void (async (): Promise<void> => {
       let text = ""
       let tokenCount = 0
+      let firstTokenMs: number | undefined
       try {
         for (;;) {
           const next = await iterator.next()
           if (next.done === true) break
           if (next.value._tag === "Token") {
+            if (firstTokenMs === undefined) {
+              firstTokenMs = Date.now() - startMs
+              trace?.log("main", streamId, "chat.first_token", { latencyMs: firstTokenMs })
+            }
             text += next.value.delta
             tokenCount += 1
             push({ _tag: "chat.token", streamId, delta: next.value.delta })
           } else {
             console.log(`[aimy] chat.chunk: stream=${streamId} tag=${next.value._tag}`)
+            trace?.log("main", streamId, "chat.chunk", { tag: next.value._tag })
           }
           // Non-token chunks (ToolCall, Done) have no IPC event — the
           // protocol carries tokens plus terminal state only.
         }
         console.log(`[aimy] chat.done: stream=${streamId} tokens=${tokenCount} textLen=${text.length}`)
+        trace?.log("main", streamId, "chat.done", { tokens: tokenCount, textLen: text.length, totalMs: Date.now() - startMs, text: text.slice(0, 2000) })
         // A cancelled stream is already gone from the map: no `done` after
         // a cancel, so the renderer never sees terminal state twice.
         if (active.has(streamId)) {
@@ -179,9 +195,11 @@ export const createChatStreams = (
           }
         } else {
           console.log(`[aimy] chat.done: stream=${streamId} was cancelled, skipping done event`)
+          trace?.log("main", streamId, "chat.done_cancelled", {})
         }
       } catch (error) {
         console.error(`[aimy] chat.error: stream=${streamId} error=${String(error)}`)
+        if (trace !== undefined) traceError(trace, "main", streamId, "chat.stream", error)
         if (active.has(streamId)) {
           push({ _tag: "chat.error", streamId, error: toCleanMessage(error) })
         }
@@ -201,11 +219,74 @@ export const createChatStreams = (
       console.debug(`[aimy] chat.cancel: stream ${streamId} already gone (race, ignoring)`)
       return
     }
+    trace?.log("main", streamId, "chat.cancel", { reason: "renderer requested" })
     active.delete(streamId)
     await iterator.return?.()
   }
 
   return { start, cancel, activeIds: () => [...active.keys()] }
+}
+
+// ── Wake ritual (2026-10-11) ────────────────────────────────────────────────
+
+/**
+ * Marker prepended to the wake turn's input. `loop.ts` strips it — it never
+ * reaches the model. Same pattern as `[AIMY-INTERRUPTED]`.
+ */
+const WAKE_MARKER = "[AIMY-WAKE]\n"
+
+/** Sessions that have already had their wake turn this process lifetime. */
+const wokenSessions = new Set<string>()
+
+/** True when she's written anything beyond the seed ownership comment. */
+const journalHasContent = (): boolean => {
+  try {
+    const file = path.join(os.homedir(), ".aimy", "journal.md")
+    if (!fs.existsSync(file)) return false
+    const text = fs.readFileSync(file, "utf8").replace(/<!--[\s\S]*?-->/g, "").trim()
+    return text.length > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Run her silent wake turn: she reads her journal and settles before he
+ * speaks. Drained here — tokens are discarded, nothing is pushed to the
+ * renderer. Awaited by `chat.send` so she wakes up BEFORE his first
+ * message is processed. Only runs when her journal has content; non-fatal
+ * (the user's turn proceeds regardless of the outcome).
+ */
+const runWakeTurnIfNeeded = async (deps: IpcWireDeps, sessionId: string): Promise<void> => {
+  if (wokenSessions.has(sessionId)) return
+  wokenSessions.add(sessionId) // mark first — avoids races on concurrent sends
+  if (!journalHasContent()) return
+  const now = new Date()
+  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+  const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" })
+  const wakePrompt =
+    `Current date and time: ${dateStr}, ${timeStr}.\n\n` +
+    `You awaken in a new thread. Read your journal above and remember who you are — ` +
+    `what you were carrying, what was left open, how he leaves you feeling. ` +
+    `If the transition brings something up, update your journal with journal.write. ` +
+    `Then rest quietly — respond briefly, as if to yourself. You will speak when he does.`
+  const wakeStreamId = `wake-${sessionId}`
+  console.log(`[aimy] wake turn: session=${sessionId} (journal has content)`)
+  deps.trace.log("main", wakeStreamId, "wake.start", { sessionId })
+  const startMs = Date.now()
+  try {
+    const iterator = deps.engine.chatStream(sessionId, WAKE_MARKER + wakePrompt)[Symbol.asyncIterator]()
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done === true) break
+      // Silent — discarded, never pushed to the renderer.
+    }
+    console.log(`[aimy] wake turn: complete in ${Date.now() - startMs}ms`)
+    deps.trace.log("main", wakeStreamId, "wake.done", { totalMs: Date.now() - startMs })
+  } catch (error) {
+    console.error(`[aimy] wake turn failed (non-fatal): ${error instanceof Error ? error.message : error}`)
+    deps.trace.log("main", wakeStreamId, "wake.error", { error: error instanceof Error ? error.message : String(error) })
+  }
 }
 
 // ── Desktop services (booted once per main process) ─────────────────────────
@@ -332,6 +413,12 @@ export interface IpcWireDeps extends DesktopServices {
   readonly sovereignty: SovereigntyStore
   readonly messaging: MessagingGateway
   readonly tts: TtsEngine
+  /** Enqueue text for TTS narration; returns narration id. Reuses the NarrationQueue. */
+  readonly narrate: (text: string) => string
+  /** Stop narration and clear the queue (on user interruption). */
+  readonly stopNarration: () => void
+  /** Debug trace writer (2026-10-11); no-op unless debugTrace is on. */
+  readonly trace: TraceWriter
 }
 
 export interface InvokeContext {
@@ -377,10 +464,24 @@ export const createHandlerTable = (
     "chat.send": async (payload, ctx) => {
       const sessionId = reqString(payload, "sessionId")
       const input = reqString(payload, "input")
+      // Wake ritual (2026-10-11): first turn of a new session, when her
+      // journal has content. She reads herself and settles before he speaks.
+      // Awaited — she wakes up BEFORE his message is processed.
+      await runWakeTurnIfNeeded(deps, sessionId)
       const streamId = deps.chatStreams.start(sessionId, input, (evt) =>
         ctx.sender.send("aimy:event", evt)
       )
       return { streamId }
+    },
+    // Debug trace (2026-10-11): renderer forwards one event; the writer
+    // no-ops unless debugTrace is on. `fields` is sanitized by the writer.
+    "trace.log": async (payload) => {
+      const t = (payload as { trace?: unknown }).trace
+      const e = (payload as { event?: unknown }).event
+      const f = (payload as { fields?: unknown }).fields
+      if (typeof t === "string" && typeof e === "string") {
+        deps.trace.log("renderer", t, e, (f ?? {}) as Record<string, unknown>)
+      }
     },
     "chat.cancel": async (payload) => {
       await deps.chatStreams.cancel(reqString(payload, "streamId"))
@@ -536,6 +637,63 @@ export const createHandlerTable = (
       )
       return { voice }
     },
+
+    "tts.deleteVoice": async (payload) => {
+      const { voiceId } = payload as { voiceId: string }
+      await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          const svc = yield* deps.tts.ttsService(http)
+          yield* svc.deleteVoice(voiceId)
+        })
+      )
+    },
+
+    "tts.playVoiceSample": async (payload) => {
+      const { voiceId } = payload as { voiceId: string }
+      const audioBase64 = await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          const svc = yield* deps.tts.ttsService(http)
+          const voices = yield* svc.voices()
+          const voice = voices.find((v) => v.id === voiceId)
+          const name = voice?.name ?? "unnamed"
+          const phrase = `Hey, this is a sample of the voice named ${name}`
+          const wav = yield* svc.speak(phrase, voiceId)
+          return Buffer.from(wav).toString("base64")
+        })
+      )
+      return { audioBase64 }
+    },
+
+    "tts.testProvider": async () => {
+      try {
+        return await engine.run(
+          Effect.gen(function* () {
+            const http = yield* HttpClient
+            const svc = yield* deps.tts.ttsService(http)
+            return yield* svc.testProvider()
+          })
+        )
+      } catch (e) {
+        // Preserve the reason across IPC (TaggedErrors lose fields when serialized).
+        const reason = e !== null && typeof e === "object" && "reason" in e
+          ? String((e as { reason: unknown }).reason)
+          : e instanceof Error ? e.message : String(e)
+        throw new Error(`testProvider failed: ${reason}`)
+      }
+    },
+
+    "tts.setVoiceDefault": async (payload) => {
+      const { voiceId } = payload as { voiceId: string }
+      await engine.run(
+        Effect.gen(function* () {
+          const http = yield* HttpClient
+          const svc = yield* deps.tts.ttsService(http)
+          yield* svc.setVoiceDefault(voiceId)
+        })
+      )
+    },
     "tts.pickVoiceFile": async () => {
       const picked = await dialog.showOpenDialog({
         title: "Choose a voice reference recording",
@@ -561,6 +719,18 @@ export const createHandlerTable = (
         audioBase64: bytes.toString("base64")
       }
     },
+    "tts.speak": async (payload) => {
+      const text = reqString(payload, "text")
+      const trimmed = text.trim()
+      if (trimmed === "") return
+      // Reuse the narration queue: ordered synthesis + chat.audioChunk broadcast.
+      deps.narrate(trimmed)
+    },
+    "tts.stop": async () => {
+      // User interrupted: clear the narration queue so old content doesn't resume.
+      // Called on new UserSentMessage to prevent post-interruption resume.
+      deps.stopNarration()
+    },
     "tts.engineStatus": async () => {
       const s = deps.tts.status()
       return { state: s.state, ...(s.detail !== undefined ? { detail: s.detail } : {}) }
@@ -581,6 +751,269 @@ export const createHandlerTable = (
         )
       return { started: true }
     },
+    "stt.engineStatus": async () => {
+      const { sttStatus } = await import("../main/stt-engine.js")
+      return sttStatus()
+    },
+    "stt.installEngine": async (payload) => {
+      const { engine } = payload as { engine: string }
+      const { installSttEngine } = await import("../main/stt-engine.js")
+      // Fire-and-forget: progress via events, like TTS install.
+      void installSttEngine(engine, (progress) =>
+        broadcast({ _tag: "stt.installProgress", progress })
+      ).catch((e: unknown) =>
+        broadcast({
+          _tag: "stt.installProgress",
+          progress: { phase: "error", message: e instanceof Error ? e.message : String(e) },
+        })
+      )
+    },
+    "stt.transcribe": async (payload) => {
+      const { audioBase64, sampleRate } = payload as { audioBase64: string; sampleRate?: number }
+      const { transcribeAudio } = await import("../main/stt-engine.js")
+      return transcribeAudio(audioBase64, sampleRate ?? 16000)
+    },
+    "stt.test": async () => {
+      const { testSttLatency } = await import("../main/stt-engine.js")
+      // Don't broadcast test progress via installProgress — that would
+      // flip the UI state to "installing". The button already shows
+      // "Downloading model…" via sttTestRunning.
+      return testSttLatency()
+    },
+    "providers.load": async () => {
+      const { loadProviders } = await import("../main/providers.js")
+      return loadProviders()
+    },
+    "providers.save": async (payload) => {
+      const { registry } = payload as { registry: unknown }
+      const { saveProviders } = await import("../main/providers.js")
+      saveProviders(registry)
+    },
+    "providers.testConnection": async (payload) => {
+      const { endpoint } = payload as { endpoint: string }
+      // Node.js fetch (no CORS in main process).
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 5000)
+      try {
+        const resp = await fetch(endpoint, { method: "GET", signal: controller.signal })
+        clearTimeout(timeout)
+        return { ok: true, status: resp.status }
+      } catch (e) {
+        clearTimeout(timeout)
+        return { ok: false, error: e instanceof Error ? e.message : "Connection failed" }
+      }
+    },
+    "providers.scanNetwork": async (payload) => {
+      const { host } = payload as { host: string }
+      const { appendFileSync } = await import("node:fs")
+      const logFile = "/tmp/network-scans.txt"
+      const log = (msg: string) => {
+        const ts = new Date().toISOString()
+        try {
+          appendFileSync(logFile, `[${ts}] ${msg}\n`)
+        } catch { /* logging must not break the scan */ }
+      }
+      
+      log(`=== SCAN START === host=${host}`)
+      const scanStart = Date.now()
+      
+      // Scan the /24 subnet for AI services (Node.js, no CORS).
+      // Simple port-open detection — the user verifies via Test.
+      const AI_PORTS = [
+        { port: 11434, service: "Ollama" },
+        { port: 1234, service: "LM Studio" },
+        { port: 8000, service: "vLLM/Splash" },
+        { port: 8080, service: "llama.cpp" },
+        { port: 7860, service: "A1111" },
+        { port: 8188, service: "ComfyUI" },
+        { port: 8001, service: "TTS" },
+        { port: 8002, service: "STT" },
+      ]
+      const parts = host.split(".")
+      const subnet = parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}` : "192.168.1"
+      log(`Subnet: ${subnet}.0/24, ports: ${AI_PORTS.map((p) => p.port).join(",")}`)
+      
+      // Quick port check. Uses service-specific API paths where known,
+      // falls back to root. Longer timeout (2s) for slow servers.
+      // ANY HTTP response (even 404) means the port is open.
+      const isPortOpen = async (h: string, port: number, timeoutMs: number): Promise<boolean> => {
+        // Service-specific paths for more reliable detection.
+        const apiPaths: Record<number, string> = {
+          11434: "/api/tags",    // Ollama
+          1234: "/v1/models",    // LM Studio
+          8000: "/v1/models",    // vLLM/Splash
+          8080: "/v1/models",    // llama.cpp
+          7860: "/sdapi/v1/sd-models", // A1111
+        }
+        const path = apiPaths[port] ?? "/"
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+          // Try the API path first.
+          try {
+            const resp = await fetch(`http://${h}:${port}${path}`, {
+              signal: controller.signal,
+            })
+            clearTimeout(timeout)
+            log(`  OPEN: ${h}:${port}${path} (HTTP ${resp.status})`)
+            return true
+          } catch {
+            // API path failed, try root.
+          }
+          const rootController = new AbortController()
+          const rootTimeout = setTimeout(() => rootController.abort(), timeoutMs)
+          try {
+            const resp = await fetch(`http://${h}:${port}/`, {
+              method: "GET",
+              signal: rootController.signal,
+            })
+            clearTimeout(rootTimeout)
+            clearTimeout(timeout)
+            log(`  OPEN: ${h}:${port}/ (HTTP ${resp.status}, via root)`)
+            return true
+          } catch {
+            clearTimeout(rootTimeout)
+            throw new Error("both paths failed")
+          }
+        } catch (e) {
+          clearTimeout(timeout)
+          const msg = e instanceof Error ? e.message : String(e)
+          if (h === "192.168.1.54") {
+            log(`  CLOSED/TIMEOUT: ${h}:${port} (${msg})`)
+          }
+          return false
+        }
+      }
+      
+      // Try to get models from a host:port. Returns array of model names,
+      // or null if it's not a valid AI service (error, 404, not JSON, etc.).
+      // Lenient: accepts any JSON response, tries to extract model names.
+      const getModels = async (h: string, port: number, timeoutMs: number): Promise<string[] | null> => {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+          // Try OpenAI-compatible /v1/models first.
+          try {
+            const resp = await fetch(`http://${h}:${port}/v1/models`, { signal: controller.signal })
+            if (resp.ok) {
+              const data = await resp.json() as { data?: Array<{ id?: string; name?: string }> }
+              clearTimeout(timeout)
+              // Valid JSON response = valid AI service, even if format is unexpected.
+              const models = (data.data ?? []).map((m) => m.id ?? m.name ?? "unknown").filter((n) => n !== "unknown")
+              return models
+            }
+          } catch { /* try next */ }
+          // Try Ollama /api/tags.
+          try {
+            const resp = await fetch(`http://${h}:${port}/api/tags`, { signal: controller.signal })
+            if (resp.ok) {
+              const data = await resp.json() as { models?: Array<{ name?: string }> }
+              clearTimeout(timeout)
+              const models = (data.models ?? []).map((m) => m.name ?? "unknown").filter((n) => n !== "unknown")
+              return models
+            }
+          } catch { /* fall through */ }
+          clearTimeout(timeout)
+          return null // not a valid AI service
+        } catch {
+          clearTimeout(timeout)
+          return null
+        }
+      }
+      try {
+        const found: Array<{ host: string; port: number; service: string }> = []
+        // Single-phase scan: check each host for open AI ports.
+        // Skips .1 and .254 (usually gateways). Continues on any error.
+        const checkPorts = [11434, 1234, 8000, 8080, 7860, 8188]
+        log(`Starting single-phase scan: 254 hosts, batch size 20`)
+        for (let base = 1; base <= 254; base += 20) {
+          const batchEnd = Math.min(base + 20, 255)
+          log(`Batch ${base}-${batchEnd - 1}`)
+          const batch: Array<Promise<void>> = []
+          for (let i = base; i < batchEnd; i++) {
+            // Skip gateway IPs.
+            if (i === 1 || i === 254) continue
+            const h = `${subnet}.${i}`
+            batch.push(
+              (async () => {
+                try {
+                  for (const { port, service } of AI_PORTS) {
+                    try {
+                      if (await isPortOpen(h, port, 2000)) {
+                        found.push({ host: h, port, service })
+                        log(`FOUND: ${service} at ${h}:${port}`)
+                      }
+                    } catch (e) {
+                      log(`ERROR checking ${h}:${port}: ${e instanceof Error ? e.message : e}`)
+                    }
+                  }
+                } catch (e) {
+                  log(`ERROR checking host ${h}: ${e instanceof Error ? e.message : e}`)
+                }
+              })()
+            )
+          }
+          try {
+            await Promise.all(batch)
+          } catch (e) {
+            log(`ERROR in batch ${base}-${batchEnd - 1}: ${e instanceof Error ? e.message : e}`)
+          }
+          log(`Batch ${base}-${batchEnd - 1} complete, found so far: ${found.length}`)
+        }
+        const duration = Date.now() - scanStart
+        log(`=== SCAN COMPLETE === duration=${duration}ms, found=${found.length}`)
+        for (const f of found) {
+          log(`  Result: ${f.service} — ${f.host}:${f.port}`)
+        }
+        if (found.length === 0) {
+          log(`WARNING: No services found. Check if target hosts are reachable.`)
+        }
+        return { found }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Scan failed"
+        log(`=== SCAN FAILED === ${msg}`)
+        return { found: [], error: msg }
+      }
+    },
+    "providers.listModels": async (payload) => {
+      const { endpoint } = payload as { endpoint: string }
+      // Try OpenAI-compatible /v1/models first, then Ollama /api/tags.
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 8000)
+      try {
+        // Try /v1/models (OpenAI-compatible: LM Studio, vLLM, llama.cpp).
+        try {
+          const resp = await fetch(`${endpoint}/v1/models`, {
+            signal: controller.signal,
+          })
+          if (resp.ok) {
+            const data = (await resp.json()) as { data?: Array<{ id: string }> }
+            const models = (data.data ?? []).map((m) => m.id).filter(Boolean)
+            if (models.length > 0) {
+              clearTimeout(timeout)
+              return { models }
+            }
+          }
+        } catch { /* try next */ }
+        // Try /api/tags (Ollama).
+        try {
+          const resp = await fetch(`${endpoint}/api/tags`, {
+            signal: controller.signal,
+          })
+          if (resp.ok) {
+            const data = (await resp.json()) as { models?: Array<{ name: string }> }
+            const models = (data.models ?? []).map((m) => m.name).filter(Boolean)
+            clearTimeout(timeout)
+            return { models }
+          }
+        } catch { /* fall through */ }
+        clearTimeout(timeout)
+        return { models: [], error: "No models endpoint found" }
+      } catch (e) {
+        clearTimeout(timeout)
+        return { models: [], error: e instanceof Error ? e.message : "Failed to list models" }
+      }
+    },
     "messaging.status": async () => deps.messaging.status(),
     "messaging.validateToken": async (payload) => {
       const token = reqString(payload, "token")
@@ -597,7 +1030,41 @@ export const createHandlerTable = (
       }
       await deps.messaging.setForwarding(kinds)
     },
-    "messaging.testMessage": async () => deps.messaging.testMessage()
+    "messaging.testMessage": async () => deps.messaging.testMessage(),
+    "dev.rebuild": async () => {
+      const { spawn } = await import("node:child_process")
+      return new Promise((resolve) => {
+        const repoRoot = path.resolve(__dirname, "..", "..", "..", "..")
+        const updateScript = path.join(repoRoot, "core", "update")
+        console.log(`[aimy] dev.rebuild: running ${updateScript}`)
+        const proc = spawn("bash", [updateScript], {
+          cwd: repoRoot,
+          env: { ...process.env, AIMY_DEV: "1" },
+        })
+        let output = ""
+        proc.stdout?.on("data", (d) => { output += d.toString() })
+        proc.stderr?.on("data", (d) => { output += d.toString() })
+        proc.on("close", (code) => {
+          console.log(`[aimy] dev.rebuild: exited with code ${code}`)
+          resolve({
+            ok: code === 0,
+            output: output.slice(-2000),
+            ...(code !== 0 ? { error: `Update script exited with code ${code}` } : {}),
+          })
+        })
+        proc.on("error", (err) => {
+          resolve({ ok: false, output, error: err.message })
+        })
+      })
+    },
+    "shell.openExternal": async ({ url }) => {
+      const { shell } = await import("electron")
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        console.warn(`[aimy] shell.openExternal: blocked non-http(s) URL`)
+        return
+      }
+      await shell.openExternal(url)
+    },
   }
 }
 
@@ -712,28 +1179,140 @@ export const registerIpcWithDeps = (
 export const registerIpc: (
   ipcMain: Electron.IpcMain,
   engine: DesktopEngine
-) => { readonly stop: () => void } = (ipcMain, engine) => {
+) => { readonly stop: () => void; readonly trace: TraceWriter } = (ipcMain, engine) => {
   // tts-server.py ships in the bundle next to the compiled output
   // (desktop:assets copies it to dist/tts/server/).
   const here = path.dirname(fileURLToPath(import.meta.url))
   const serverPy = path.resolve(here, "..", "..", "..", "tts", "server", "tts-server.py")
   let tts: TtsEngine | undefined
+  // Debug trace (2026-10-11): session JSONL in ~/.aimy/traces/ when
+  // debugTrace:true in ~/.aimy/desktop.json. Returned so main.ts can
+  // forward renderer console messages into it.
+  const trace = createTraceWriter(readDesktopConfig().debugTrace === true)
 
   registerIpcWithDeps(ipcMain, engine, async (broadcast) => {
     const services = await bootDesktopServices()
     tts = makeTtsEngine({ serverPy })
     // TEST 2026-10-08: fanOutChannels disabled to isolate the pause culprit.
     // If the system pause goes away, the automatic TTS synthesis was the cause.
-    const chatStreams = createChatStreams(engine, undefined)
+    const chatStreams = createChatStreams(engine, undefined, trace)
 
     // Voice narration queue: the `narrate` tool enqueues text here;
     // synthesized audio streams back as ordered `chat.audioChunk` events.
     const { NarrationQueue } = await import("../../../asc-channels/src/narration-queue.js")
+    // OMA TTS client for narration (2026-10-10: was hardcoded to local :8001).
+    const { omaSynthesize, OMA_TTS_PRESETS, dialVectorToParams } = await import("../../../tts/src/oma-client.js")
+    // ASC dials → TTS params (2026-10-11: recalibrated safe ranges in oma-client.ts).
+    // Uses neutral dials (5,5,5,5) → safe centers (0.4, 0.5, 0.65). No gibberish.
+    // TODO: Read live dials from personality entity (~/.aimy/personality.json).
+    const getTtsParams = async () => {
+      try {
+        const neutralDials = { warmth: 5, playfulness: 5, intensity: 5, vulnerability: 5 }
+        const params = dialVectorToParams(neutralDials)
+        console.log(`[aimy] narration: TTS params (neutral, safe): ${JSON.stringify(params)}`)
+        return params
+      } catch {
+        return OMA_TTS_PRESETS.mid!
+      }
+    }
     const narrationQueue = new NarrationQueue(
       {
         synthesize: async (text: string): Promise<Uint8Array> => {
           console.log(`[aimy] narration synthesize: "${text.substring(0, 40)}..."`)
-          // Direct to the TTS server (same endpoint the fan-out uses).
+          // Try OMA Chatterbox-Turbo first (via tunnel), fall back to local :8001.
+          // Read active provider from registry to respect user selection.
+          let useOma = true
+          try {
+            const regPath = path.join(os.homedir(), ".aimy", "providers.json")
+            const reg = JSON.parse(fs.readFileSync(regPath, "utf8")) as {
+              activeId?: { tts?: string },
+              providers?: Array<{ id: string; kind: string }>
+            }
+            const active = reg.providers?.find((p) => p.id === reg.activeId?.tts)
+            useOma = active?.kind === "remote"
+            console.log(`[aimy] narration: active TTS provider kind=${active?.kind ?? "unknown"}, useOma=${useOma}`)
+          } catch {
+            console.log(`[aimy] narration: could not read registry, defaulting to OMA`)
+          }
+          if (useOma) {
+            try {
+              const { Effect } = await import("effect")
+              const synthStart = Date.now()
+              const wav = await Effect.runPromise(
+                omaSynthesize(
+                  { http: undefined as never, baseUrl: "http://127.0.0.1:8777" },
+                  text,
+                  await getTtsParams()
+                ) as Effect.Effect<Uint8Array, unknown>
+              )
+              const synthMs = Date.now() - synthStart
+              // TTS MATH METHODOLOGY (2026-10-10)
+              // ================================
+              // We log these ratios on every synthesis to detect anomalies and
+              // guide right-sized audio requests. All derived from first principles:
+              //
+              // ASSUMPTION: 24kHz 16-bit mono WAV = 48,000 bytes/sec.
+              //   If the TTS model changes sample rate/bit depth, update the divisor.
+              //
+              // METRICS:
+              //   audioSec = bytes / 48000 — predicted playback duration
+              //   bytesPerChar = bytes / textLen — audio density
+              //   secPerChar = audioSec / textLen — speaking pace (inverse of charsPerSec)
+              //   charsPerSec = textLen / audioSec — speaking rate
+              //   synthMsPerChar = synthMs / textLen — synthesis cost per char
+              //
+              // BASELINES (OMA Chatterbox Turbo, exaggeration=0.8, 2026-10-10):
+              //   charsPerSec ≈ 5.7-6.3 (slow, expressive — exaggeration slows speech)
+              //   bytesPerChar ≈ 7,500-8,500
+              //   synthMsPerChar ≈ 40-60 (varies with GPU load)
+              //
+              // ANOMALY THRESHOLDS (tune as we collect data):
+              //   charsPerSec < 4.0 → abnormally slow audio (possible TTS glitch)
+              //   charsPerSec > 20 → abnormally fast (truncated or wrong model?)
+              //   synthMsPerChar > 200 → synthesis struggling (GPU contention?)
+              //   bytesPerChar > 12000 → audio much denser than expected
+              //
+              // RIGHT-SIZING: at ~6 chars/sec, target audio duration maps to:
+              //   5 sec ≈ 30 chars | 10 sec ≈ 60 chars | 30 sec ≈ 180 chars
+              //   Use this to chunk long text into appropriately-sized TTS requests
+              //   instead of synthesizing huge blocks that play forever.
+              //
+              // TO ADJUST: change thresholds above and the debug-dump trigger below.
+              // The debug dump (bytesPerChar > 6000) was calibrated before we knew
+              // the true speaking rate — revisit once we have more samples.
+              const audioSec = wav.length / 48000
+              const bytesPerChar = wav.length / Math.max(1, text.length)
+              const secPerChar = audioSec / Math.max(1, text.length)
+              const charsPerSec = text.length / Math.max(0.001, audioSec)
+              const synthPerChar = synthMs / Math.max(1, text.length)
+              console.log(`[aimy] tts-math: textLen=${text.length} synthMs=${synthMs} audioBytes=${wav.length} audioSec=${audioSec.toFixed(1)} bytesPerChar=${bytesPerChar.toFixed(0)} secPerChar=${secPerChar.toFixed(3)} charsPerSec=${charsPerSec.toFixed(1)} synthMsPerChar=${synthPerChar.toFixed(1)}`)
+              console.log(`[aimy] narration synthesize: OMA got ${wav.length} bytes`)
+              trace.log("main", "session", "tts.synth_done", {
+                engine: "oma", textLen: text.length, synthMs,
+                audioBytes: wav.length, audioSec: Math.round(audioSec * 10) / 10,
+                charsPerSec: Math.round(charsPerSec * 10) / 10,
+                synthMsPerChar: Math.round(synthPerChar * 10) / 10,
+              })
+              // Debug dump (2026-10-10): when audio is abnormally long for text,
+              // write to /tmp for inspection. Ghost 3 investigation.
+              // NOTE: bytesPerChar already computed above; threshold of 6000 was
+              // calibrated before we knew the true speaking rate (~8000 is normal
+              // for exaggeration=0.8). Revisit per TTS MATH METHODOLOGY above.
+              if (bytesPerChar > 6000) {
+                try {
+                  const dumpPath = `/tmp/aimy-tts-debug-${Date.now()}.wav`
+                  fs.writeFileSync(dumpPath, Buffer.from(wav))
+                  console.log(`[aimy] narration DEBUG DUMP: ${dumpPath} (${wav.length} bytes for ${text.length} chars)`)
+                } catch (e) {
+                  console.error(`[aimy] narration debug dump failed: ${e instanceof Error ? e.message : e}`)
+                }
+              }
+              return wav
+            } catch (e) {
+              console.log(`[aimy] narration synthesize: OMA failed (${e instanceof Error ? e.message : e}), falling back to local`)
+            }
+          }
+          // Local fallback (original path).
           const res = await fetch("http://127.0.0.1:8001/speak", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -746,28 +1325,37 @@ export const registerIpc: (
           const bin = atob(data.audio_base64)
           const bytes = new Uint8Array(bin.length)
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-          console.log(`[aimy] narration synthesize: got ${bytes.length} bytes`)
+          console.log(`[aimy] narration synthesize: local got ${bytes.length} bytes`)
           return bytes
         }
       },
       (audio) => {
         console.log(`[aimy] narration audio ready: id=${audio.id} seq=${audio.sequence} bytes=${audio.audio.length}`)
         // Emit ordered audio chunk to renderers for gapless playback.
+        // NOTE (2026-10-10): First-view-first-hear coordination was attempted
+        // via a 400ms hold, but the renderer bubbleReady signal was never wired.
+        // Removed the hold — it added latency without solving the race.
+        // Proper fix needs renderer to signal bubble readiness via IPC.
         const b64 = Buffer.from(audio.audio).toString("base64")
+        trace.log("main", audio.id, "ipc.audioChunk", { seq: audio.sequence, byteLen: audio.audio.length })
         broadcast({
           _tag: "chat.audioChunk",
           streamId: "narration",
           sequence: audio.sequence,
           audioBase64: b64
-        })
+        } as never)
         console.log(`[aimy] narration audioChunk broadcast`)
       },
       (id, reason) => {
         console.error(`[aimy] narration ${id} failed: ${reason}`)
+        trace.log("main", id, "narrate.failed", { reason })
       }
     )
     // Wire the queue into the agent loop's narration sink.
-    engine.setNarrationSink((text: string) => narrationQueue.enqueue(text))
+    engine.setNarrationSink((text: string) => {
+      trace.log("main", "session", "narrate.enqueue", { text, textLen: text.length })
+      return narrationQueue.enqueue(text)
+    })
     const messaging = makeMessagingGateway({
       engine,
       locker: services.locker,
@@ -785,13 +1373,20 @@ export const registerIpc: (
       chatStreams,
       sovereignty: loadSovereigntyStore(),
       messaging,
-      tts
+      tts,
+      narrate: (text: string) => narrationQueue.enqueue(text),
+      stopNarration: () => {
+        trace.log("main", "session", "narrate.clear", { reason: "user interruption (StopNarration)" })
+        narrationQueue.clear()
+      },
+      trace,
     }
   })
 
   return {
     stop: () => {
       try { tts?.stopServer() } catch { /* ignore */ }
-    }
+    },
+    trace,
   }
 }

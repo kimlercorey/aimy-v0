@@ -37,6 +37,7 @@ import {
 import { loadSovereigntyStore } from "../src/ipc/sovereignty.js"
 import type { MessagingGateway } from "../src/main/messaging.js"
 import type { TtsEngine } from "../src/main/tts-engine.js"
+import { createTraceWriter } from "../src/main/trace.js"
 
 /** In-memory TTS engine stub: install flips to ready, server is a no-op. */
 const stubTtsEngine = (): TtsEngine => {
@@ -48,6 +49,9 @@ const stubTtsEngine = (): TtsEngine => {
     voices: () => Effect.die(new Error("stub tts engine: no service")),
     setVoice: () => Effect.die(new Error("stub tts engine: no service")),
     addVoice: () => Effect.die(new Error("stub tts engine: no service")),
+    deleteVoice: () => Effect.die(new Error("stub tts engine: no service")),
+    setVoiceDefault: () => Effect.die(new Error("stub tts engine: no service")),
+    testProvider: () => Effect.die(new Error("stub tts engine: no service")),
     health: () =>
       Effect.succeed({ reachable: false, modelLoaded: false, reason: "stub" as const }),
   }
@@ -320,6 +324,9 @@ const buildTestDeps = async (
     sovereignty: loadSovereigntyStore(path.join(root, "sovereignty.json")),
     messaging: stubMessaging(),
     tts: stubTtsEngine(),
+    narrate: (_text: string) => "test-stream-id",
+    stopNarration: () => undefined,
+    trace: createTraceWriter(false),
     paths,
     instanceId
   }

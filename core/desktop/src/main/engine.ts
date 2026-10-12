@@ -86,6 +86,13 @@ export interface DesktopConfig {
   readonly llmBackend?: "splash" | "lmstudio" | "ollama" | undefined
   /** Shell command to start the LLM server. Empty = no restart offered. */
   readonly llmStartCommand?: string | undefined
+  /**
+   * Debug trace mode (2026-10-11): when true, the app writes a JSONL
+   * session trace to ~/.aimy/traces/ (last 5 kept) capturing turn
+   * lifecycle, IPC, tool calls, TTS/audio timing, state snapshots,
+   * and renderer console errors. For troubleshooting with Zen.
+   */
+  readonly debugTrace?: boolean | undefined
 }
 
 /** Splash (the local model server) + a placeholder model name. */
@@ -112,17 +119,63 @@ export const readDesktopConfig = (configFile: string = desktopConfigPath()): Des
           ? llmBackend
           : DEFAULT_DESKTOP_CONFIG.llmBackend,
       llmStartCommand:
-        typeof raw.llmStartCommand === "string" ? raw.llmStartCommand : DEFAULT_DESKTOP_CONFIG.llmStartCommand
+        typeof raw.llmStartCommand === "string" ? raw.llmStartCommand : DEFAULT_DESKTOP_CONFIG.llmStartCommand,
+      debugTrace:
+        typeof raw.debugTrace === "boolean" ? raw.debugTrace : undefined
     }
   } catch {
     return DEFAULT_DESKTOP_CONFIG
   }
 }
 
-/** Write the config (mode 0600 — it names the local endpoint; keep it private by habit). */
+/**
+ * Write the config (mode 0600 — it names the local endpoint; keep it private by habit).
+ * Merge over the existing file (2026-10-11): a blind overwrite dropped the
+ * `debugTrace` flag when an older code path saved. Unknown fields survive.
+ */
 const writeDesktopConfig = (config: DesktopConfig, configFile: string): void => {
   fs.mkdirSync(path.dirname(configFile), { recursive: true })
-  fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 })
+  let merged: Record<string, unknown> = {}
+  try {
+    const raw = JSON.parse(fs.readFileSync(configFile, "utf8"))
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) merged = raw as Record<string, unknown>
+  } catch {
+    // No existing file — write fresh.
+  }
+  // Drop keys the new config explicitly leaves undefined so stale values
+  // can't linger, but keep anything the new config doesn't mention.
+  for (const [k, v] of Object.entries(config)) {
+    if (v === undefined) delete merged[k]
+    else merged[k] = v
+  }
+  fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + "\n", { mode: 0o600 })
+}
+
+/**
+ * Read the active LLM provider from the registry (~/.aimy/providers.json).
+ * Returns its endpoint and model, or undefined if none is active/enabled.
+ * This wires the Settings → Providers UI into the inference path.
+ */
+const readActiveLlmProvider = (): { endpoint: string; model: string; streaming: boolean } | undefined => {
+  try {
+    const registryPath = path.join(os.homedir(), ".aimy", "providers.json")
+    if (!fs.existsSync(registryPath)) return undefined
+    const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"))
+    const activeId = registry?.activeId?.llm
+    if (!activeId) return undefined
+    const provider = (registry.providers ?? []).find((p: any) => p.id === activeId)
+    if (!provider || !provider.enabled) return undefined
+    const endpoint = provider.endpoint
+    const model = provider.config?.model
+    if (typeof endpoint !== "string" || endpoint === "") return undefined
+    if (typeof model !== "string" || model === "") return undefined
+    // Streaming defaults to true; provider can opt out via config.streaming="false"
+    // (e.g. OMA llama-server returns empty SSE streams — use non-streaming).
+    const streaming = provider.config?.streaming !== "false"
+    return { endpoint, model, streaming }
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -137,10 +190,16 @@ export const bootDesktopEngine = async (opts?: {
 }): Promise<DesktopEngine> => {
   const configFile = opts?.configFile ?? desktopConfigPath()
   const fromDisk = readDesktopConfig(configFile)
+  // Prefer the active provider from the registry (2026-10-10: wires
+  // Settings → Providers into the inference path; previously the registry
+  // was UI-only and inference always used desktop.json).
+  const activeProvider = readActiveLlmProvider()
   const config: DesktopConfig = {
-    baseUrl: opts?.baseUrl ?? fromDisk.baseUrl,
-    model: opts?.model ?? fromDisk.model
+    baseUrl: opts?.baseUrl ?? activeProvider?.endpoint ?? fromDisk.baseUrl,
+    model: opts?.model ?? activeProvider?.model ?? fromDisk.model
   }
+  // Streaming defaults to true; provider can disable via config.streaming=false.
+  const streaming = activeProvider?.streaming ?? true
   // Create on first run; onboarding (Track 3) collects the real model name.
   writeDesktopConfig(config, configFile)
 
@@ -175,6 +234,7 @@ export const bootDesktopEngine = async (opts?: {
   const stack: ChatStack = buildChatStack({
     baseUrl: config.baseUrl,
     model: config.model,
+    streaming,
     extraTools: [retrievalAgentTool],
     backgroundJobs,
     narration: narrationSink

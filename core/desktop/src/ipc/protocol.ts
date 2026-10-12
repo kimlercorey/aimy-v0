@@ -67,8 +67,42 @@ export interface TtsInstallResult {
   readonly started: boolean
 }
 
+export interface SttEngineStatusResult {
+  readonly state: "unknown" | "missing" | "installing" | "ready" | "failed"
+  readonly detail?: string | undefined
+  readonly engine?: string | undefined
+}
+
+export interface SttInstallProgressEvent {
+  readonly phase: string
+  readonly message: string
+  readonly downloadedMb?: number | undefined
+  readonly totalMb?: number | undefined
+  readonly percent?: number | undefined
+}
+
+export interface SttTranscribeResult {
+  readonly text: string
+  readonly latencyMs: number
+}
+
+export interface SttTestResult {
+  readonly latencyMs: number
+  readonly modelSizeMb: number
+}
+
 export interface TtsAddVoiceResult {
   readonly voice: Voice
+}
+
+export interface TtsTestProviderResult {
+  readonly latencyMs: number
+  readonly modelSizeMb: number
+  readonly throughputCharsPerSec: number
+}
+
+export interface TtsPlaySampleResult {
+  readonly audioBase64: string
 }
 
 export interface TtsPickVoiceFileResult {
@@ -113,8 +147,34 @@ export interface MessagingTestResult {
   readonly error?: string | undefined
 }
 
+export interface DevRebuildResult {
+  readonly ok: boolean
+  readonly output: string
+  readonly error?: string | undefined
+}
+
 export interface BannersListResult {
   readonly banners: ReadonlyArray<Banner>
+}
+
+export interface ProvidersTestConnectionResult {
+  readonly ok: boolean
+  readonly status?: number | undefined
+  readonly error?: string | undefined
+}
+
+export interface ProvidersScanNetworkResult {
+  readonly found: ReadonlyArray<{
+    readonly host: string
+    readonly port: number
+    readonly service: string
+  }>
+  readonly error?: string | undefined
+}
+
+export interface ProvidersListModelsResult {
+  readonly models: ReadonlyArray<string>
+  readonly error?: string | undefined
 }
 
 export interface SovereigntyToggle {
@@ -187,7 +247,22 @@ export type IpcCommand =
   | { _tag: "tts.engineStatus" }
   | { _tag: "tts.installEngine" }
   | { _tag: "tts.addVoice"; name: string; audioBase64: string }
+  | { _tag: "tts.deleteVoice"; voiceId: string }
+  | { _tag: "tts.playVoiceSample"; voiceId: string }
+  | { _tag: "tts.testProvider" }
+  | { _tag: "tts.setVoiceDefault"; voiceId: string }
   | { _tag: "tts.pickVoiceFile" }
+  | { _tag: "tts.speak"; text: string }
+  | { _tag: "tts.stop" }
+  | { _tag: "stt.engineStatus" }
+  | { _tag: "stt.installEngine"; engine: string }
+  | { _tag: "stt.transcribe"; audioBase64: string; sampleRate?: number }
+  | { _tag: "stt.test" }
+  | { _tag: "providers.load" }
+  | { _tag: "providers.save"; registry: unknown }
+  | { _tag: "providers.testConnection"; endpoint: string }
+  | { _tag: "providers.scanNetwork"; host: string }
+  | { _tag: "providers.listModels"; endpoint: string }
   | { _tag: "messaging.status" }
   | { _tag: "messaging.validateToken"; token: string }
   | { _tag: "messaging.issueCode" }
@@ -195,6 +270,10 @@ export type IpcCommand =
   | { _tag: "messaging.getForwarding" }
   | { _tag: "messaging.setForwarding"; kinds: ReadonlyArray<string> }
   | { _tag: "messaging.testMessage" }
+  | { _tag: "dev.rebuild" }
+  | { _tag: "shell.openExternal"; url: string }
+  /** Debug trace (2026-10-11): renderer forwards one trace event to the main-process writer. No-op unless debugTrace is on. */
+  | { _tag: "trace.log"; trace: string; event: string; fields?: Record<string, unknown> }
 
 /** The response type for each command tag (index for Track 2's handler table). */
 export interface IpcResponse {
@@ -218,7 +297,17 @@ export interface IpcResponse {
   "tts.engineStatus": TtsEngineStatusResult
   "tts.installEngine": TtsInstallResult
   "tts.addVoice": TtsAddVoiceResult
+  "tts.deleteVoice": void
+  "tts.playVoiceSample": TtsPlaySampleResult
+  "tts.testProvider": TtsTestProviderResult
+  "tts.setVoiceDefault": void
+  "stt.engineStatus": SttEngineStatusResult
+  "stt.installEngine": void
+  "stt.transcribe": SttTranscribeResult
+  "stt.test": SttTestResult
   "tts.pickVoiceFile": TtsPickVoiceFileResult
+  "tts.speak": void
+  "tts.stop": void
   "messaging.status": MessagingStatusResult
   "messaging.validateToken": MessagingValidateResult
   "messaging.issueCode": MessagingCodeResult
@@ -226,6 +315,14 @@ export interface IpcResponse {
   "messaging.getForwarding": MessagingForwardingResult
   "messaging.setForwarding": void
   "messaging.testMessage": MessagingTestResult
+  "dev.rebuild": DevRebuildResult
+  "shell.openExternal": void
+  "trace.log": void
+  "providers.load": unknown
+  "providers.save": void
+  "providers.testConnection": ProvidersTestConnectionResult
+  "providers.scanNetwork": ProvidersScanNetworkResult
+  "providers.listModels": ProvidersListModelsResult
 }
 
 /** Helper: response type for a given command. */
@@ -241,6 +338,7 @@ export type IpcEvent =
   | { _tag: "chat.audioChunk"; streamId: string; sequence: number; audioBase64: string }
   | { _tag: "chat.audioDrained"; streamId: string }
   | { _tag: "tts.installProgress"; progress: TtsInstallProgressEvent }
+  | { _tag: "stt.installProgress"; progress: SttInstallProgressEvent }
   | { _tag: "banner.published"; banner: Banner }
   | { _tag: "asc.dialsUpdated"; dials: DialVector }
 
@@ -266,7 +364,22 @@ export const IPC_COMMAND_TAGS = [
   "tts.engineStatus",
   "tts.installEngine",
   "tts.addVoice",
+  "tts.deleteVoice",
+  "tts.playVoiceSample",
+  "tts.testProvider",
+  "tts.setVoiceDefault",
   "tts.pickVoiceFile",
+  "tts.speak",
+  "tts.stop",
+  "stt.engineStatus",
+  "stt.installEngine",
+  "stt.transcribe",
+  "stt.test",
+  "providers.load",
+  "providers.save",
+  "providers.testConnection",
+  "providers.scanNetwork",
+  "providers.listModels",
   "messaging.status",
   "messaging.validateToken",
   "messaging.issueCode",
@@ -284,6 +397,7 @@ export const IPC_EVENT_TAGS = [
   "chat.audioChunk",
   "chat.audioDrained",
   "tts.installProgress",
+  "stt.installProgress",
   "banner.published",
   "asc.dialsUpdated"
 ] as const

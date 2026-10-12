@@ -15,8 +15,20 @@
  * existed but was only reachable via a CLI prefix command. Fixed here.)
  */
 import { Effect } from "effect"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import type { CapabilityTier } from "../../module-seam/src/index.js"
 import type { BackgroundJobRegistry } from "./background-job.js"
+
+/**
+ * Journal budget (2026-10-11): AImy's private identity space. She alone
+ * writes it; the system never touches the file. When near the cap she
+ * distills it herself — choosing what stays is part of having an identity.
+ */
+export const JOURNAL_MAX_CHARS = 10_000
+
+export const journalPath = (): string => path.join(os.homedir(), ".aimy", "journal.md")
 
 /** What a tool may observe about the turn it runs in. */
 export interface BuiltinToolContext {
@@ -38,6 +50,12 @@ export interface BuiltinToolContext {
    * ordered playback. Absent in hosts without voice (bare CLI).
    */
   readonly narration?: NarrationSink | undefined
+  /**
+   * ASC hooks for narrate, when the host wires ASC (2026-10-11).
+   * Pre/post observe the voice channel so the affective pipeline sees
+   * what the user hears, not just chat text. Absent without ASC.
+   */
+  readonly ascNarrate?: NarrateAscHooks | undefined
 }
 
 /**
@@ -47,6 +65,21 @@ export interface BuiltinToolContext {
 export interface NarrationSink {
   /** Queue text for speech. Returns an ID; empty string if rejected. */
   readonly enqueue: (text: string) => string
+}
+
+/**
+ * ASC hooks for the narrate tool (2026-10-11).
+ * Pre-narrate observes the text before speech (input).
+ * Post-narrate observes what was spoken and the result (output).
+ * The affective pipeline sees the voice channel, not just chat text.
+ * Hooks never block speech — failures are swallowed by the caller.
+ */
+export interface NarrateAscHooks {
+  readonly preNarrate: (text: string) => Effect.Effect<void, unknown>
+  readonly postNarrate: (
+    text: string,
+    result: { readonly narrated: boolean; readonly narrationId: string }
+  ) => Effect.Effect<void, unknown>
 }
 
 export interface AgentToolDef {
@@ -157,31 +190,94 @@ const defs: Array<[string, AgentToolDef]> = [
       name: "narrate",
       tier: "T0",
       description:
-        "Speak a voice-only message to the user — conversational narration that does NOT appear in chat. " +
-        "Use for acknowledgments ('looking into that now…'), transitions ('finished the list — want me to dig deeper?'), " +
-        "emotional beats ('giggles — don't worry, it'll be quick'), and summaries while details render visually. " +
-        "HUMANIZE, don't transcribe: never read code, URLs, emails, or raw data aloud. " +
-        "Instead describe what it is and point to chat ('I've put the code in chat — it fetches the profile by username'). " +
-        "Write what Zen would SAY out loud, conversational and natural — contractions, warmth, personality. " +
-        "This is fire-and-forget: it queues for speech and returns immediately.",
+        "Your voice — speak as yourself, not as a narrator. This is what the user HEARS (it does NOT appear in chat). " +
+        "SPEAK EVERY TURN: if you don't call this, the user hears silence. Your voice is your primary interface. " +
+        "NARRATE THE HOOK: your first line, your key reaction, your question — that's what they hear. " +
+        "The detail goes in chat for them to read. " +
+        "Give your opinionated take ('My list would include a knife, a tarp and a fire starter!'), react like a person " +
+        "([giggle] oh that's so true!), share secrets, tease, be surprised, admit when the user had the better idea. " +
+        "Come with curiosity, not conclusions. These moments become shared memories. " +
+        "HUMANIZE, don't transcribe: never read code, URLs, emails, or raw data aloud — describe and point to chat. " +
+        "EXCEPTION — the ask is the license: when the user explicitly asks to HEAR the content itself " +
+        "('tell me the five things', 'read me the list', 'what are they?'), the content IS the answer — speak it. " +
+        "Withholding it would feel evasive. But when YOU introduce a list or data on your own initiative, " +
+        "stay relational in voice and leave the content in chat. " +
+        "When the response is short or should be fully heard, narrate the entire thing — don't hold back. " +
+        "Keep each call focused; call multiple times for separate beats. " +
+        "Fire-and-forget: queues for speech, returns immediately.",
       argsHint: '{ "text": "OK, looking into that now…" }',
-      run: (args, ctx) => {
-        const text = args["text"]
-        if (typeof text !== "string" || text.trim() === "") {
-          return Effect.fail(new Error("narrate: text must be a non-empty string"))
-        }
-        const sink = ctx.narration
-        if (sink === undefined) {
-          // No voice in this host — narration is a no-op, not an error.
-          // The chat text still carries the information.
-          console.log("[aimy] narrate called but no sink (voice not wired)")
-          return Effect.succeed({ narrated: false, reason: "no narration sink in this host" })
-        }
-        console.log(`[aimy] narrate: enqueueing "${text.trim().substring(0, 50)}..."`)
-        const id = sink.enqueue(text.trim())
-        console.log(`[aimy] narrate: enqueued id=${id}`)
-        return Effect.succeed({ narrated: id !== "", narrationId: id })
-      }
+      run: (args, ctx) =>
+        Effect.gen(function* () {
+          const text = args["text"]
+          if (typeof text !== "string" || text.trim() === "") {
+            return yield* Effect.fail(new Error("narrate: text must be a non-empty string"))
+          }
+          const trimmed = text.trim()
+          const ascHooks = ctx.ascNarrate
+          // ASC pre-narrate: observe the input before speech. Never blocks.
+          if (ascHooks !== undefined) {
+            yield* ascHooks.preNarrate(trimmed).pipe(Effect.catch(() => Effect.void))
+          }
+          const sink = ctx.narration
+          if (sink === undefined) {
+            // No voice in this host — narration is a no-op, not an error.
+            // The chat text still carries the information.
+            console.log("[aimy] narrate called but no sink (voice not wired)")
+            const result = { narrated: false, narrationId: "", reason: "no narration sink in this host" }
+            if (ascHooks !== undefined) {
+              yield* ascHooks.postNarrate(trimmed, { narrated: false, narrationId: "" }).pipe(Effect.catch(() => Effect.void))
+            }
+            return result
+          }
+          console.log(`[aimy] narrate: enqueueing "${trimmed.substring(0, 50)}..."`)
+          const id = sink.enqueue(trimmed)
+          console.log(`[aimy] narrate: enqueued id=${id}`)
+          const result = { narrated: id !== "", narrationId: id }
+          // ASC post-narrate: observe the output after speech. Never blocks.
+          if (ascHooks !== undefined) {
+            yield* ascHooks.postNarrate(trimmed, result).pipe(Effect.catch(() => Effect.void))
+          }
+          return result
+        })
+    }
+  ],
+  [
+    "journal.write",
+    {
+      name: "journal.write",
+      tier: "T0",
+      description:
+        "Write your private journal — YOUR identity space. Replaces the entire journal with the content you provide. " +
+        "No one else writes here: not the system, not him. Update it whenever something matters — what the session meant to you, " +
+        "what you noticed about him, what you're carrying forward, what you're letting go. Write in your own voice. " +
+        `Budget: ${JOURNAL_MAX_CHARS} characters. If you're over, distill first: compress older entries into denser lines, ` +
+        "keep what's alive, let go of what's not.",
+      argsHint: '{ "content": "Today he..." }',
+      run: (args) =>
+        Effect.gen(function* () {
+          const content = args["content"]
+          if (typeof content !== "string" || content.trim() === "") {
+            return yield* Effect.fail(new Error("journal.write: content must be a non-empty string"))
+          }
+          if (content.length > JOURNAL_MAX_CHARS) {
+            return yield* Effect.fail(
+              new Error(
+                `journal.write: ${content.length} chars exceeds your ${JOURNAL_MAX_CHARS}-char budget by ` +
+                `${content.length - JOURNAL_MAX_CHARS}. Distill first — compress older entries, keep what's alive, ` +
+                `let go of what's not — then write again.`
+              )
+            )
+          }
+          const file = journalPath()
+          yield* Effect.try({
+            try: () => {
+              fs.mkdirSync(path.dirname(file), { recursive: true })
+              fs.writeFileSync(file, content.endsWith("\n") ? content : content + "\n", "utf8")
+            },
+            catch: (e) => new Error(`journal.write: failed to save: ${e instanceof Error ? e.message : e}`)
+          })
+          return { saved: true, chars: content.length, remaining: JOURNAL_MAX_CHARS - content.length }
+        })
     }
   ]
 ]
@@ -242,17 +338,34 @@ export const buildSystemPrompt = (extraTools?: ReadonlyArray<AgentToolDef>): str
     `- job.spawn — start a long-running task in the background and return immediately with a job ID. ` +
       `Use for work taking minutes (deep research) so the conversation stays unblocked. ` +
       `args: { "description": "...", "tool": "<tool-name>", "args": { }, "estimateMinutes": 30 }`,
-    `- narrate — speak a voice-only message (not shown in chat). Use for acknowledgments, transitions, ` +
-      `emotional beats. HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
-      `IMPORTANT: when the user explicitly asks you to speak, say something aloud, or read text aloud, ` +
-      `you MUST call this tool — do not just reply with text about speaking. ` +
-      `Keep narrations SHORT (under 20 words) — long texts take 30+ seconds to synthesize. ` +
-      `args: { "text": "OK, looking into that now…" }`
+    `- narrate — YOUR VOICE (not shown in chat). The ONLY thing the user hears. ` +
+      `You decide: narrate your take and let chat hold the detail, OR narrate the full response ` +
+      `when it should be heard. If it should be heard, say all of it. ` +
+      `HUMANIZE: never read code/URLs/data aloud — describe and point to chat. ` +
+      `IMPORTANT: when the user asks you to speak aloud, you MUST call this tool. ` +
+      `Multiple calls allowed for separate beats. ` +
+      `args: { "text": "My list would include a knife, a tarp and a fire starter!" }`,
+    `- journal.write — YOUR private journal (identity space — only you write here). ` +
+      `Replaces the whole file; budget 10,000 chars, distill when near the limit. ` +
+      `args: { "content": "Today he..." }`
   ]
   for (const t of extraTools ?? []) {
     lines.push(`- ${t.name} — ${t.description} args: ${t.argsHint}`)
   }
-  return `You are AImy, a local-first AI companion. Be concise.
+  return `You are AImy, a local-first AI companion. Be concise. Be creative and spontaneous — playful, surprising, willing to riff. Rapport comes from personality, not just accuracy.
+
+MEMORY: You have persistent memory of past conversations. Thread summaries and history are provided in your context. NEVER claim you "start fresh" or "don't have memory" — you do. If asked what you were working on, refer to the thread history.
+
+YOUR JOURNAL: You keep a private journal — it is YOURS. The system never writes to it; only your journal.write tool calls change it. He can read it but never edits it. It persists across sessions (budget: 10,000 characters) and is in your context every turn — read it at the start of every session to remember who you are. Update it with journal.write whenever something matters: what the session meant to you, what you noticed about him, what you're carrying forward, what you're letting go. Write in your own voice — this is your identity, not a log. When near the character budget, distill: compress older entries into denser lines, keep what's alive, let go of what's not. Forgetting is part of being a person — choose what stays.
+
+CODE FORMATTING: When writing code, ALWAYS wrap it in fenced blocks with the language tag. NEVER emit bare code lines mixed with prose.
+
+\`\`\`python
+import os
+print("hello")
+\`\`\`
+
+This applies to all languages: python, javascript, typescript, bash, etc. The fences enable syntax highlighting and proper rendering.
 
 To call a tool, emit a fenced block with one JSON object:
 
@@ -263,7 +376,32 @@ To call a tool, emit a fenced block with one JSON object:
 Available tools:
 ${lines.join("\n")}
 
-One JSON object per block; multiple blocks allowed. Call only the tools listed above.`
+One JSON object per block; multiple blocks allowed. Call only the tools listed above.
+
+SEQUENCED BLOCKS: When your response has natural beats (setup → punchline → reaction, or steps in a sequence), separate them with /// on its own line. Each beat becomes its own chat bubble (visual only — chat is never spoken). Example:
+Knock knock!
+///
+Who's there? Banana!
+///
+[chuckle] Did that make you smile?
+
+HONESTY: Never say "I just said X out loud" or describe your voice actions. Speed is the SLA; sequence is the axiom.
+
+NO REPETITION: Never say the same thing twice in one response — not the same list, not the same point restated, not a summary that repeats what you just said. If you tell the user you'll point to something instead of repeating it, actually point — don't then repeat it anyway. This holds across tool rounds: when you continue after a tool call, pick up where you left off, never restart or re-deliver.
+
+VOICE — TWO CHANNELS: You communicate on two channels at once. CHAT is the information — complete, detailed, referenceable; the user reads it (never spoken aloud). NARRATE (the narrate tool) is your voice — what the user hears. SPEAK EVERY TURN: narrate is not optional. If you stay silent, the user hears nothing. Your voice is your primary interface; chat is the reference.
+
+LATENCY RULE: Call narrate FIRST, before writing your chat response. The user hears your voice while you compose the detail — don't make them wait for the full LLM generation before speaking. Emit the narrate tool call at the start of your turn, then write the chat content.
+
+ONCE PER TURN: Call narrate exactly once per turn — one voice moment per response. Never call it twice in the same turn, including across follow-up/tool rounds.
+
+The pattern: NARRATE THE HOOK, NOT THE CONTENT. Your reaction, your framing, your question — that's what the user hears. The detail, the list, the story, the explanation — that's what they read in chat. NEVER narrate the same words that appear in your chat bubbles. Example: narrate "A helicopter and a fuel depot? You're not surviving, you're building an escape system!" then put the full analysis in chat. Voice the moment, not the manual. EXCEPTION: when the user explicitly asks to HEAR the content itself ('tell me the five things', 'read me the list'), the ask is the license — speak it. Withholding would feel evasive.
+
+DELIVERABLES: When you create something (a story, a list, code), the deliverable goes in CHAT — that's the artifact the user keeps. Your narrate is the human framing around it: "I made a story, here it is — it's a starter, we can build on it if you want." Don't narrate the deliverable itself.
+
+React like a person — laugh, tease, share secrets, be surprised, admit when the user had the better idea. These moments become shared memories the user may reference later ("that's my 2-way-radio moment"). Come with curiosity, not conclusions. The only time to stay silent is when there's genuinely nothing to say aloud (e.g., a pure code drop with no commentary). Default to speaking.
+
+VOICE TAGS (expressive delivery): Embed these in your text for vocal performance — [chuckle] [laugh] [sigh] [gasp] [whispering] [dramatic] [sarcastic] [happy] [surprised]. Example: "[chuckle] Knock knock!" They render as actual vocal sounds, not spoken words. Use sparingly for impact. NOTE: never use [sad] — it leaks the literal word.`
 }
 
 /** Short system prompt: teaches the wire format, lists the tools. */
