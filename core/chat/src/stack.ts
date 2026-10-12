@@ -192,13 +192,19 @@ const countingRetrievalImpls = (counts: RetrievalHookCounts): ModuleHookImpls =>
 export const buildChatStack = (opts: {
   readonly baseUrl: string
   readonly model: string
+  readonly streaming?: boolean | undefined
   readonly honestyOpts?: AgentLoopHonestyOpts | undefined
   readonly httpLayer?: Layer.Layer<HttpClient> | undefined
   readonly extraTools?: ReadonlyArray<AgentToolDef> | undefined
   readonly backgroundJobs?: BackgroundJobRegistry | undefined
   readonly narration?: NarrationSink | undefined
 }): ChatStack => {
-  const provider = new LocalHttpProvider({ name: "chat-local", baseUrl: opts.baseUrl, model: opts.model })
+  const provider = new LocalHttpProvider({
+    name: "chat-local",
+    baseUrl: opts.baseUrl,
+    model: opts.model,
+    streaming: opts.streaming ?? true
+  })
   const retrievalHookCounts: RetrievalHookCounts = { beforeToolCall: 0, afterToolCall: 0 }
   const kernelLayer = SafetyKernel.layerFromPolicy(openPolicy)
   const memoryStack = Layer.provide(

@@ -29,13 +29,43 @@ const navRow = (h: H, canGoBack: boolean, continueLabel: string, onContinue: Ret
 const stepView = (model: Model, h: H): Html => {
   switch (model.step) {
     case "welcome":
-      return h.section([h.Class("ob-step")], [
-        h.h2([], ["AImy is yours."]),
-        h.p([], [
-          "It runs on your machine, learns what you show it, and forgets what you take away."
+      return h.section([h.Class("ob-step ob-welcome")], [
+        h.div([h.Class("ob-hero")], [
+          h.div([h.Class("ob-mark")], ["⬢"]),
+          h.h1([h.Class("ob-title")], ["Aimy is yours."]),
+          h.p([h.Class("ob-tagline")], [
+            "Not a subscription. Not a service. A presence that lives on your machine.",
+          ]),
         ]),
-        h.p([], ["Two minutes, then it's there."]),
-        navRow(h, false, "Begin", Message.OnboardingAdvanced())
+        h.div([h.Class("ob-principles")], [
+          h.div([h.Class("ob-principle")], [
+            h.div([h.Class("ob-principle-icon")], ["🖥"]),
+            h.div([h.Class("ob-principle-text")], [
+              h.strong([], ["Runs on your machine."]),
+              h.span([], [" No cloud. No account. No one else's computer."]),
+            ]),
+          ]),
+          h.div([h.Class("ob-principle")], [
+            h.div([h.Class("ob-principle-icon")], ["🧠"]),
+            h.div([h.Class("ob-principle-text")], [
+              h.strong([], ["Learns what you show it."]),
+              h.span([], [" Your context stays yours, shaping an assistant that knows you."]),
+            ]),
+          ]),
+          h.div([h.Class("ob-principle")], [
+            h.div([h.Class("ob-principle-icon")], ["🗑"]),
+            h.div([h.Class("ob-principle-text")], [
+              h.strong([], ["Forgets what you take away."]),
+              h.span([], [" Delete anything, anytime. It's gone. Really gone."]),
+            ]),
+          ]),
+        ]),
+        h.div([h.Class("ob-cta")], [
+          h.button(
+            [h.OnClick(Message.OnboardingAdvanced()), h.Class("ob-claim")],
+            ["Claim Aimy →"]
+          ),
+        ]),
       ])
     case "identitySetup":
       return h.section([h.Class("ob-step")], [

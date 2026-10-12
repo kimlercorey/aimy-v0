@@ -30,6 +30,7 @@ import { MemoryService } from "../../memory/service.js"
 import { SafetyKernel } from "../../permission-kernel/index.js"
 import type { JsonValue, ToolName } from "../../substrate/types.js"
 import { Message } from "./messages.js"
+import { TtsIpc } from "./voice/seam.js"
 
 /**
  * Nameable message-instance types for the command annotations below.
@@ -62,6 +63,9 @@ export const SendToInference: CommandDefinitionWithArgs<
     correlationId: typeof Schema.String
     sessionId: typeof Schema.String
     input: typeof Schema.String
+    voiceEnabled: typeof Schema.Boolean
+    viaVoice: typeof Schema.Boolean
+    interrupted: typeof Schema.Boolean
   },
   Effect.Effect<StreamStartedMsg, never, never>
 > = defineCommand("SendToInference", {
@@ -70,12 +74,18 @@ export const SendToInference: CommandDefinitionWithArgs<
     correlationId: Schema.String,
     sessionId: Schema.String,
     input: Schema.String,
+    /** Whether voice narration is on — agent should narrate responses. */
+    voiceEnabled: Schema.Boolean,
+    /** Whether the input came via voice (STT) — response should use voice. */
+    viaVoice: Schema.Boolean,
+    /** Whether this turn barged in on a previous response (2026-10-11). */
+    interrupted: Schema.Boolean,
   },
   messages: [Message.StreamStarted, Message.StreamFailed],
   interrupt: true,
-  execute: ({ correlationId, sessionId, input }) =>
+  execute: ({ correlationId, sessionId, input, voiceEnabled, viaVoice, interrupted }) =>
     Effect.succeed(
-      Message.StreamStarted({ streamId: correlationId, sessionId, input, at: Date.now() }),
+      Message.StreamStarted({ streamId: correlationId, sessionId, input, at: Date.now(), voiceEnabled, viaVoice, interrupted }),
     ),
 })
 
@@ -194,4 +204,141 @@ export const PersistMemory = defineCommand("PersistMemory", {
         ),
       ),
     ),
+})
+
+/* ------------------------------------------------------------------ */
+/* SpeakText                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Enqueue text for TTS narration (fire-and-forget). Used for auto-narration
+ * when voice is enabled. Never fails visibly — TTS errors are swallowed so
+ * a voice hiccup never breaks the chat flow.
+ */
+export const SpeakText = defineCommand("SpeakText", {
+  args: {
+    text: Schema.String,
+  },
+  messages: [Message.TtsSpoken],
+  execute: ({ text }) =>
+    Effect.gen(function* () {
+      const ipc = yield* TtsIpc
+      // Best-effort: swallow TTS failures so a voice hiccup never breaks chat.
+      yield* Effect.tryPromise({
+        try: () => ipc.speak(text),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.tapError((e) => Effect.logWarning(`SpeakText: TTS failed: ${e.message}`)),
+        Effect.ignore,
+      )
+      return Message.TtsSpoken({})
+    }),
+})
+
+/* ------------------------------------------------------------------ */
+/* StopNarration                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Stop narration and clear the queue (on user interruption).
+ * Prevents old content from resuming after the user interrupts.
+ * Fire-and-forget: never fails visibly.
+ */
+export const StopNarration = defineCommand("StopNarration", {
+  messages: [],
+  // Side-effect only: no message produced. Cast bypasses the
+  // Effect<never> type constraint for fire-and-forget commands.
+  execute: (() =>
+    Effect.gen(function* () {
+      const ipc = yield* TtsIpc
+      yield* Effect.tryPromise({
+        try: () => ipc.stop(),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(Effect.ignore)
+    })) as unknown as Effect.Effect<never, never, never>,
+})
+
+/* ------------------------------------------------------------------ */
+/* FocusComposer                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Focus the composer input after a turn completes (2026-10-10).
+ * The user shouldn't have to click to type the next message.
+ * Best-effort: if the input isn't in the DOM, silently do nothing.
+ */
+export const FocusComposer = defineCommand("FocusComposer", {
+  messages: [],
+  // Side-effect only: no message produced. Cast bypasses the
+  // Effect<never> type constraint for fire-and-forget commands.
+  execute: Effect.sync(() => {
+    try {
+      const input = document.querySelector<HTMLInputElement>(".composer-input")
+      if (input) {
+        input.focus()
+      }
+    } catch {
+      // Silently ignore (e.g., during tests without DOM).
+    }
+  }) as unknown as Effect.Effect<never, never, never>,
+})
+
+/* ------------------------------------------------------------------ */
+/* ScrollToBottom                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Scroll the message list to the bottom after new messages arrive
+ * (2026-10-10: fixes auto-scroll not working).
+ * Uses requestAnimationFrame to ensure the DOM has updated first.
+ */
+export const ScrollToBottom = defineCommand("ScrollToBottom", {
+  messages: [],
+  execute: Effect.promise(async () => {
+    await new Promise<void>((resolve) => {
+      try {
+        requestAnimationFrame(() => resolve())
+      } catch {
+        resolve()
+      }
+    })
+    try {
+      const list = document.querySelector<HTMLElement>(".message-list")
+      if (list) {
+        list.scrollTop = list.scrollHeight
+      }
+    } catch {
+      // Silently ignore.
+    }
+  }) as unknown as Effect.Effect<never, never, never>,
+})
+
+/* ------------------------------------------------------------------ */
+/* RenderMermaid                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Render mermaid diagrams in the chat (2026-10-10).
+ * The markdown renderer outputs `<pre class="mermaid-block">` elements;
+ * this command invokes mermaid.js to convert them to SVG diagrams.
+ * Runs after DOM update via requestAnimationFrame.
+ */
+export const RenderMermaid = defineCommand("RenderMermaid", {
+  messages: [],
+  execute: Effect.promise(async () => {
+    await new Promise<void>((resolve) => {
+      try {
+        requestAnimationFrame(() => resolve())
+      } catch {
+        resolve()
+      }
+    })
+    try {
+      const mermaid = (await import("mermaid")).default
+      mermaid.initialize({ startOnLoad: false, theme: "dark" })
+      await mermaid.run({ querySelector: ".mermaid-block" })
+    } catch (e) {
+      console.warn("[aimy] RenderMermaid failed:", e instanceof Error ? e.message : e)
+    }
+  }) as unknown as Effect.Effect<never, never, never>,
 })

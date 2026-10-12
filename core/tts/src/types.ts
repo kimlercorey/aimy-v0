@@ -16,6 +16,8 @@ export interface TtsHealth {
   readonly modelLoaded: boolean
   /** GPU name when the server reports one, e.g. "NVIDIA GeForce RTX 5090". */
   readonly gpu?: string | undefined
+  /** Model size in MB, when the server reports it. */
+  readonly modelSizeMb?: number | undefined
 }
 
 export interface TtsServiceShape {
@@ -31,7 +33,16 @@ export interface TtsServiceShape {
    * ~/.aimy/voices/). Returns the new voice. Name: 1–40 chars.
    */
   readonly addVoice: (name: string, wav: Uint8Array) => Effect.Effect<Voice, TtsError>
+  readonly deleteVoice: (voiceId: string) => Effect.Effect<void, TtsError>
+  readonly setVoiceDefault: (voiceId: string) => Effect.Effect<void, TtsError>
+  readonly testProvider: () => Effect.Effect<ProviderTestResults, TtsError>
   readonly health: () => Effect.Effect<TtsHealth, TtsError>
+}
+
+export interface ProviderTestResults {
+  readonly latencyMs: number
+  readonly modelSizeMb: number
+  readonly throughputCharsPerSec: number
 }
 
 export const TTS_SERVER_DEFAULT_PORT = 8001

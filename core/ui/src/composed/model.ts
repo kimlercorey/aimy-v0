@@ -56,7 +56,9 @@ export const PanelId = Schema.Literals([
   "banners",
   "messaging",
   "sovereignty",
+  "permissions",
   "export",
+  "settings",
 ])
 export type PanelId = typeof PanelId.Type
 
@@ -72,6 +74,8 @@ export const AppModel = Schema.Struct({
   banners: BannersModel,
   messaging: MessagingModelSchema,
   activePanel: PanelId,
+  /** Nav drawer open state. Closed by default on first run. */
+  navOpen: Schema.Boolean,
 })
 export type AppModel = typeof AppModel.Type
 
@@ -88,4 +92,9 @@ export const initialAppModel = (): AppModel => ({
   banners: structuredClone(initialBannersModel),
   messaging: initialMessagingModel(),
   activePanel: "chat",
+  navOpen: (() => {
+    try {
+      return localStorage.getItem("aimy.navOpen") === "1"
+    } catch { return false }
+  })(),
 })

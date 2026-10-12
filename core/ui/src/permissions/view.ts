@@ -81,9 +81,7 @@ const decisionRow = (
 export const permissionsView = (permissions: PermissionsSlice, h: H) =>
   h.section([h.Class("permissions-panel"), h.Id("permissions-panel")], [
     h.h2([h.Class("panel-title")], ["Permissions"]),
-    ...(permissions.pending.length === 0
-      ? [h.p([h.Class("perm-empty")], ["No pending requests."])]
-      : permissions.pending.map((p) => promptCard(h, p))),
+    ...permissions.pending.map((p) => promptCard(h, p)),
     ...(permissions.decisions.length === 0
       ? []
       : [

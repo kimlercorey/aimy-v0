@@ -7,3 +7,7 @@ build/
 coverage/
 # M10: electron-builder output (AppImages, dmgs — hundreds of MB, rebuilt by npm run dist)
 core/desktop/release/
+# Editor backup files (vim/emacs ~ suffix)
+*.un~
+# Scratch / test notes not meant for the repo
+providers-test.txt

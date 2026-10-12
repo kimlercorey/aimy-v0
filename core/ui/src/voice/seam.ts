@@ -32,11 +32,50 @@ export interface TtsIpcShape {
   readonly voices: () => Promise<ReadonlyArray<Voice>>
   readonly setVoice: (voiceId: string) => Promise<void>
   readonly addVoice: (name: string, audioBase64: string) => Promise<Voice>
+  readonly deleteVoice: (voiceId: string) => Promise<void>
+  readonly playVoiceSample: (voiceId: string) => Promise<{ readonly audioBase64: string }>
+  readonly testProvider: () => Promise<{
+    readonly latencyMs: number
+    readonly modelSizeMb: number
+    readonly throughputCharsPerSec: number
+  }>
+  readonly setVoiceDefault: (voiceId: string) => Promise<void>
   readonly pickVoiceFile: () => Promise<{
     readonly cancelled: boolean
     readonly name?: string | undefined
     readonly audioBase64?: string | undefined
   }>
+  /** Enqueue text for TTS narration (fire-and-forget). */
+  readonly speak: (text: string) => Promise<void>
+  /** Stop narration and clear the queue (on user interruption). */
+  readonly stop: () => Promise<void>
+  /** STT engine status. */
+  readonly sttEngineStatus: () => Promise<{
+    readonly state: "unknown" | "missing" | "installing" | "ready" | "failed"
+    readonly detail?: string | undefined
+    readonly engine?: string | undefined
+  }>
+  /** Install an STT engine (fire-and-forget, progress via events). */
+  readonly installSttEngine: (engine: string) => Promise<void>
+  /** Transcribe audio (base64 WAV) to text. */
+  readonly transcribeStt: (audioBase64: string, sampleRate?: number) => Promise<{
+    readonly text: string
+    readonly latencyMs: number
+  }>
+  /** Run STT latency test. */
+  readonly testStt: () => Promise<{
+    readonly latencyMs: number
+    readonly modelSizeMb: number
+  }>
+  /** Start mic recording (renderer-side MediaRecorder). */
+  readonly startMicRecording: () => Promise<void>
+  /** Stop mic recording, return base64 WAV. */
+  readonly stopMicRecording: () => Promise<{ readonly audioBase64: string }>
+  /** List available microphone devices. */
+  readonly listMicDevices: () => Promise<ReadonlyArray<{
+    readonly deviceId: string
+    readonly label: string
+  }>>
 }
 
 export class TtsIpc extends Context.Service<TtsIpc, TtsIpcShape>()(

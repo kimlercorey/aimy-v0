@@ -8,6 +8,7 @@
  * are only ever constructed by their own slice's views and commands.
  */
 import { defineMessageUnion } from "foldkit/message"
+import { Schema } from "effect"
 
 import type { AscMessage } from "../asc/index.js"
 import { AscPanelMessage } from "../asc/index.js"
@@ -41,6 +42,8 @@ export const AppMessage = defineMessageUnion({
   GotBanners: { message: BannersMessage },
   GotMessaging: { message: MessagingMsg },
   SelectPanel: { panel: PanelId },
+  /** Toggle the left nav drawer. */
+  NavToggled: { open: Schema.Boolean },
 })
 export type AppMessage = typeof AppMessage.Type
 

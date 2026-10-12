@@ -178,5 +178,14 @@ export const update = (
         MessagingMsg.StatusRequested({})
       )
     },
+
+    NavToggled: ({ open }) => {
+      try {
+        localStorage.setItem("aimy.navOpen", open ? "1" : "0")
+      } catch { /* private mode */ }
+      return {
+        model: { ...model, navOpen: open },
+      }
+    },
   })
 }

@@ -173,15 +173,42 @@ export const fetchHealth = (
       if (res.status < 200 || res.status >= 300) {
         return Effect.succeed({ reachable: true, modelLoaded: false } satisfies TtsHealth)
       }
-      let parsed: { model_loaded?: unknown; gpu?: unknown }
+      let parsed: { model_loaded?: unknown; gpu?: unknown; model_size_mb?: unknown }
       try {
-        parsed = JSON.parse(res.text) as { model_loaded?: unknown; gpu?: unknown }
+        parsed = JSON.parse(res.text) as { model_loaded?: unknown; gpu?: unknown; model_size_mb?: unknown }
       } catch {
         return Effect.succeed({ reachable: true, modelLoaded: false } satisfies TtsHealth)
       }
       const health: TtsHealth = { reachable: true, modelLoaded: parsed.model_loaded === true }
+      const withGpu = typeof parsed.gpu === "string" && parsed.gpu !== "" ? { ...health, gpu: parsed.gpu } : health
       return Effect.succeed(
-        typeof parsed.gpu === "string" && parsed.gpu !== "" ? { ...health, gpu: parsed.gpu } : health
+        typeof parsed.model_size_mb === "number" ? { ...withGpu, modelSizeMb: parsed.model_size_mb } : withGpu
       )
+    })
+  )
+
+export const deleteVoiceRemote = (
+  deps: TtsClientDeps,
+  voiceId: string
+): Effect.Effect<void, TtsServerError | TtsServerUnreachable> =>
+  requestJson(deps, "POST", `/voices/${encodeURIComponent(voiceId)}/delete`).pipe(
+    Effect.flatMap((res) => {
+      if (res.status < 200 || res.status >= 300) {
+        return Effect.fail(new TtsServerError({ reason: `delete voice failed: HTTP ${res.status}` }))
+      }
+      return Effect.succeed(undefined)
+    })
+  )
+
+export const setVoiceDefaultRemote = (
+  deps: TtsClientDeps,
+  voiceId: string
+): Effect.Effect<void, TtsServerError | TtsServerUnreachable> =>
+  requestJson(deps, "POST", `/voices/${encodeURIComponent(voiceId)}/default`).pipe(
+    Effect.flatMap((res) => {
+      if (res.status < 200 || res.status >= 300) {
+        return Effect.fail(new TtsServerError({ reason: `set default voice failed: HTTP ${res.status}` }))
+      }
+      return Effect.succeed(undefined)
     })
   )

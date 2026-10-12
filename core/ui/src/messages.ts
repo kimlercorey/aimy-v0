@@ -44,6 +44,10 @@ export const Message = defineMessageUnion({
     sessionId: Schema.String,
     input: Schema.String,
     at: Schema.Number,
+    voiceEnabled: Schema.Boolean,
+    viaVoice: Schema.Boolean,
+    /** True if this turn barged in on a previous response (2026-10-11). */
+    interrupted: Schema.optional(Schema.Boolean),
   },
 
   /** One streamed delta. update appends it to streaming.text — nothing else. */
@@ -102,6 +106,8 @@ export const Message = defineMessageUnion({
     streamId: Schema.String,
     sequences: Schema.Array(Schema.Number),
   },
+  /** TTS speak request completed (fire-and-forget, no UI effect). */
+  TtsSpoken: {},
   /** Speech started / ended (drives the speaking indicator). */
   SpeechStarted: { streamId: Schema.String },
   SpeechEnded: { streamId: Schema.String },
@@ -117,6 +123,11 @@ export const Message = defineMessageUnion({
   VoicesRefreshRequested: {},
   VoiceSelectRequested: { voiceId: Schema.String },
   VoiceFilePickRequested: {},
+  VoiceDeleteRequested: { voiceId: Schema.String },
+  VoiceDeleteConfirmed: {},
+  VoiceDeleteCancelled: {},
+  VoiceSampleRequested: { voiceId: Schema.String },
+  VoiceNameChanged: { name: Schema.String },
   /** Engine install state from main. */
   TtsEngineStatusReceived: {
     state: Schema.Literals(["missing", "installing", "ready", "failed"]),
@@ -156,6 +167,143 @@ export const Message = defineMessageUnion({
     isDefault: Schema.Boolean,
   },
   VoiceAddFailed: { reason: Schema.String },
+  VoiceDeleted: { voiceId: Schema.String },
+  VoiceDeleteFailed: { reason: Schema.String },
+  VoiceSamplePlayed: { voiceId: Schema.String },
+  VoiceSampleFailed: { reason: Schema.String },
+  VoiceErrorDismissed: {},
+  ProviderTestRequested: {},
+  ProviderTestCompleted: {
+    latencyMs: Schema.Number,
+    modelSizeMb: Schema.Number,
+    throughputCharsPerSec: Schema.Number,
+    coldMs: Schema.optional(Schema.Number),
+    p50Ms: Schema.optional(Schema.Number),
+    p95Ms: Schema.optional(Schema.Number),
+    allLatenciesMs: Schema.optional(Schema.Array(Schema.Number)),
+  },
+  ProviderTestFailed: { reason: Schema.String },
+  VoiceSetDefaultRequested: { voiceId: Schema.String },
+  VoiceDefaultSet: { voiceId: Schema.String },
+  VoiceDefaultSetFailed: { reason: Schema.String },
+  /** STT setup dialog. */
+  SttSetupOpened: {},
+  SttSetupClosed: {},
+  /** User picked an STT engine to install. */
+  SttInstallRequested: { engine: Schema.String },
+  /** User changed the model size for an STT engine. */
+  SttModelSizeChanged: { engine: Schema.String, size: Schema.String },
+  SttInstallFailed: { reason: Schema.String },
+  /** STT latency test requested (not yet implemented — placeholder). */
+  SttTestRequested: {},
+  SttTestCompleted: {
+    latencyMs: Schema.Number,
+    modelSizeMb: Schema.Number,
+  },
+  SttTestFailed: { reason: Schema.String },
+  /** STT engine status from main (startup hydration). */
+  SttEngineStatusReceived: {
+    state: Schema.String,
+    engine: Schema.optional(Schema.String),
+    detail: Schema.optional(Schema.String),
+  },
+  /** Mic recording controls. */
+  MicRecordToggled: {},
+  MicRecordingStarted: {},
+  MicRecordingStopped: { audioBase64: Schema.String },
+  MicTranscribed: { text: Schema.String },
+  MicFailed: { reason: Schema.String },
+  /** Voice draft UX: click-to-send / right-click-to-discard. */
+  VoiceDraftSent: {},
+  VoiceDraftDiscarded: {},
+  /** Global click confirmed the voice draft (sends current draft). */
+  VoiceDraftConfirmed: {},
+  /* ── Provider registry ─────────────────────────────────────────── */
+  /** Providers loaded from disk on startup. */
+  ProvidersLoaded: {
+    registry: Schema.Unknown,
+  },
+  /** Open/close the providers settings panel. */
+  ProvidersOpened: {},
+  ProvidersClosed: {},
+  /** Switch the providers tab (llm/vision/tts/stt/image). */
+  ProviderTabChanged: { tab: Schema.String },
+  /** Add a new provider (from the add form). */
+  ProviderAdded: {
+    name: Schema.String,
+    category: Schema.String,
+    kind: Schema.String,
+    engine: Schema.optional(Schema.String),
+    endpoint: Schema.optional(Schema.String),
+  },
+  /** Update an existing provider's name/endpoint/config. */
+  ProviderUpdated: {
+    id: Schema.String,
+    name: Schema.String,
+    endpoint: Schema.optional(Schema.String),
+    engine: Schema.optional(Schema.String),
+    config: Schema.Record(Schema.String, Schema.String),
+  },
+  /** Delete a provider. */
+  ProviderDeleted: { id: Schema.String },
+  /** Open the edit form for a provider. */
+  ProviderEditOpened: { id: Schema.String },
+  /** Close the edit form. */
+  ProviderEditClosed: {},
+  /** Update a field in the edit form draft. */
+  ProviderEditDraftChanged: { field: Schema.String, value: Schema.String },
+  /** Open the add-provider form. */
+  ProviderAddOpened: {},
+  /** Close the add-provider form. */
+  ProviderAddClosed: {},
+  /** Update a field in the add form draft. */
+  ProviderAddDraftChanged: { field: Schema.String, value: Schema.String },
+  /** Create a provider from the add form draft. */
+  ProviderCreateFromDraft: { category: Schema.String },
+  /** Scan a host for known AI services (auto-detect). */
+  ProviderScanRequested: { host: Schema.String },
+  ProviderScanProgress: { scanned: Schema.Number, total: Schema.Number },
+  ProviderScanCompleted: { host: Schema.String, found: Schema.Array(Schema.Struct({ host: Schema.String, port: Schema.Number, service: Schema.String })) },
+  ProviderScanFailed: { reason: Schema.String },
+  /** User picked a scan result (fills host + port). */
+  ProviderScanResultSelected: { host: Schema.String, port: Schema.Number, service: Schema.String },
+  /** Request the model list for a provider. */
+  ProviderModelsRequested: { id: Schema.String },
+  /** Models loaded for a provider. */
+  ProviderModelsLoaded: { id: Schema.String, models: Schema.Array(Schema.String) },
+  /** Select the active model for a provider. */
+  ProviderModelSelected: { id: Schema.String, model: Schema.String },
+  /** Toggle streaming for a provider (disable for broken SSE implementations). */
+  ProviderStreamingToggled: { id: Schema.String, streaming: Schema.Boolean },
+  /** Enable/disable a provider. */
+  ProviderToggled: { id: Schema.String, enabled: Schema.Boolean },
+  /** Set the active provider for a category. */
+  ProviderSetActive: { category: Schema.String, id: Schema.String },
+  /** Benchmark a provider (runs performance test). */
+  ProviderBenchmarkRequested: { id: Schema.String },
+  /** Test a provider's connection (quick health check). */
+  ProviderConnectionTestRequested: { id: Schema.String },
+  ProviderConnectionTestCompleted: { id: Schema.String, detail: Schema.String },
+  ProviderConnectionTestFailed: { id: Schema.String, reason: Schema.String },
+  ProviderBenchmarkCompleted: {
+    id: Schema.String,
+    latencyMs: Schema.Number,
+    throughput: Schema.optional(Schema.Number),
+    modelSizeMb: Schema.optional(Schema.Number),
+  },
+  ProviderBenchmarkFailed: { id: Schema.String, reason: Schema.String },
+  /** Push-to-talk key configuration. */
+  PushToTalkKeyChanged: { key: Schema.String, useMouse: Schema.Boolean },
+  /** Microphone device selection. */
+  MicDeviceChanged: { deviceId: Schema.String },
+  MicDevicesRequested: {},
+  MicDevicesReceived: {
+    devices: Schema.Array(Schema.Struct({
+      deviceId: Schema.String,
+      label: Schema.String,
+    })),
+  },
+  SttInstallProgressReceived: { message: Schema.String },
 
   SessionBranched: {
     fromId: Schema.String,

@@ -18,6 +18,8 @@ import { view as devtoolsView } from "../devtools/view.js"
 import type { DevtoolsMessage, DevtoolsModel } from "../devtools/index.js"
 import { view as exportView } from "../export/view.js"
 import type { ExportMessage, ExportModel } from "../export/index.js"
+import { permissionsView } from "../permissions/view.js"
+import { icon } from "../icons.js"
 import { view as onboardingView } from "../onboarding/view.js"
 import type { OnboardingMessage, OnboardingModel } from "../onboarding/index.js"
 import {
@@ -35,6 +37,7 @@ import { Message as MessagingSliceMsg } from "../messaging/index.js"
 import type { MessagingModel } from "../messaging/index.js"
 import { timelineSubmodelView } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
+import { settingsView } from "../settings-view.js"
 import { AppMessage } from "./messages.js"
 import type { AppModel, PanelId } from "./model.js"
 
@@ -53,6 +56,9 @@ const exportSubmodelView = defineView<ExportModel, ExportMessage>((model, h) =>
 )
 const onboardingSubmodelView = defineView<OnboardingModel, OnboardingMessage>(
   (model, h) => onboardingView(model, h),
+)
+const settingsSubmodelView = defineView<ShellModel, ShellMessage>(
+  (model, h) => settingsView(h as never, model.session),
 )
 const devtoolsSubmodelView = defineView<DevtoolsModel, DevtoolsMessage>((model, h) =>
   devtoolsView(model, h),
@@ -78,12 +84,22 @@ const NAV_ITEMS: ReadonlyArray<{ readonly id: PanelId; readonly label: string }>
   { id: "banners", label: "Banners" },
   { id: "messaging", label: "Messaging" },
   { id: "sovereignty", label: "Sovereignty" },
+  { id: "permissions", label: "Permissions" },
   { id: "export", label: "Export" },
 ]
 
 const navView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html =>
   h.div([h.Class("app-nav")], [
-    h.div([h.Class("app-nav-title")], ["AImy"]),
+    h.div([h.Class("app-nav-header")], [
+      h.button(
+        [
+          h.Class("icon-btn"),
+          h.Title("Close navigation"),
+          h.OnClick(AppMessage.NavToggled({ open: false })),
+        ],
+        [icon.chevronLeft(h)]
+      ),
+    ]),
     ...NAV_ITEMS.map((item) =>
       h.button(
         [
@@ -93,6 +109,17 @@ const navView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html =>
         [item.label],
       ),
     ),
+    // Settings at the bottom with gear icon.
+    h.div([h.Class("app-nav-footer")], [
+      h.button(
+        [
+          h.OnClick(AppMessage.SelectPanel({ panel: "settings" })),
+          h.Class("settings" === model.activePanel ? "nav-item nav-active" : "nav-item"),
+          h.Title("Settings"),
+        ],
+        [icon.settings(h), " Settings"],
+      ),
+    ]),
   ])
 
 const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
@@ -176,6 +203,13 @@ const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
           toParentMessage: (message) => AppMessage.GotMessaging({ message }),
         }),
       )
+    case "permissions":
+      return panel(
+        h,
+        "app-permissions",
+        "permissions",
+        permissionsView(model.shell.permissions, h as never),
+      )
     case "export":
       return panel(
         h,
@@ -186,6 +220,18 @@ const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
           model: model.exportState,
           view: exportSubmodelView,
           toParentMessage: (message) => AppMessage.GotExport({ message }),
+        }),
+      )
+    case "settings":
+      return panel(
+        h,
+        "app-settings",
+        "settings",
+        h.submodel({
+          slotId: "app-settings",
+          model: model.shell,
+          view: settingsSubmodelView,
+          toParentMessage: (message) => AppMessage.GotShell({ message }),
         }),
       )
   }
@@ -209,7 +255,20 @@ export const view = (model: AppModel, h: HtmlBuilder<AppMessage>): Document => {
   return {
     title: "AImy",
     body: h.div([h.Class("app")], [
-      navView(model, h),
+      // Nav sidebar with collapse ◀ in its header. Floating ☰ reopens when closed.
+      ...(model.navOpen ? [navView(model, h)] : []),
+      ...(!model.navOpen
+        ? [
+            h.button(
+              [
+                h.Class("app-nav-fab"),
+                h.Title("Open navigation"),
+                h.OnClick(AppMessage.NavToggled({ open: true })),
+              ],
+              [icon.menu(h)]
+            ),
+          ]
+        : []),
       h.main([h.Class("app-main")], [activePanelView(model, h)]),
       h.submodel({
         slotId: "app-devtools",

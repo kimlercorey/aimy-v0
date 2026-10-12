@@ -37,6 +37,7 @@ import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import { bootDesktopEngine, type DesktopEngine } from "./engine.js"
 import { registerIpc } from "../ipc/handlers.js"
+import type { TraceWriter } from "./trace.js"
 
 /** ESM has no `__dirname`; derive it from the module URL. */
 const hereDir = (): string => path.dirname(fileURLToPath(import.meta.url))
@@ -109,7 +110,7 @@ const createWindow = (): BrowserWindow => {
 }
 
 let engine: DesktopEngine | undefined
-let ipcCleanupHandle: { readonly stop: () => void } | undefined
+let ipcCleanupHandle: { readonly stop: () => void; readonly trace: TraceWriter } | undefined
 
 /** Present only in `--smoke-test` runs (M10 Track 3 acceptance). */
 const SMOKE = process.argv.includes("--smoke-test")
@@ -160,6 +161,18 @@ const runSmokeFlow = async (win: BrowserWindow): Promise<void> => {
 
 const boot = async (): Promise<void> => {
   enforceCsp()
+  // User-defined startup hooks (2026-10-10): run executables from
+  // ~/.aimy/hooks/startup.d/ before the engine boots. The app provides
+  // the hook paradigm; the user provides the scripts (e.g. SSH tunnel
+  // setup for remote providers).
+  if (!SMOKE) {
+    try {
+      const { runStartupHooks } = await import("./hooks.js")
+      await runStartupHooks()
+    } catch (error) {
+      console.error(`[hooks] startup hooks failed (non-fatal): ${String(error)}`)
+    }
+  }
   try {
     engine = SMOKE
       ? await bootDesktopEngine({
@@ -172,15 +185,38 @@ const boot = async (): Promise<void> => {
     // Fail loudly: a desktop that silently shows an empty window is a lie.
     // In --smoke-test there is no user to dismiss a dialog — log and quit
     // instead of blocking on showErrorBox forever.
+    //
+    // 2026-10-11: Surface full error details. String(error) on a TaggedError
+    // only shows the tag (e.g. "ModuleError"); the `module` and `reason`
+    // fields have the actual diagnosis. AIMY_DEBUG=1 adds stack/cause.
+    const formatBootError = (e: unknown): string => {
+      if (e !== null && typeof e === "object") {
+        const o = e as Record<string, unknown>
+        const tag = typeof o["_tag"] === "string" ? (o["_tag"] as string) : "Error"
+        const module = typeof o["module"] === "string" ? ` [${o["module"]}]` : ""
+        const reason = typeof o["reason"] === "string" ? `: ${o["reason"]}` : ""
+        let detail = `${tag}${module}${reason}`
+        if (process.env["AIMY_DEBUG"] === "1") {
+          const stack = typeof o["stack"] === "string" ? `\n\nStack:\n${o["stack"]}` : ""
+          const cause = o["cause"] !== undefined ? `\n\nCause: ${JSON.stringify(o["cause"], null, 2)}` : ""
+          const extra = JSON.stringify(o, null, 2)
+          detail += `${stack}${cause}\n\nFull: ${extra}`
+        }
+        return detail
+      }
+      return String(e)
+    }
+    const bootErrorDetail = formatBootError(error)
+    console.error(`[aimy] engine failed to boot: ${bootErrorDetail}`)
     if (SMOKE) {
-      console.error(`smoke: engine failed to boot: ${String(error)}`)
+      console.error(`smoke: engine failed to boot: ${bootErrorDetail}`)
       process.exitCode = 1
       app.quit()
       return
     }
     await dialog.showErrorBox(
       "AImy failed to start",
-      `The engine failed to boot:\n\n${String(error)}\n\nCheck ~/.aimy/desktop.json (baseUrl, model).`
+      `The engine failed to boot:\n\n${bootErrorDetail}\n\nCheck ~/.aimy/desktop.json (baseUrl, model).\nSet AIMY_DEBUG=1 for full error details.`
     )
     app.quit()
     return
@@ -238,6 +274,28 @@ const boot = async (): Promise<void> => {
 
   const win = createWindow()
   console.log("smoke: window created")
+  // Debug trace (2026-10-11): forward renderer console messages into the
+  // session trace. Errors/warnings carry the most signal; info/debug are
+  // captured only when they look like [aimy] diagnostics.
+  const trace = ipcCleanupHandle?.trace
+  if (trace !== undefined && trace.enabled) {
+    win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+      const isError = level === 2
+      const isWarn = level === 1
+      const isAimyLog = message.includes("[aimy]")
+      if (isError || isWarn || isAimyLog) {
+        trace.log("renderer", "session", isError ? "console.error" : isWarn ? "console.warn" : "console.log", {
+          message: message.slice(0, 2000),
+          line,
+          source: sourceId?.split("/").pop(),
+        })
+      }
+    })
+    // Uncaught renderer exceptions also land here.
+    win.webContents.on("render-process-gone", (_e, details) => {
+      trace.log("main", "session", "renderer.crashed", { reason: details.reason })
+    })
+  }
   if (SMOKE) await runSmokeFlow(win)
 }
 
@@ -257,5 +315,14 @@ app.on("before-quit", () => {
   engine = undefined
   if (e !== undefined) void e.shutdown()
   try { ipcCleanupHandle?.stop() } catch { /* ignore */ }
+  // Debug trace: flush synchronously so the session file is complete.
+  try { ipcCleanupHandle?.trace.flushSync() } catch { /* ignore */ }
   ipcCleanupHandle = undefined
+  // User-defined shutdown hooks (2026-10-10): run executables from
+  // ~/.aimy/hooks/shutdown.d/. Best-effort; the app quits regardless.
+  void import("./hooks.js").then(({ runShutdownHooks }) =>
+    runShutdownHooks().catch((err: unknown) =>
+      console.error(`[hooks] shutdown hooks error: ${String(err)}`)
+    )
+  ).catch(() => { /* ignore — hooks are optional */ })
 })

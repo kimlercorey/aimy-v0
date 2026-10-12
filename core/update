@@ -38,6 +38,10 @@ pkill -x "Aimy" 2>/dev/null || true
 pkill -x "aimy" 2>/dev/null || true
 # Dev-mode electron running this repo's main.js
 pkill -f "dist/desktop/src/main/main.js" 2>/dev/null || true
+# TTS server (detached child, survives electron — must kill explicitly)
+pkill -f "tts-server.py" 2>/dev/null || true
+# STT server (detached child, survives electron — must kill explicitly)
+pkill -f "stt-server.py" 2>/dev/null || true
 # Stale vite dev servers from previous runs (they hold port 5173)
 pkill -f "vite --config desktop/vite.config.ts" 2>/dev/null || true
 sleep 1
@@ -57,10 +61,45 @@ if [[ "$DIST" == "1" ]]; then
   exit 0
 fi
 
+echo "→ clearing caches..."
+# Vite cache
+rm -rf node_modules/.vite 2>/dev/null || true
+# Electron cache (keeps login data, clears code cache)
+rm -rf ~/Library/Application\ Support/Aimy/Cache 2>/dev/null || true
+rm -rf ~/Library/Application\ Support/Aimy/Code\ Cache 2>/dev/null || true
+
+# Generate version badge (git short hash + timestamp)
+VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+BUILDTIME=$(date +%H:%M)
+VERSION_STR="$VERSION@$BUILDTIME"
+echo "window.AIMY_VERSION = \"$VERSION_STR\";" > desktop/src/renderer/version.js
+echo "  version: $VERSION_STR"
+
 echo "→ rebuilding..."
-npm run build
+# Log build output for debugging
+BUILD_LOG="/tmp/aimy-build.log"
+npm run build 2>&1 | tee "$BUILD_LOG"
+BUILD_STATUS=${PIPESTATUS[0]}
+TIMESTAMP=$(date "+%Y-%m-%d %H:%M %Z")
+if [[ $BUILD_STATUS -ne 0 ]]; then
+  echo "✗ build failed — see $BUILD_LOG"
+  # Log the failure to the changelog
+  {
+    echo ""
+    echo "---"
+    echo ""
+    echo "## $TIMESTAMP — $VERSION_STR"
+    echo ""
+    echo "**Status:** Build FAILED."
+    echo ""
+    echo "See \`/tmp/aimy-build.log\` for errors."
+  } >> CHANGELOG.md
+  exit $BUILD_STATUS
+fi
 npm run desktop:assets
 npm run desktop:preload
+# Ensure version.txt is in the built renderer
+cp desktop/src/renderer/version.txt dist/desktop/src/renderer/version.txt 2>/dev/null || true
 
 echo "→ starting vite dev server..."
 # Both are log-redirected so the terminal stays usable.
@@ -82,8 +121,84 @@ if [[ "$READY" != "1" ]]; then
   exit 1
 fi
 
+echo "→ signing Electron for LAN access (ad-hoc + network.client entitlement)..."
+# macOS blocks LAN access for ad-hoc signed binaries without the network.client
+# entitlement. Re-sign the dev Electron on every build so OMA (192.168.1.x) is reachable.
+ENTITLEMENTS_PLIST="/tmp/aimy-entitlements.plist"
+cat > "$ENTITLEMENTS_PLIST" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
+EOF
+ELECTRON_APP="node_modules/electron/dist/Electron.app"
+if [[ -d "$ELECTRON_APP" ]]; then
+  codesign --force --deep --sign - --entitlements "$ENTITLEMENTS_PLIST" "$ELECTRON_APP" 2>/dev/null || echo "  (codesign failed, continuing anyway)"
+  echo "  signed."
+else
+  echo "  (Electron.app not found, skipping)"
+fi
+
 echo "→ launching electron..."
 AIMY_DEV=1 npx electron dist/desktop/src/main/main.js >/tmp/aimy-electron.log 2>&1 &
 ELECTRON_PID=$!
 echo "✓ Aimy restarted (dev mode). vite pid $VITE_PID, electron pid $ELECTRON_PID"
 echo "  Logs: /tmp/aimy-vite.log /tmp/aimy-electron.log"
+
+echo "→ checking startup hooks..."
+# Wait for hooks to run (they execute during app boot, before engine starts).
+# Poll the electron log for [hooks] completion lines, up to 15s.
+HOOKS_DONE=0
+for _ in $(seq 1 15); do
+  if grep -q "\[hooks\] running .* startup hook" /tmp/aimy-electron.log 2>/dev/null; then
+    # Hooks started; wait for them to finish (no more "running" without "completed"/"exited")
+    sleep 2
+    HOOKS_DONE=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$HOOKS_DONE" == "1" ]]; then
+  # Display hook results with color-coded status:
+  # green = success, yellow = hook failed (non-blocking, warning), red = spawn/timeout error
+  GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; NC='\033[0m'
+  grep "\[hooks\]" /tmp/aimy-electron.log | while IFS= read -r line; do
+    if echo "$line" | grep -q "completed"; then
+      name=$(echo "$line" | sed 's/.*\[hooks\] //; s/ completed//')
+      printf "  ${GREEN}✓ %s${NC}\n" "$name"
+    elif echo "$line" | grep -qE "\[hooks\] [^:]+: "; then
+      # Hook detail output (e.g. "10-oma-tunnel.sh: LLM tunnel (8080): already up")
+      detail=$(echo "$line" | sed 's/.*\[hooks\] //')
+      printf "    ${NC}%s${NC}\n" "$detail"
+    elif echo "$line" | grep -q "exited with code"; then
+      name=$(echo "$line" | sed 's/.*\[hooks\] //; s/ exited with code.*//')
+      code=$(echo "$line" | sed 's/.*exited with code //')
+      # Non-zero exit = hook failed but didn't block boot → yellow (warning)
+      printf "  ${YELLOW}! %s (exit %s)${NC}\n" "$name" "$code"
+    elif echo "$line" | grep -q "failed to spawn"; then
+      name=$(echo "$line" | sed 's/.*\[hooks\] //; s/ failed to spawn.*//')
+      printf "  ${RED}✗ %s (failed to spawn)${NC}\n" "$name"
+    elif echo "$line" | grep -q "no startup hooks found"; then
+      echo "  (no startup hooks)"
+    fi
+  done
+else
+  YELLOW='\033[0;33m'; NC='\033[0m'
+  printf "  ${YELLOW}(hooks not yet run — check /tmp/aimy-electron.log)${NC}\n"
+fi
+
+# Log the successful build to the changelog
+{
+  echo ""
+  echo "---"
+  echo ""
+  echo "## $TIMESTAMP — $VERSION_STR"
+  echo ""
+  echo "**Status:** Build succeeded, app restarted."
+  echo ""
+  echo "_(Zen: add what changed in this batch above this line.)_"
+} >> CHANGELOG.md

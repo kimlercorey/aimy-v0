@@ -19,7 +19,7 @@ const startStream = (model: Model, id = "m1"): Model => {
   const sent = update(model, Message.UserSentMessage({ id, text: "hello", at: 1000 }))
   const started = update(
     sent.model,
-    Message.StreamStarted({ streamId: id, sessionId: "session-1", input: "hello", at: 1001 }),
+    Message.StreamStarted({ streamId: id, sessionId: "session-1", input: "hello", at: 1001, voiceEnabled: false, viaVoice: false }),
   )
   return started.model
 }

@@ -31,6 +31,13 @@ export interface LocalHttpProviderOptions {
   readonly baseUrl?: string
   readonly model: string
   readonly timeoutMs?: number
+  /**
+   * If false, `stream()` falls back to non-streaming `generate()` internally,
+   * yielding the full text as a single token. For providers whose SSE
+   * implementation is broken (e.g. OMA llama-server returns empty streams).
+   * Defaults to true.
+   */
+  readonly streaming?: boolean | undefined
 }
 
 export const DEFAULT_BASE_URL = "http://127.0.0.1:11434"
@@ -188,6 +195,7 @@ export class LocalHttpProvider implements Provider {
   private readonly baseUrl: string
   private readonly model: string
   private readonly timeoutMs: number
+  private readonly streaming: boolean
   readonly name: string
 
   /** Construction performs zero network I/O — the endpoint is only touched per call. */
@@ -196,6 +204,7 @@ export class LocalHttpProvider implements Provider {
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "")
     this.model = opts.model
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.streaming = opts.streaming ?? true
   }
 
   private requestBody(request: GenerateRequest, stream: boolean): ChatBody {
@@ -247,9 +256,31 @@ export class LocalHttpProvider implements Provider {
     })
   }
 
-  /** SSE stream of token deltas. A connection drop mid-stream surfaces a typed `InferenceError`. */
+  /**
+   * Token stream. If streaming is disabled (provider config), falls back to
+   * non-streaming `generate()` internally, yielding the full text as a single
+   * token. This keeps the interface consistent while working around broken
+   * SSE implementations (e.g. OMA llama-server returns empty streams).
+   */
   stream(request: GenerateRequest): Stream.Stream<Token, InferenceError> {
     const self = this
+    if (!self.streaming) {
+      // Non-streaming fallback: generate once, yield as single token.
+      console.log(`[aimy] stream: streaming disabled for ${self.name}, using generate()`)
+      const iterable: AsyncIterable<Token> = {
+        async *[Symbol.asyncIterator]() {
+          const response = await Effect.runPromise(self.generate(request))
+          if (response.text) {
+            yield { delta: response.text }
+          }
+        }
+      }
+      return Stream.fromAsyncIterable(iterable, (error: unknown) =>
+        error instanceof InferenceError
+          ? error
+          : transportError(self.name, self.baseUrl, self.timeoutMs, error)
+      )
+    }
     const iterable: AsyncIterable<Token> = {
       [Symbol.asyncIterator]() {
         return self.sseIterator(request)

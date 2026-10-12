@@ -203,10 +203,11 @@ export const makeTtsEngine = (opts?: {
       if (!fs.existsSync(vpy)) throw new Error("venv created but its Python is missing — check disk space and permissions.")
 
       // 3. deps — the big download. CUDA wheel on linux/win, MPS/CPU on macOS.
+      // Install from source for Nano support (PyPI lacks tts_turbo).
       prog("deps", "Downloading voice engine (~1–2.5 GB, one time)…")
       const pipCode = await runStreaming(
         vpy,
-        ["-m", "pip", "install", "--upgrade", "pip", "chatterbox-tts", "torch"],
+        ["-m", "pip", "install", "--upgrade", "pip", "git+https://github.com/resemble-ai/chatterbox.git", "torch"],
         (l) => {
           const clean = l.slice(0, 160)
           // pip's own progress lines are noise; surface the meaningful ones.
@@ -219,8 +220,8 @@ export const makeTtsEngine = (opts?: {
 
       // 4. verify the import actually works
       prog("verify", "Verifying installation…")
-      const verifyCode = await runStreaming(vpy, ["-c", "import chatterbox, torch; print('ok')"], () => undefined)
-      if (verifyCode !== 0) throw new Error("Install finished but `import chatterbox` fails — retry or install manually.")
+      const verifyCode = await runStreaming(vpy, ["-c", "import chatterbox.tts_turbo, torch; print('ok')"], () => undefined)
+      if (verifyCode !== 0) throw new Error("Install finished but `import chatterbox.tts_turbo` fails — retry or install manually.")
 
       fs.writeFileSync(markerPath(engineDir), JSON.stringify({ v: 1, at: new Date().toISOString() }) + "\n")
       prog("done", "Voice engine installed.")
@@ -248,8 +249,11 @@ export const makeTtsEngine = (opts?: {
       throw new Error("tts-server.py not found in the app bundle — reinstall the app.")
     }
     if (await waitForHealth(2000)) return // already running (e.g. manual)
+    // Log server output to a file (not "ignore") so crashes are diagnosable.
+    const logPath = "/tmp/aimy-tts-server.log"
+    const logFd = fs.openSync(logPath, "a")
     serverChild = spawn(venvPythonFor(engineDir), [serverPy], {
-      stdio: "ignore",
+      stdio: ["ignore", logFd, logFd],
       detached: process.platform !== "win32",
     })
     serverChild.on("error", () => { serverChild = undefined })
@@ -288,7 +292,34 @@ export const makeTtsEngine = (opts?: {
 
   const ttsService = (http: HttpClientShape): Effect.Effect<TtsServiceShape, never> =>
     Effect.gen(function* () {
-      const svc = makeTtsService({ http })
+      // Read active TTS provider from registry (2026-10-10: was hardcoded OMA-first).
+      // If OMA is active, try OMA (127.0.0.1:8777) first, fall back to local.
+      // If local is active, use local directly.
+      let omaBaseUrl: string | undefined
+      try {
+        const regPath = path.join(os.homedir(), ".aimy", "providers.json")
+        const reg = JSON.parse(fs.readFileSync(regPath, "utf8")) as {
+          activeId?: { tts?: string },
+          providers?: Array<{ id: string; kind: string; endpoint?: string }>
+        }
+        const activeId = reg.activeId?.tts
+        const active = reg.providers?.find((p) => p.id === activeId)
+        if (active?.kind === "remote" && active.endpoint) {
+          // Use the endpoint from registry (should be http://127.0.0.1:8777)
+          omaBaseUrl = active.endpoint.replace(":8777", ":8777") // normalize
+          // Ensure it's the tunnel address, not direct LAN
+          if (omaBaseUrl.includes("192.168.1.54")) {
+            omaBaseUrl = omaBaseUrl.replace("192.168.1.54", "127.0.0.1")
+          }
+          console.log(`[aimy] TTS: active provider is remote (${active.id}), OMA endpoint=${omaBaseUrl}`)
+        } else {
+          console.log(`[aimy] TTS: active provider is local (${activeId ?? "none"}), using local engine only`)
+        }
+      } catch (e) {
+        console.log(`[aimy] TTS: could not read providers.json, defaulting to OMA-first: ${e}`)
+        omaBaseUrl = "http://127.0.0.1:8777"
+      }
+      const svc = makeTtsService({ http, omaBaseUrl })
       const id = activeVoiceId()
       if (id !== undefined) {
         // Best-effort: the voice may have been removed server-side.

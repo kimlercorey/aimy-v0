@@ -71,6 +71,267 @@ import type { IpcCommand, IpcCommandResult } from "../ipc/protocol.js"
 
 import { getAimy } from "./ipc.js"
 
+// ── Mic recording (Web Audio API with pre-roll buffer) ────────────────────
+// The STT server expects 16kHz mono WAV.
+//
+// Problem: MediaRecorder takes 100-300ms to start, losing the first words.
+// Solution: continuously capture audio into a ring buffer (pre-roll).
+// When PTT is pressed, we prepend the last 500ms from the buffer.
+// This is the production approach used by professional PTT systems.
+
+let micStream: MediaStream | undefined
+let audioCtx: AudioContext | undefined
+let audioSource: MediaStreamAudioSourceNode | undefined
+let processor: ScriptProcessorNode | undefined
+// Ring buffer: last ~2 seconds of mono audio at 16kHz.
+const RING_SIZE = 16000 * 2
+let ringBuffer = new Float32Array(RING_SIZE)
+let ringPos = 0
+let ringFilled = false
+// Active recording chunks (Float32Array PCM).
+let recordingChunks: Float32Array[] = []
+let isRecording = false
+// Pre-roll: 500ms of audio before the button press.
+const PREROLL_SAMPLES = 16000 * 0.5
+
+const ensureMicCapture = async (): Promise<void> => {
+  if (audioCtx !== undefined && micStream !== undefined) return
+  console.log("[mic] ensureMicCapture: requesting microphone...")
+  try {
+    const deviceId = (() => {
+      try { return localStorage.getItem("aimy.micDeviceId") ?? "" } catch { return "" }
+    })()
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+    })
+  } catch (e) {
+    console.error("[mic] ensureMicCapture: getUserMedia failed", e)
+    throw new Error("Microphone permission denied or unavailable.")
+  }
+  const track = micStream.getAudioTracks()[0]
+  console.log(`[mic] ensureMicCapture: got track "${track?.label}"`)
+  // AudioContext at 16kHz to match STT server expectations.
+  audioCtx = new AudioContext({ sampleRate: 16000 })
+  audioSource = audioCtx.createMediaStreamSource(micStream)
+  // ScriptProcessor is deprecated but works reliably in Electron.
+  // 4096 samples ≈ 256ms at 16kHz.
+  processor = audioCtx.createScriptProcessor(4096, 1, 1)
+  processor.onaudioprocess = (e: AudioProcessingEvent) => {
+    const input = e.inputBuffer.getChannelData(0)
+    // Write to ring buffer.
+    for (let i = 0; i < input.length; i++) {
+      ringBuffer[ringPos]! = input[i]!
+      ringPos = (ringPos + 1) % RING_SIZE
+      if (ringPos === 0) ringFilled = true
+    }
+    // If recording, also append to recording chunks.
+    if (isRecording) {
+      recordingChunks.push(new Float32Array(input))
+    }
+  }
+  audioSource.connect(processor)
+  // Connect to destination via a zero-gain node (required for onaudioprocess to fire,
+  // but we don't want to hear the mic).
+  const silent = audioCtx.createGain()
+  silent.gain.value = 0
+  processor.connect(silent)
+  silent.connect(audioCtx.destination)
+  console.log("[mic] ensureMicCapture: continuous capture started (pre-roll active)")
+}
+
+const getPreroll = (): Float32Array => {
+  // Extract the last PREROLL_SAMPLES from the ring buffer, in order.
+  const out = new Float32Array(PREROLL_SAMPLES)
+  const available = ringFilled ? RING_SIZE : ringPos
+  const take = Math.min(PREROLL_SAMPLES, available)
+  // Start position: ringPos - take (wrapping).
+  let start = ringPos - take
+  if (start < 0) start += RING_SIZE
+  for (let i = 0; i < take; i++) {
+    out[PREROLL_SAMPLES - take + i]! = ringBuffer[(start + i) % RING_SIZE]!
+  }
+  // Leading zeros if buffer wasn't full (silence).
+  return out
+}
+
+const startMicRecording = async (): Promise<void> => {
+  if (isRecording) {
+    console.log("[mic] startMicRecording: already recording, ignoring")
+    return
+  }
+  await ensureMicCapture()
+  console.log("[mic] startMicRecording: starting with 500ms pre-roll")
+  recordingChunks = [getPreroll()]
+  isRecording = true
+}
+
+const stopMicRecording = async (): Promise<{ audioBase64: string }> => {
+  if (!isRecording) {
+    console.error("[mic] stopMicRecording: not recording")
+    throw new Error("Not recording.")
+  }
+  isRecording = false
+  console.log(`[mic] stopMicRecording: stopping (${recordingChunks.length} chunks)`)
+  // Combine all PCM chunks into a single Float32Array.
+  const totalLen = recordingChunks.reduce((sum, c) => sum + c.length, 0)
+  const pcm = new Float32Array(totalLen)
+  let offset = 0
+  for (const chunk of recordingChunks) {
+    pcm.set(chunk, offset)
+    offset += chunk.length
+  }
+  recordingChunks = []
+  // Encode as 16kHz mono WAV (already at 16kHz from AudioContext).
+  const wav = pcmToWav(pcm, 16000)
+  const b64 = arrayBufferToBase64(wav)
+  console.log(`[mic] stopMicRecording: encoded ${totalLen} samples (${(totalLen/16000).toFixed(2)}s)`)
+  return { audioBase64: b64 }
+}
+
+const pcmToWav = (pcm: Float32Array, sampleRate: number): ArrayBuffer => {
+  const numChannels = 1
+  const bytesPerSample = 2 // 16-bit
+  const blockAlign = numChannels * bytesPerSample
+  const dataSize = pcm.length * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+  // RIFF header
+  view.setUint32(0, 0x52494646, false) // "RIFF"
+  view.setUint32(4, 36 + dataSize, true)
+  view.setUint32(8, 0x57415645, false) // "WAVE"
+  view.setUint32(12, 0x666d7420, false) // "fmt "
+  view.setUint16(16, 16, true) // fmt chunk size
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true) // byte rate
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, 16, true) // bits per sample
+  view.setUint32(36, 0x64617461, false) // "data"
+  view.setUint32(40, dataSize, true)
+  // PCM data (clamp to [-1, 1], convert to int16)
+  let pos = 44
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]!))
+    view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+    pos += 2
+  }
+  return buffer
+}
+
+const audioBufferToWav = (buffer: AudioBuffer): ArrayBuffer => {
+  const numChannels = 1 // mono
+  const sampleRate = 16000
+  const channelData = buffer.getChannelData(0)
+  // Resample if needed (AudioContext was created at 16kHz, so usually no-op).
+  const dataLen = channelData.length
+  const wavLen = 44 + dataLen * 2
+  const wav = new ArrayBuffer(wavLen)
+  const view = new DataView(wav)
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i))
+  }
+  writeStr(0, "RIFF")
+  view.setUint32(4, wavLen - 8, true)
+  writeStr(8, "WAVE")
+  writeStr(12, "fmt ")
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * numChannels * 2, true)
+  view.setUint16(32, numChannels * 2, true)
+  view.setUint16(34, 16, true)
+  writeStr(36, "data")
+  view.setUint32(40, dataLen * 2, true)
+  for (let i = 0; i < dataLen; i++) {
+    const s = Math.max(-1, Math.min(1, channelData[i]!))
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+  }
+  return wav
+}
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer)
+  let binary = ""
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
+  return btoa(binary)
+}
+
+// ── Push-to-talk global key/mouse listener ──────────────────────────────────
+// Call setupPushToTalk(dispatch) from the renderer entry point. Dispatches
+// MicRecordToggled on key down/up (or mouse button down/up).
+// Config is read from localStorage (set via Voice Settings UI).
+
+export const setupPushToTalk = (
+  onToggle: () => void
+): (() => void) => {
+  let isDown = false
+  const getConfig = () => {
+    try {
+      const key = localStorage.getItem("aimy.pushToTalkKey") ?? "ControlRight"
+      const useMouse = localStorage.getItem("aimy.pushToTalkUseMouse") === "1"
+      // Guard: if useMouse is true but key is a keyboard code, default to "3".
+      // (Happens when toggling modes without reselecting the button.)
+      const isKeyboardKey = /^(Control|Alt|Shift|Meta|Space)/.test(key)
+      const effectiveKey = useMouse && isKeyboardKey ? "3" : key
+      return { key: effectiveKey, useMouse }
+    } catch {
+      return { key: "ControlRight", useMouse: false }
+    }
+  }
+  const onKeyDown = (e: KeyboardEvent) => {
+    const { key, useMouse } = getConfig()
+    if (useMouse) return
+    if ((e.target as HTMLElement)?.tagName === "INPUT") return
+    if (e.code === key && !e.repeat && !isDown) {
+      isDown = true
+      console.log(`[ptt] key down: ${e.code} -> start recording`)
+      e.preventDefault()
+      onToggle()
+    }
+  }
+  const onKeyUp = (e: KeyboardEvent) => {
+    const { key, useMouse } = getConfig()
+    if (useMouse) return
+    if (e.code === key && isDown) {
+      isDown = false
+      console.log(`[ptt] key up: ${e.code} -> stop recording`)
+      onToggle()
+    }
+  }
+  const onMouseDown = (e: MouseEvent) => {
+    const { key, useMouse } = getConfig()
+    console.log(`[ptt] mousedown: button=${e.button}, config key=${key}, useMouse=${useMouse}`)
+    if (!useMouse) return
+    if (String(e.button) === key && !isDown) {
+      isDown = true
+      console.log(`[ptt] mouse down: button ${e.button} -> start recording`)
+      e.preventDefault()
+      onToggle()
+    }
+  }
+  const onMouseUp = (e: MouseEvent) => {
+    const { key, useMouse } = getConfig()
+    if (!useMouse) return
+    if (String(e.button) === key && isDown) {
+      isDown = false
+      console.log(`[ptt] mouse up: button ${e.button} -> stop recording`)
+      onToggle()
+    }
+  }
+  window.addEventListener("keydown", onKeyDown)
+  window.addEventListener("keyup", onKeyUp)
+  window.addEventListener("mousedown", onMouseDown)
+  window.addEventListener("mouseup", onMouseUp)
+  return () => {
+    window.removeEventListener("keydown", onKeyDown)
+    window.removeEventListener("keyup", onKeyUp)
+    window.removeEventListener("mousedown", onMouseDown)
+    window.removeEventListener("mouseup", onMouseUp)
+  }
+}
+
 /** One IPC round-trip as an Effect; transport rejections become `Error`. */
 const invokeIpc = <C extends IpcCommand>(cmd: C): Effect.Effect<IpcCommandResult<C>, Error> =>
   Effect.tryPromise({
@@ -398,6 +659,22 @@ const ipcTts: TtsIpcShape = {
     getAimy()
       .invoke({ _tag: "tts.addVoice", name, audioBase64 })
       .then((r) => ({ id: r.voice.id, name: r.voice.name, isDefault: r.voice.isDefault })),
+  deleteVoice: (voiceId: string) =>
+    getAimy().invoke({ _tag: "tts.deleteVoice", voiceId }).then(() => undefined),
+  playVoiceSample: (voiceId: string) =>
+    getAimy()
+      .invoke({ _tag: "tts.playVoiceSample", voiceId })
+      .then((r) => ({ audioBase64: r.audioBase64 })),
+  testProvider: () =>
+    getAimy()
+      .invoke({ _tag: "tts.testProvider" })
+      .then((r) => ({
+        latencyMs: r.latencyMs,
+        modelSizeMb: r.modelSizeMb,
+        throughputCharsPerSec: r.throughputCharsPerSec,
+      })),
+  setVoiceDefault: (voiceId: string) =>
+    getAimy().invoke({ _tag: "tts.setVoiceDefault", voiceId }).then(() => undefined),
   pickVoiceFile: () =>
     getAimy()
       .invoke({ _tag: "tts.pickVoiceFile" })
@@ -406,6 +683,40 @@ const ipcTts: TtsIpcShape = {
         ...(r.name !== undefined ? { name: r.name } : {}),
         ...(r.audioBase64 !== undefined ? { audioBase64: r.audioBase64 } : {}),
       })),
+  sttEngineStatus: () =>
+    getAimy()
+      .invoke({ _tag: "stt.engineStatus" })
+      .then((r) => ({
+        state: r.state,
+        ...(r.detail !== undefined ? { detail: r.detail } : {}),
+        ...(r.engine !== undefined ? { engine: r.engine } : {}),
+      })),
+  installSttEngine: (engine: string) =>
+    getAimy().invoke({ _tag: "stt.installEngine", engine }).then(() => undefined),
+  transcribeStt: (audioBase64: string, sampleRate?: number) =>
+    getAimy()
+      .invoke({ _tag: "stt.transcribe", audioBase64, ...(sampleRate !== undefined ? { sampleRate } : {}) })
+      .then((r) => ({ text: r.text, latencyMs: r.latencyMs })),
+  testStt: () =>
+    getAimy()
+      .invoke({ _tag: "stt.test" })
+      .then((r) => ({ latencyMs: r.latencyMs, modelSizeMb: r.modelSizeMb })),
+  // ── Mic recording (renderer-side, MediaRecorder) ─────────────────────────
+  startMicRecording: () => startMicRecording(),
+  stopMicRecording: () => stopMicRecording(),
+  listMicDevices: async () => {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    return devices
+      .filter((d) => d.kind === "audioinput")
+      .map((d) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Microphone ${d.deviceId.slice(0, 8)}`,
+      }))
+  },
+  speak: (text: string) =>
+    getAimy().invoke({ _tag: "tts.speak", text }).then(() => undefined),
+  stop: () =>
+    getAimy().invoke({ _tag: "tts.stop" }).then(() => undefined),
 }
 
 /** The full IPC-backed service set for the composed app. */

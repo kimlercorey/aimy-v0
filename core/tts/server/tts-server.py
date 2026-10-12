@@ -69,11 +69,15 @@ def _disable_broken_watermarker():
     perth 1.0.0 imports pkg_resources, which was removed from setuptools on
     Python 3.12+. Its __init__ swallows the ImportError and leaves
     PerthImplicitWatermarker = None, which makes ChatterboxTTS.__init__ raise
-    "TypeError: 'NoneType' object is not callable". Watermarking is
-    non-essential for a personal voice assistant, so when the real
-    watermarker is unavailable we replace it with a no-op that returns the
-    audio unchanged. chatterbox does `import perth` (module attribute
-    access), so patching the module object works.
+    "TypeError: 'NoneType' object is not callable". When the real watermarker
+    is unavailable we replace it with a no-op that returns the audio
+    unchanged. chatterbox does `import perth` (module attribute access), so
+    patching the module object works.
+
+    Note: model-level AI-detection watermarking stays enabled when it works —
+    that's an honesty benefit (marks output as synthetic), not surveillance.
+    Revisit if watermarking ever moves to per-user or per-developer
+    attribution.
     """
     try:
         import perth
@@ -97,32 +101,52 @@ def load_model():
         if _model is not None:
             return _model
         try:
-            from chatterbox.tts import ChatterboxTTS
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
         except ImportError as e:
             raise RuntimeError(
-                "chatterbox-tts is not installed. Install it with: pip install chatterbox-tts torch"
+                "chatterbox-tts with turbo support is not installed. Install from source: pip install git+https://github.com/resemble-ai/chatterbox.git"
             ) from e
         _disable_broken_watermarker()
         device = detect_device()
-        print(f"[tts] loading Chatterbox on {device}...", flush=True)
+        print(f"[tts] loading Chatterbox Nano (110M) on {device}...", flush=True)
         try:
-            _model = ChatterboxTTS.from_pretrained(device=device)
+            _model = ChatterboxTurboTTS.from_pretrained(device=device)
         except Exception as e:
-            raise RuntimeError(f"Chatterbox failed to load on {device}: {e}") from e
+            raise RuntimeError(f"Chatterbox Turbo failed to load on {device}: {e}") from e
         print("[tts] model loaded.", flush=True)
         return _model
 
 
 def list_voices() -> list[dict]:
     """Built-in default + every ~/.aimy/voices/*.wav."""
-    voices = [{"id": DEFAULT_VOICE_ID, "name": "Default (built-in neutral)", "is_default": True}]
+    default_id = get_default_voice_id()
+    voices = [{"id": DEFAULT_VOICE_ID, "name": "Default (built-in neutral)", "is_default": default_id == DEFAULT_VOICE_ID}]
     if VOICES_DIR.is_dir():
         for wav in sorted(VOICES_DIR.glob("*.wav")):
             vid = wav.stem
             if vid == DEFAULT_VOICE_ID:
                 continue
-            voices.append({"id": vid, "name": vid.replace("_", " ").replace("-", " "), "is_default": False})
+            voices.append({"id": vid, "name": vid.replace("_", " ").replace("-", " "), "is_default": vid == default_id})
     return voices
+
+
+def get_default_voice_id() -> str:
+    """Read the default voice ID from disk, or the built-in default."""
+    try:
+        p = VOICES_DIR / "default.txt"
+        if p.is_file():
+            vid = p.read_text().strip()
+            if vid:
+                return vid
+    except Exception:
+        pass
+    return DEFAULT_VOICE_ID
+
+
+def set_default_voice_id(voice_id: str) -> None:
+    """Persist the default voice ID to disk."""
+    VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    (VOICES_DIR / "default.txt").write_text(voice_id)
 
 
 def resolve_voice(voice_id: str) -> Path | None:
@@ -135,8 +159,40 @@ def resolve_voice(voice_id: str) -> Path | None:
     return p if p.is_file() else "unknown"  # type: ignore[return-value]
 
 
+def strip_markdown(text: str) -> str:
+    """Remove markdown formatting for natural speech. Keeps the words, drops the syntax."""
+    # Code blocks -> "code" placeholder (don't read code aloud verbatim).
+    text = re.sub(r"```[\s\S]*?```", " [code block] ", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    # Images -> alt text only.
+    text = re.sub(r"!\[([^\]]*)\]\([^\)]*\)", r"\1", text)
+    # Links -> link text only.
+    text = re.sub(r"\[([^\]]*)\]\([^\)]*\)", r"\1", text)
+    # Headers -> text without #.
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Bold/italic/strikethrough.
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    # Lists -> comma-separated items.
+    text = re.sub(r"^[\s]*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[\s]*\d+\.\s+", "", text, flags=re.MULTILINE)
+    # Blockquotes.
+    text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
+    # Horizontal rules.
+    text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    # Collapse whitespace.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
 def synthesize(text: str, voice_id: str) -> bytes:
     """Text -> 16-bit PCM mono WAV bytes. Raises RuntimeError on failure."""
+    # Strip markdown so the voice doesn't read syntax aloud.
+    text = strip_markdown(text)
     if not text or not text.strip():
         raise RuntimeError("text must not be empty")
     if len(text) > 2000:
@@ -156,12 +212,16 @@ def synthesize(text: str, voice_id: str) -> bytes:
             else:
                 wav = model.generate(text, audio_prompt_path=str(voice_path))
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise RuntimeError(f"synthesis failed: {e}") from e
 
-    # torch float32 tensor -> 16-bit PCM WAV via stdlib wave
+    # torch tensor -> 16-bit PCM WAV via stdlib wave
+    # MPS doesn't support float64: move to CPU as float32 first.
     import torch
 
-    pcm = (wav.squeeze(0).clamp(-1.0, 1.0) * 32767).short().cpu().numpy()
+    wav = wav.to(dtype=torch.float32).cpu()
+    pcm = (wav.squeeze(0).clamp(-1.0, 1.0) * 32767).short().numpy()
     sr = int(getattr(model, "sr", 24000))
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -198,7 +258,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
-            self._json({"model_loaded": _model is not None, "gpu": gpu_name()})
+            # Model size: Nano 110M ~ 440MB, standard 500M ~ 2GB.
+            model_size = 440 if _model is not None and "nano" in str(type(_model)).lower() else 2000
+            self._json({"model_loaded": _model is not None, "gpu": gpu_name(), "model_size_mb": model_size})
         elif path == "/voices":
             self._json({"voices": list_voices()})
         else:
@@ -206,6 +268,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        # POST /voices/{id}/delete — delete a custom voice.
+        m = re.fullmatch(r"/voices/([A-Za-z0-9_-]+)/delete", path)
+        if m:
+            vid = m.group(1)
+            if vid == DEFAULT_VOICE_ID:
+                self._json({"error": "cannot delete the built-in default voice"}, 400)
+                return
+            p = VOICES_DIR / f"{vid}.wav"
+            if p.is_file():
+                p.unlink()
+                if get_default_voice_id() == vid:
+                    set_default_voice_id(DEFAULT_VOICE_ID)
+                self._json({"deleted": vid})
+            else:
+                self._json({"error": "voice not found"}, 404)
+            return
         if path == "/speak":
             body = self._read_json()
             try:
@@ -236,6 +314,16 @@ class Handler(BaseHTTPRequestHandler):
             VOICES_DIR.mkdir(parents=True, exist_ok=True)
             (VOICES_DIR / f"{vid}.wav").write_bytes(raw)
             self._json({"voice": {"id": vid, "name": name, "is_default": False}})
+        elif re.fullmatch(r"/voices/[A-Za-z0-9_-]+/default", path):
+            vid = path.split("/")[2]
+            # Validate the voice exists.
+            if vid != DEFAULT_VOICE_ID:
+                p = VOICES_DIR / f"{vid}.wav"
+                if not p.is_file():
+                    self._json({"error": "voice not found"}, 404)
+                    return
+            set_default_voice_id(vid)
+            self._json({"default": vid})
         else:
             self._json({"error": "not found"}, 404)
 

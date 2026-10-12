@@ -20,7 +20,6 @@ import { AgentLoop } from "../../agent-loop/src/index.js"
 import { ChunkSanitizer } from "./rendering.js"
 import { chatChunkToMessage } from "./chat/streaming.js"
 import { chatPanelView } from "./chat/view.js"
-import { permissionsView } from "./permissions/view.js"
 import { initialModel, Model } from "./model.js"
 import { Message } from "./messages.js"
 import { update, type ShellServices } from "./update.js"
@@ -36,19 +35,21 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: initialModel(),
 })
 
-const shellView = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: `AImy — ${model.session.sessionId}`,
+const shellView = (model: Model, h: HtmlBuilder<Message>): Document => {
+  const subject = model.session.subject || ""
+  return {
+  title: subject ? `AImy — ${subject}` : "AImy",
   body: h.div([h.Class("shell")], [
     h.header([h.Class("shell-header")], [
       h.h1([h.Class("shell-title")], ["AImy"]),
-      h.span([h.Class("shell-session")], [model.session.sessionId]),
+      h.span([h.Class("shell-session")], [subject]),
     ]),
     h.main([h.Class("shell-main")], [
       chatPanelView(model.session, h),
-      permissionsView(model.permissions, h),
     ]),
   ]),
-})
+  }
+}
 
 export const view = shellView
 
