@@ -28,10 +28,22 @@ import {
   type RetrievalTool
 } from "./retrieval.js"
 import {
+  bootResearchModule,
+  makePoolPlanModel,
+  makeResearchAgentTool,
+  makeResearchToolForChat,
+  renderResearchReport,
+  RESEARCH_MODULE,
+  type ResearchTool,
+  type ResearchToolFactory
+} from "./research.js"
+import { makeBackgroundJobRegistry } from "../../agent-loop/src/background-job.js"
+import {
   formatHonestySummary,
   formatToolResult,
   friendlyErrorMessage,
   parseCommand,
+  parseResearchCommand,
   parseRetrievalCommand,
   renderRetrievalReport
 } from "./render.js"
@@ -115,6 +127,30 @@ const runRetrievalBackground = (
   void Effect.runPromise(Effect.catch(prog, (e) => Effect.sync(() => printFriendlyError(e))))
 }
 
+/**
+ * One "research <query>" in the background (prompt stays live), invoking
+ * the module tool directly — the same flow the model's research.query
+ * agent tool wraps (project binding + run records ride in that wrapper
+ * when the model calls it; this prefix runs the bare module tool).
+ */
+const runResearchBackground = (
+  tool: ResearchTool | undefined,
+  query: string,
+  sessionId: string
+): void => {
+  if (tool === undefined) {
+    process.stdout.write("research module is not booted\n")
+    return
+  }
+  const turnId = `cli-research-${Date.now().toString(36)}`
+  process.stdout.write(`🔬 researching "${query}"…\n`)
+  const prog = Effect.gen(function* () {
+    const report = yield* tool.invoke({ query, sessionId, turnId })
+    process.stdout.write(renderResearchReport(report) + "\n")
+  })
+  void Effect.runPromise(Effect.catch(prog, (e) => Effect.sync(() => printFriendlyError(e))))
+}
+
 /** /retrieval-off and /retrieval-on: disable/enable the module mid-run-capable. */
 const setRetrievalEnabled = (
   host: import("../../module-seam/src/index.js").ModuleHostApi | undefined,
@@ -158,10 +194,16 @@ const main = async (): Promise<void> => {
   // Shared factory with the desktop engine: one definition, one description.
   let retrievalTool: RetrievalTool | undefined
   const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
+  let researchToolFactory: ResearchToolFactory | undefined
+  const researchAgentTool = makeResearchAgentTool((onStage) => researchToolFactory?.(onStage))
+  // The CLI gains a background registry (charter E17): job.spawn works
+  // here exactly as in the desktop engine.
+  const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
   const { layer, provider, retrievalHookCounts } = buildChatStack({
     baseUrl: args.baseUrl,
     model,
-    extraTools: [retrievalAgentTool]
+    extraTools: [retrievalAgentTool, researchAgentTool],
+    backgroundJobs
   })
 
   const reachable = await preflight(args.baseUrl)
@@ -189,6 +231,8 @@ const main = async (): Promise<void> => {
     yield* bootRetrievalModule(host)
     retrievalHost = host
     retrievalTool = makeRetrievalToolForChat(http, honesty)
+    yield* bootResearchModule(host)
+    researchToolFactory = (onStage) => makeResearchToolForChat(http, honesty, makePoolPlanModel(pool), onStage)
   })
   await Effect.runPromise(Effect.provide(boot, layer)).catch((e) => {
     printFriendlyError(e)
@@ -199,7 +243,8 @@ const main = async (): Promise<void> => {
   process.stdout.write(
     `connected: ${args.baseUrl} · model ${model} · session "${sessionId}"\n` +
       `retrieval module "${RETRIEVAL_MODULE}" installed+started (tier T1, egress: html.duckduckgo.com)\n` +
-      "type a message, `retrieval <query>`, or /help\n\n"
+      `research module "${RESEARCH_MODULE}" installed+started (tier T1) — or just ask her to research something\n` +
+      "type a message, `retrieval <query>`, `research <query>`, or /help\n\n"
   )
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true })
@@ -236,6 +281,15 @@ const main = async (): Promise<void> => {
       runRetrievalBackground(retrievalHost, retrievalTool, retrievalHookCounts, retrievalQuery.trim(), sessionId)
       continue
     }
+    const researchQuery = parseResearchCommand(line)
+    if (researchQuery !== undefined) {
+      if (researchQuery.trim() === "") {
+        process.stdout.write("usage: research <query>\n")
+        continue
+      }
+      runResearchBackground(researchToolFactory?.(), researchQuery.trim(), sessionId)
+      continue
+    }
     const cmd = parseCommand(line)
     if (cmd === "quit") {
       process.stdout.write("bye\n")
@@ -249,7 +303,8 @@ const main = async (): Promise<void> => {
     if (cmd === "help") {
       process.stdout.write(
         "commands: /new (fresh session)  /quit  /help  /retrieval-off  /retrieval-on\n" +
-          "          retrieval <query> — sourced answer with per-claim verification badges\n"
+          "          retrieval <query> — sourced answer with per-claim verification badges\n" +
+          "          research <query> — planned, multi-query investigation with ledger-backed claims\n"
       )
       continue
     }

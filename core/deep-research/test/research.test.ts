@@ -100,7 +100,12 @@ describe("research Phase 1 flow", () => {
     expect(report.plan.subQuestions).toHaveLength(2)
     expect(report.sourcesSearched).toBe(2)
     expect(report.sourcesRead).toBe(2)
-    expect(report.termination).toBe("answered")
+    // Full loop (charter E5): at standard depth the gap loop chases the
+    // single-source evidence claim into round 2; the budget spends out
+    // with the gap open, so termination is honestly budget-exhausted
+    // (Phase 1's single round called this "answered").
+    expect(report.termination).toBe("budget-exhausted")
+    expect(report.roundsUsed).toBe(2)
 
     const sourceClaims = report.claims.filter((c) => c.claim.text.startsWith("According to"))
     expect(sourceClaims).toHaveLength(2)
@@ -143,7 +148,9 @@ describe("research Phase 1 flow", () => {
     const { report } = await run(runResearch(stubModel, many, { query: "q", depth: "quick" }))
     // quick budget: 4 fetches; only 2 pages exist in the mock, rest 404.
     expect(report.sourcesRead).toBeLessThanOrEqual(4)
-    expect(report.termination).toBe("budget-exhausted")
+    // None of the 10 result URLs exist in the mock — every fetch 404s, so
+    // nothing could be read at all: "no-sources" (E5 termination values).
+    expect(report.termination).toBe("no-sources")
     const coverage = report.claims.find((c) => c.claim.text.startsWith("Coverage:"))
     expect(coverage?.claim.text).toContain("Budgets truncated")
   })

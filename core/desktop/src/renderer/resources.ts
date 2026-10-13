@@ -65,6 +65,9 @@ import type { InitialConfig } from "../../../ui/src/onboarding/model.js"
 import { DevtoolsRelay, DevtoolsError, type DevtoolsRelayShape } from "../../../ui/src/devtools/seam.js"
 import { MessagingIpc, type MessagingIpcShape } from "../../../ui/src/messaging/seam.js"
 import { TtsIpc, type TtsIpcShape } from "../../../ui/src/voice/seam.js"
+import { DocsIpc, type DocsIpcShape } from "../../../ui/src/docs-seam.js"
+import { HomeIpc, type HomeIpcShape } from "../../../ui/src/home-seam.js"
+import { HomedashIpc, type HomedashIpcShape } from "../../../ui/src/homedash-seam.js"
 import { MCP_BIND_HOST } from "../../../ui/src/devtools/model.js"
 import type { AppServices } from "../../../ui/src/composed/index.js"
 import type { IpcCommand, IpcCommandResult } from "../ipc/protocol.js"
@@ -739,6 +742,67 @@ const ipcTts: TtsIpcShape = {
     getAimy().invoke({ _tag: "tts.stop" }).then(() => undefined),
 }
 
+/** The document persistence seam: drawer save-to-disk over `docs.save`. */
+const ipcDocs: DocsIpcShape = {
+  saveDocument: (path: string, content: string) =>
+    getAimy()
+      .invoke({ _tag: "docs.save", path, content })
+      .then((r) => ({ path: r.path })),
+  loadDocument: (path: string) =>
+    getAimy()
+      .invoke({ _tag: "docs.load", path })
+      .then((r) => ({ path: r.path, content: r.content })),
+}
+
+/** The drawer home panel seam: home.data / requestDetail / dismissRequest. */
+const ipcHome: HomeIpcShape = {
+  getHomeData: () =>
+    getAimy()
+      .invoke({ _tag: "home.data" })
+      .then((r) => ({ recents: r.recents, requests: r.requests, cards: r.cards, project: r.project ?? null, projectList: r.projectList ?? [], chats: r.chats ?? [], memories: r.memories ?? [], journal: r.journal ?? null })),
+  getRequestDetail: (capability: string, at: string) =>
+    getAimy()
+      .invoke({ _tag: "home.requestDetail", capability, at })
+      .then((r) => ({ capability: r.capability, why: r.why, at: r.at })),
+  dismissRequest: (capability: string, at: string) =>
+    getAimy()
+      .invoke({ _tag: "home.dismissRequest", capability, at })
+      .then(() => undefined),
+  createProject: (name: string, purpose: string) =>
+    getAimy()
+      .invoke({ _tag: "projects.create", name, purpose })
+      .then((r) => ({ id: r.id, name: r.name, created: r.created })),
+  setActiveProject: (id: string) =>
+    getAimy()
+      .invoke({ _tag: "projects.setActive", id })
+      .then(() => undefined),
+  moveAsset: (fromId: string, toId: string, kind: string, title: string, path?: string) =>
+    getAimy()
+      .invoke({ _tag: "projects.moveAsset", fromId, toId, kind, title, ...(path !== undefined ? { path } : {}) })
+      .then((r) => ({ moved: r.moved })),
+  addAsset: (projectId: string, path: string, title: string) =>
+    getAimy()
+      .invoke({ _tag: "projects.addAsset", projectId, path, title })
+      .then((r) => ({ added: r.added })),
+}
+
+/** The HomeDash seam: enabled widgets, manifests, settings (2026-10-13). */
+const ipcHomedash: HomedashIpcShape = {
+  getHomedash: () =>
+    getAimy()
+      .invoke({ _tag: "homedash.list" })
+      .then((r) => ({
+        widgets: r.widgets.map((w) => ({
+          ...w,
+          settings: w.settings.map((s) => ({ ...s })),
+        })),
+      })),
+  setSetting: (widgetId: string, key: string, value: string | number | boolean) =>
+    getAimy()
+      .invoke({ _tag: "homedash.setSetting", widgetId, key, value })
+      .then(() => undefined),
+}
+
 /** The full IPC-backed service set for the composed app. */
 export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(SafetyKernel, ipcSafetyKernel),
@@ -752,6 +816,9 @@ export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(OnboardingPersistence, ipcOnboardingPersistence),
   Layer.succeed(DevtoolsRelay, ipcDevtoolsRelay),
   Layer.succeed(MessagingIpc, ipcMessaging),
-  Layer.succeed(TtsIpc, ipcTts)
+  Layer.succeed(TtsIpc, ipcTts),
+  Layer.succeed(DocsIpc, ipcDocs),
+  Layer.succeed(HomeIpc, ipcHome),
+  Layer.succeed(HomedashIpc, ipcHomedash)
 )
 

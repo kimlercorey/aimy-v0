@@ -43,6 +43,15 @@ import { fileURLToPath } from "node:url"
 import { randomUUID } from "node:crypto"
 import type { ChatChunk } from "../../../agent-loop/src/index.js"
 import {
+  listProjects as storeListProjects,
+  getActiveProject as storeGetActiveProject,
+  createProject as storeCreateProject,
+  setActiveProject as storeSetActiveProject,
+  moveAsset as storeMoveAsset,
+  addDocumentAsset as storeAddDocumentAsset,
+  type ProjectAsset as StoreProjectAsset
+} from "../../../agent-loop/src/projects.js"
+import {
   ASCEngine,
   ASCEngineFullLive,
   DIAL_NAMES,
@@ -100,7 +109,7 @@ import { makeMessagingGateway, type MessagingGateway } from "../main/messaging.j
 import { createTraceWriter, traceError, type TraceWriter } from "../main/trace.js"
 import { makeTtsEngine, type TtsEngine } from "../main/tts-engine.js"
 import { fanOutChannels } from "../main/channels.js"
-import type { ChatChannelsResult } from "./protocol.js"
+import type { ChatChannelsResult, HomedashSettingEntry, HomedashWidgetEntry } from "./protocol.js"
 
 // ── Error hygiene ───────────────────────────────────────────────────────────
 
@@ -146,6 +155,85 @@ export interface ChatStreams {
   readonly activeIds: () => ReadonlyArray<string>
 }
 
+/**
+ * A completed tool call's footer outcome (2026-10-12): did it succeed,
+ * and what did it CONCLUDE — the result's substance, never the request
+ * that produced it (Kimler: hover tips present conclusions). Failures
+ * are detected by the loop's own conventions: an IoError outcome
+ * object, or an `{ error }` result. Extractors cover the tools whose
+ * result shapes are known; everything else falls back to the result's
+ * most human field or a compact sketch.
+ */
+const summarizeToolResult = (tool: string, result: unknown): { ok: boolean; conclusion: string } => {
+  const trunc = (s: string, n = 240): string => (s.length > n ? s.slice(0, n).trimEnd() + "…" : s)
+  const firstLines = (s: string): string =>
+    trunc(s.split("\n").map((l) => l.trim()).filter((l) => l !== "").slice(0, 2).join(" "))
+  if (typeof result === "object" && result !== null) {
+    const r = result as Record<string, unknown>
+    if (r["_tag"] === "IoError") {
+      return { ok: false, conclusion: trunc(`Failed: ${typeof r["reason"] === "string" ? r["reason"] : "I/O error"}`) }
+    }
+    if (typeof r["error"] === "string") {
+      return { ok: false, conclusion: trunc(`Failed: ${r["error"]}`) }
+    }
+  }
+  if (typeof result === "string") return { ok: true, conclusion: firstLines(result) }
+  if (typeof result === "object" && result !== null) {
+    const r = result as Record<string, unknown>
+    const s = (k: string): string | undefined => (typeof r[k] === "string" ? (r[k] as string) : undefined)
+    switch (tool) {
+      case "knowledge.list": {
+        const cards = Array.isArray(r["cards"]) ? r["cards"] : []
+        return { ok: true, conclusion: `${cards.length} reference card(s) in the store` }
+      }
+      case "knowledge.write":
+        return { ok: true, conclusion: `Saved reference card "${s("slug") ?? "?"}"` }
+      case "knowledge.read":
+        return { ok: true, conclusion: firstLines(s("content") ?? "") || `Read card "${s("slug") ?? "?"}"` }
+      case "project.list": {
+        const ps = Array.isArray(r["projects"]) ? r["projects"] : []
+        return { ok: true, conclusion: `${ps.length} project(s) exist` }
+      }
+      case "project.create": {
+        const p = r["project"] as { name?: unknown } | undefined
+        return { ok: true, conclusion: `Project "${typeof p?.name === "string" ? p.name : "?"}" created and active` }
+      }
+      case "project.declare": {
+        const a = r["active"] as { name?: unknown } | undefined
+        return { ok: true, conclusion: `Active project: ${typeof a?.name === "string" ? a.name : "?"}` }
+      }
+      case "research.status": {
+        const runs = Array.isArray(r["runs"]) ? r["runs"] : []
+        const latest = runs[0] as { status?: unknown } | undefined
+        return {
+          ok: true,
+          conclusion: runs.length === 0 ? "No research runs in this project yet" : `${runs.length} run(s); latest: ${typeof latest?.status === "string" ? latest.status : "?"}`
+        }
+      }
+      case "job.spawn":
+        return { ok: true, conclusion: `Background job started (${s("jobId") ?? "?"})` }
+      case "capability.request":
+        return {
+          ok: true,
+          conclusion: r["recorded"] === false ? `Request already on file: ${s("capability") ?? tool}` : `Capability requested: ${s("capability") ?? tool}`
+        }
+      case "doc.read":
+        return { ok: true, conclusion: firstLines(s("content") ?? "") || `Read ${s("path") ?? "file"}` }
+      case "doc.write": {
+        const chars = typeof r["chars"] === "number" ? r["chars"] : 0
+        return { ok: true, conclusion: `${r["existed"] === true ? "Updated" : "Wrote"} ${s("path") ?? "file"} (${chars} chars)` }
+      }
+      case "drawer.preview":
+        return { ok: true, conclusion: `Showing "${s("title") ?? s("id") ?? "document"}"` }
+      default: {
+        const pick = s("message") ?? s("summary") ?? s("title") ?? s("now") ?? s("path") ?? s("slug")
+        return { ok: true, conclusion: pick !== undefined ? trunc(pick) : trunc(JSON.stringify(result) ?? "") }
+      }
+    }
+  }
+  return { ok: true, conclusion: result === undefined ? "Done" : trunc(String(result)) }
+}
+
 export const createChatStreams = (
   engine: DesktopEngine,
   onSettled?: (streamId: string, text: string) => Promise<ChatChannelsResult | undefined>,
@@ -180,9 +268,19 @@ export const createChatStreams = (
           } else {
             console.log(`[aimy] chat.chunk: stream=${streamId} tag=${next.value._tag}`)
             trace?.log("main", streamId, "chat.chunk", { tag: next.value._tag })
+            // ToolCall chunks carry a COMPLETED call with its result
+            // (2026-10-12): forward the outcome so the renderer's footer
+            // tag can land green/red with a conclusion tooltip. (Before
+            // this, the chunk was logged and dropped.)
+            if (next.value._tag === "ToolCall") {
+              const outcome = summarizeToolResult(next.value.tool, next.value.result)
+              console.log(`[aimy] chat.tool: stream=${streamId} tool=${next.value.tool} ok=${outcome.ok}`)
+              trace?.log("main", streamId, "chat.tool", { tool: next.value.tool, ok: outcome.ok })
+              push({ _tag: "chat.tool", streamId, tool: next.value.tool, ok: outcome.ok, conclusion: outcome.conclusion })
+            }
           }
-          // Non-token chunks (ToolCall, Done) have no IPC event — the
-          // protocol carries tokens plus terminal state only.
+          // The Done chunk has no IPC event — chat.done below carries
+          // the terminal state.
         }
         console.log(`[aimy] chat.done: stream=${streamId} tokens=${tokenCount} textLen=${text.length}`)
         trace?.log("main", streamId, "chat.done", { tokens: tokenCount, textLen: text.length, totalMs: Date.now() - startMs, text: text.slice(0, 2000) })
@@ -1071,6 +1169,569 @@ export const createHandlerTable = (
         return
       }
       await shell.openExternal(url)
+    },
+    // Drawer save-to-disk (2026-10-12). Writes ONLY under planning/ or
+    // docs/ of the repo root; traversal is refused. The renderer never
+    // gets raw filesystem access — this validated write is the whole API.
+    "docs.save": async (payload) => {
+      const docPath = reqString(payload, "path")
+      const content = reqString(payload, "content")
+      if (!docPath.startsWith("planning/") && !docPath.startsWith("docs/")) {
+        throw new Error("aimy: docs.save only writes under planning/ or docs/")
+      }
+      if (docPath.includes("..")) {
+        throw new Error("aimy: docs.save path traversal refused")
+      }
+      const repoRoot = process.env.AIMY_REPO_ROOT ?? process.cwd()
+      const fullPath = path.join(repoRoot, docPath)
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true })
+      fs.writeFileSync(fullPath, content, "utf-8")
+      console.log(`[aimy] docs.save: wrote ${docPath} (${content.length} chars)`)
+      return { path: docPath }
+    },
+    // Drawer home panel (2026-10-12): read a document back (Continue),
+    // assemble the home data (recents / pending requests / knowledge
+    // cards) from the user's own stores, and dismiss a request. The
+    // renderer never gets raw filesystem access — these validated,
+    // read-scoped operations are the whole API.
+    "docs.load": async (payload) => {
+      const rawPath = reqString(payload, "path")
+      const repoRoot = process.env.AIMY_REPO_ROOT ?? process.cwd()
+      let docPath = rawPath
+      if (!rawPath.startsWith("planning/") && !rawPath.startsWith("docs/")) {
+        // A bare document name (chat document references carry the
+        // name as shown): resolve it against the two document
+        // roots in the order doc.list searches them. A name is a
+        // single segment by construction — separators and
+        // traversal stay refused, so the read scope cannot widen.
+        if (rawPath.includes("/") || rawPath.includes("..") || !rawPath.endsWith(".md")) {
+          throw new Error("aimy: docs.load only reads under planning/ or docs/")
+        }
+        const hit = ["planning", "docs"].find((dir) => fs.existsSync(path.join(repoRoot, dir, rawPath)))
+        if (hit === undefined) {
+          throw new Error(`aimy: docs.load no document named ${rawPath} under planning/ or docs/`)
+        }
+        docPath = `${hit}/${rawPath}`
+        console.log(`[aimy] docs.load: resolved ${rawPath} -> ${docPath}`)
+      }
+      if (docPath.includes("..")) {
+        throw new Error("aimy: docs.load path traversal refused")
+      }
+      const content = fs.readFileSync(path.join(repoRoot, docPath), "utf-8")
+      console.log(`[aimy] docs.load: read ${docPath} (${content.length} chars)`)
+      return { path: docPath, content }
+    },
+    "home.data": async () => {
+      const repoRoot = process.env.AIMY_REPO_ROOT ?? process.cwd()
+      const aimyHome = path.join(os.homedir(), ".aimy")
+      // Continue: markdown under planning/ + docs/, most recently
+      // modified first; title from the first heading when present.
+      const recents: Array<{ path: string; title: string; at: number }> = []
+      for (const dir of ["planning", "docs"]) {
+        let names: Array<string> = []
+        try {
+          names = fs.readdirSync(path.join(repoRoot, dir))
+        } catch {
+          names = []
+        }
+        for (const name of names) {
+          if (!name.endsWith(".md")) continue
+          const rel = `${dir}/${name}`
+          try {
+            const st = fs.statSync(path.join(repoRoot, rel))
+            const head = fs.readFileSync(path.join(repoRoot, rel), "utf-8").slice(0, 2000)
+            const heading = head.split("\n").map((l) => l.trim()).find((l) => l.startsWith("# "))
+            const title = heading !== undefined
+              ? heading.replace(/^#\s+/, "").slice(0, 80)
+              : name.replace(/\.md$/, "").replace(/-/g, " ")
+            recents.push({ path: rel, title, at: Math.round(st.mtimeMs) })
+          } catch {
+            // Unreadable file: not a recent, skip silently.
+          }
+        }
+      }
+      recents.sort((a, b) => b.at - a.at)
+      // Needs you: pending capability requests, newest first.
+      const requests: Array<{ capability: string; why: string; at: string }> = []
+      try {
+        const raw = fs.readFileSync(path.join(aimyHome, "capability-requests.jsonl"), "utf-8")
+        for (const line of raw.split("\n")) {
+          if (line.trim() === "") continue
+          try {
+            const r = JSON.parse(line) as { capability?: unknown; why?: unknown; at?: unknown; status?: unknown; probeNote?: unknown }
+            if (r.status === "pending" && typeof r.capability === "string" && typeof r.at === "string") {
+              // A failed preflight rides the card as evidence (2026-10-12):
+              // Needs You then means "blocked, and we know why".
+              const baseWhy = typeof r.why === "string" ? r.why.slice(0, 300) : ""
+              const why = typeof r.probeNote === "string" && r.probeNote !== ""
+                ? `${baseWhy}\nPreflight check failed: ${r.probeNote}`.slice(0, 420)
+                : baseWhy
+              requests.push({
+                capability: r.capability,
+                why,
+                at: r.at,
+              })
+            }
+          } catch {
+            // Malformed line: skip, never fail the whole panel.
+          }
+        }
+      } catch {
+        // No requests file yet: an empty queue is a fine answer.
+      }
+      requests.reverse()
+      // What she knows: the shared knowledge store's index.
+      const cards: Array<{ slug: string; title: string; whenToUse: string; proven: number; updated: string }> = []
+      try {
+        const index = fs.readFileSync(path.join(aimyHome, "knowledge", "INDEX.md"), "utf-8")
+        for (const rawLine of index.split("\n")) {
+          const line = rawLine.trim()
+          if (!line.startsWith("- ") || !line.includes("cards/")) continue
+          const seg = line.slice(2).split(" · ")
+          const headParts = (seg[0] ?? "").split(" — ")
+          const slug = (headParts[0] ?? "").trim()
+          if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) continue
+          const provenMatch = line.match(/proven:\s*(\d+)/)
+          const updatedMatch = line.match(/updated:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/)
+          cards.push({
+            slug,
+            title: (headParts[1] ?? slug).trim(),
+            whenToUse: headParts.slice(2).join(" — ").trim(),
+            proven: provenMatch !== null ? Number(provenMatch[1]) : 0,
+            updated: updatedMatch !== null ? updatedMatch[1]! : "",
+          })
+        }
+      } catch {
+        // No knowledge store yet: no cards.
+      }
+      // Project: the ACTIVE project's identity, goals, assets, and
+      // research runs (Projects v1, 2026-10-12). Read defensively from
+      // the user's own store — a missing/corrupt store is a null
+      // section, never a failed panel.
+      const projectList: Array<{ id: string; name: string; isDefault: boolean }> = []
+      let project: {
+        id: string; name: string; purpose: string; isDefault: boolean
+        goals: Array<string>
+        assets: Array<{ kind: string; title: string; role: string; path?: string; addedAt: string }>
+        runs: Array<{
+          runId: string; query: string; mode: string; depth: string; status: string; stage: string
+          startedAt: string; finishedAt?: string
+          counters: { searches: number; fetches: number; claims: number; clusters: number; rounds: number }
+          etaMs: number | null; deliverableTitle: string; deliverablePath: string | null; termination?: string
+        }>
+      } | null = null
+      try {
+        const projectsDir = path.join(aimyHome, "projects")
+        const index = JSON.parse(fs.readFileSync(path.join(projectsDir, "index.json"), "utf-8")) as {
+          activeProjectId?: unknown
+          projects?: unknown
+        }
+        // Switcher list (2026-10-12): every project's id + display name.
+        const rawIndexProjects = Array.isArray(index.projects) ? index.projects : []
+        for (const entry of rawIndexProjects) {
+          if (typeof entry !== "object" || entry === null) continue
+          const e = entry as Record<string, unknown>
+          if (typeof e["id"] !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(e["id"])) continue
+          let name = typeof e["name"] === "string" ? e["name"] : e["id"]
+          try {
+            const rec = JSON.parse(fs.readFileSync(path.join(projectsDir, e["id"], "project.json"), "utf-8")) as { name?: unknown }
+            if (typeof rec.name === "string") name = rec.name
+          } catch {
+            // Fall back to the index entry's name.
+          }
+          projectList.push({ id: e["id"], name, isDefault: e["id"] === "default" })
+        }
+        const activeId = typeof index.activeProjectId === "string" && /^[a-z0-9][a-z0-9-]*$/.test(index.activeProjectId)
+          ? index.activeProjectId
+          : "default"
+        const record = JSON.parse(fs.readFileSync(path.join(projectsDir, activeId, "project.json"), "utf-8")) as {
+          name?: unknown; purpose?: unknown; goals?: unknown; assets?: unknown
+        }
+        const rawAssets = Array.isArray(record.assets) ? record.assets : []
+        const assets = rawAssets.flatMap((a) => {
+          if (typeof a !== "object" || a === null) return []
+          const o = a as Record<string, unknown>
+          if (typeof o["title"] !== "string" || typeof o["kind"] !== "string") return []
+          return [{
+            kind: o["kind"] as string,
+            title: o["title"] as string,
+            role: typeof o["role"] === "string" ? o["role"] : "reference",
+            ...(typeof o["path"] === "string" ? { path: o["path"] } : {}),
+            addedAt: typeof o["addedAt"] === "string" ? o["addedAt"] : ""
+          }]
+        })
+        // Deliverables first, then most recent; the panel shows a few.
+        assets.sort((x, y) => (x.role === y.role ? (x.addedAt < y.addedAt ? 1 : -1) : x.role === "deliverable" ? -1 : 1))
+        const runs: Array<{
+          runId: string; query: string; mode: string; depth: string; status: string; stage: string
+          startedAt: string; finishedAt?: string
+          counters: { searches: number; fetches: number; claims: number; clusters: number; rounds: number }
+          etaMs: number | null; deliverableTitle: string; deliverablePath: string | null; termination?: string
+        }> = []
+        try {
+          for (const name of fs.readdirSync(path.join(projectsDir, activeId, "research"))) {
+            try {
+              const raw = JSON.parse(fs.readFileSync(path.join(projectsDir, activeId, "research", name, "run.json"), "utf-8")) as Record<string, unknown>
+              const counters = (raw["counters"] ?? {}) as Record<string, unknown>
+              const deliverable = (raw["deliverable"] ?? {}) as Record<string, unknown>
+              const num = (v: unknown): number => (typeof v === "number" ? v : 0)
+              runs.push({
+                runId: typeof raw["runId"] === "string" ? raw["runId"] : name,
+                query: typeof raw["query"] === "string" ? raw["query"] : "(unknown query)",
+                mode: typeof raw["mode"] === "string" ? raw["mode"] : "answer",
+                depth: typeof raw["depth"] === "string" ? raw["depth"] : "standard",
+                status: typeof raw["status"] === "string" ? raw["status"] : "unknown",
+                stage: typeof raw["stage"] === "string" ? raw["stage"] : "",
+                startedAt: typeof raw["startedAt"] === "string" ? raw["startedAt"] : "",
+                ...(typeof raw["finishedAt"] === "string" ? { finishedAt: raw["finishedAt"] } : {}),
+                counters: {
+                  searches: num(counters["searches"]), fetches: num(counters["fetches"]),
+                  claims: num(counters["claims"]), clusters: num(counters["clusters"]), rounds: num(counters["rounds"])
+                },
+                etaMs: typeof raw["etaMs"] === "number" ? raw["etaMs"] : null,
+                deliverableTitle: typeof deliverable["title"] === "string" ? deliverable["title"] : "",
+                deliverablePath: typeof deliverable["path"] === "string" ? deliverable["path"] : null,
+                ...(typeof raw["termination"] === "string" ? { termination: raw["termination"] } : {})
+              })
+            } catch {
+              // One unreadable run record: skip it, keep the panel.
+            }
+          }
+        } catch {
+          // No research directory yet: no runs.
+        }
+        runs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+        project = {
+          id: activeId,
+          name: typeof record.name === "string" ? record.name : activeId,
+          purpose: typeof record.purpose === "string" ? record.purpose : "",
+          isDefault: activeId === "default",
+          goals: Array.isArray(record.goals) ? record.goals.filter((g): g is string => typeof g === "string") : [],
+          assets: assets.slice(0, 8),
+          runs: runs.slice(0, 6)
+        }
+      } catch {
+        project = null
+      }
+      // Mirror Field feeds (2026-10-13): past conversations from
+      // their session records, and thread memories from her
+      // thread-history — the field's chat and memory nodes are made
+      // of these. Fail-soft throughout: a missing store is an empty
+      // list, never a broken home panel.
+      const chats: Array<{ id: string; subject: string; at: number; messages: number }> = []
+      try {
+        const sessDir = path.join(aimyHome, "memory", "sessions")
+        const files = fs.readdirSync(sessDir)
+          .filter((n) => n.startsWith("session-") && n.endsWith(".jsonl"))
+          .map((n) => {
+            try {
+              return { n, m: fs.statSync(path.join(sessDir, n)).mtimeMs }
+            } catch {
+              return null
+            }
+          })
+          .filter((x): x is { n: string; m: number } => x !== null)
+          .sort((a, b) => b.m - a.m)
+          .slice(0, 6)
+        for (const f of files) {
+          try {
+            const raw = fs.readFileSync(path.join(sessDir, f.n), "utf-8")
+            let subject = ""
+            let messages = 0
+            for (const line of raw.split("\n")) {
+              if (!line.includes('"kind":"message"')) continue
+              messages++
+              if (subject === "") {
+                try {
+                  const rec = JSON.parse(line) as { payload?: { role?: unknown; text?: unknown; wake?: unknown } }
+                  if (rec.payload?.role === "user" && rec.payload.wake !== true && typeof rec.payload.text === "string") {
+                    subject = rec.payload.text.replace(/\s+/g, " ").trim().slice(0, 60)
+                  }
+                } catch {
+                  // Malformed line: keep scanning for a subject.
+                }
+              }
+            }
+            if (messages > 0) {
+              chats.push({
+                id: f.n.replace(/\.jsonl$/, ""),
+                subject: subject === "" ? "Conversation" : subject,
+                at: Math.round(f.m),
+                messages,
+              })
+            }
+          } catch {
+            // One unreadable session: skip it, keep the panel.
+          }
+        }
+      } catch {
+        // No sessions directory yet: no chats.
+      }
+      const memories: Array<{ sessionId: string; summary: string; messageCount: number; archivedAt: number }> = []
+      try {
+        const raw = fs.readFileSync(path.join(aimyHome, "thread-history.json"), "utf-8")
+        const arr = JSON.parse(raw) as Array<{ sessionId?: unknown; summary?: unknown; messageCount?: unknown; archivedAt?: unknown }>
+        const valid = arr.filter(
+          (e): e is { sessionId: string; summary: string; messageCount?: unknown; archivedAt: number } =>
+            typeof e.sessionId === "string" && typeof e.summary === "string" && typeof e.archivedAt === "number"
+        )
+        valid.sort((a, b) => b.archivedAt - a.archivedAt)
+        for (const e of valid.slice(0, 6)) {
+          memories.push({
+            sessionId: e.sessionId,
+            summary: e.summary.slice(0, 300),
+            messageCount: typeof e.messageCount === "number" ? e.messageCount : 0,
+            archivedAt: e.archivedAt,
+          })
+        }
+      } catch {
+        // No thread history yet: no memories.
+      }
+      // The journal's metadata — never its content (2026-10-13). The
+      // journal is the entity's private page: the dash may know it
+      // exists and when it last changed. The file is read only to
+      // count it; nothing of what it says leaves this process.
+      let journal: { updatedAt: number; chars: number } | null = null
+      try {
+        const jp = path.join(aimyHome, "journal.md")
+        const st = fs.statSync(jp)
+        const text = fs.readFileSync(jp, "utf-8")
+        journal = { updatedAt: Math.round(st.mtimeMs), chars: text.length }
+      } catch {
+        journal = null
+      }
+      console.log(`[aimy] home.data: recents=${recents.length} requests=${requests.length} cards=${cards.length} project=${project?.id ?? "none"} runs=${project?.runs.length ?? 0} projectList=${projectList.length} chats=${chats.length} memories=${memories.length} journal=${journal === null ? "none" : "yes"}`)
+      return { recents: recents.slice(0, 8), requests: requests.slice(0, 6), cards, project, projectList, chats, memories, journal }
+    },
+    "home.requestDetail": async (payload) => {
+      const capability = reqString(payload, "capability")
+      const at = reqString(payload, "at")
+      const file = path.join(os.homedir(), ".aimy", "capability-requests.jsonl")
+      const raw = fs.readFileSync(file, "utf-8")
+      for (const line of raw.split("\n")) {
+        if (line.trim() === "") continue
+        try {
+          const r = JSON.parse(line) as { capability?: unknown; why?: unknown; at?: unknown; status?: unknown }
+          if (r.status === "pending" && r.capability === capability && r.at === at) {
+            const detail = {
+              capability,
+              why: typeof r.why === "string" ? r.why : "",
+              at,
+            }
+            console.log(`[aimy] home.requestDetail: ${capability} (${at}) whyChars=${detail.why.length}`)
+            return detail
+          }
+        } catch {
+          // Malformed lines cannot match the requested record.
+        }
+      }
+      throw new Error(`aimy: pending capability request not found: ${capability}`)
+    },
+    "home.dismissRequest": async (payload) => {
+      const capability = reqString(payload, "capability")
+      const at = reqString(payload, "at")
+      const file = path.join(os.homedir(), ".aimy", "capability-requests.jsonl")
+      let lines: Array<string> = []
+      try {
+        lines = fs.readFileSync(file, "utf-8").split("\n").filter((l) => l.trim() !== "")
+      } catch {
+        return
+      }
+      let changed = false
+      const out = lines.map((line) => {
+        try {
+          const r = JSON.parse(line) as Record<string, unknown>
+          if (r["capability"] === capability && r["at"] === at && r["status"] === "pending") {
+            changed = true
+            return JSON.stringify({ ...r, status: "dismissed" })
+          }
+        } catch {
+          // Keep malformed lines untouched.
+        }
+        return line
+      })
+      if (changed) {
+        fs.writeFileSync(file, out.join("\n") + "\n", "utf-8")
+        console.log(`[aimy] home.dismissRequest: dismissed ${capability} (${at})`)
+      }
+    },
+    // ── HomeDash (2026-10-13) ────────────────────────────────────────
+    // The dash is a stage of widgets. Widget definitions live in
+    // ~/.aimy/homedash/available/<id>/widget.json; enablement is a
+    // link in ~/.aimy/homedash/enabled/ (systemd-style; a marker
+    // file carrying the target path is the portable equivalent).
+    // The three platform widgets seed on first list; user edits to
+    // manifests and links are theirs and are never overwritten.
+    "homedash.list": async () => {
+      const aimyHome = path.join(os.homedir(), ".aimy")
+      const hdRoot = path.join(aimyHome, "homedash")
+      const availDir = path.join(hdRoot, "available")
+      const enabDir = path.join(hdRoot, "enabled")
+      fs.mkdirSync(availDir, { recursive: true })
+      fs.mkdirSync(enabDir, { recursive: true })
+      const BUNDLED: Record<string, Record<string, unknown>> = {
+        workon: {
+          id: "workon", name: "WorkOn", description: "The actionable layer: the active project, live jobs, what needs you.", version: "1.0.0", priority: 1000,
+          settings: [
+            { key: "showNeedsYou", type: "toggle", label: "Show what needs you", default: true },
+            { key: "showJobs", type: "toggle", label: "Show running jobs", default: true },
+          ],
+        },
+        globenews: {
+          id: "globenews", name: "GlobeNews", description: "The vector earth: grab it, tilt it, watch the world on it.", version: "1.0.0", priority: 400,
+          settings: [
+            { key: "spinMinutes", type: "slider", label: "Spin — minutes per turn", min: 0.5, max: 6, step: 0.5, default: 2 },
+            { key: "density", type: "select", label: "Dot density", options: ["calm", "rich"], default: "rich" },
+            { key: "glowPx", type: "slider", label: "Rim glow reach (px)", min: 0, max: 40, step: 1, default: 20 },
+            { key: "tiltDeg", type: "slider", label: "Tilt — disc-centre latitude", min: -60, max: 24, step: 1, default: -24 },
+          ],
+        },
+        mindmap: {
+          id: "mindmap", name: "MindMap", description: "The organism graph: projects, knowledge, memories. Recency flows downward.", version: "1.0.0", priority: 300,
+          settings: [
+            { key: "breeze", type: "toggle", label: "Breeze — living motion", default: true },
+            { key: "labels", type: "toggle", label: "Permanent node labels", default: true },
+          ],
+        },
+      }
+      for (const [id, manifest] of Object.entries(BUNDLED)) {
+        const dir = path.join(availDir, id)
+        fs.mkdirSync(dir, { recursive: true })
+        const f = path.join(dir, "widget.json")
+        if (!fs.existsSync(f)) fs.writeFileSync(f, JSON.stringify(manifest, null, 2), "utf-8")
+      }
+      if (fs.readdirSync(enabDir).length === 0) {
+        for (const id of Object.keys(BUNDLED)) {
+          const link = path.join(enabDir, id)
+          try {
+            fs.symlinkSync(path.join(availDir, id), link, "junction")
+          } catch {
+            fs.writeFileSync(link, path.join(availDir, id), "utf-8")
+          }
+        }
+        console.log(`[aimy] homedash: seeded ${Object.keys(BUNDLED).length} bundled widgets + enable links`)
+      }
+      let values: Record<string, Record<string, unknown>> = {}
+      try {
+        values = JSON.parse(fs.readFileSync(path.join(hdRoot, "settings.json"), "utf-8")) as Record<string, Record<string, unknown>>
+      } catch {
+        values = {}
+      }
+      const widgets: Array<HomedashWidgetEntry> = []
+      for (const entry of fs.readdirSync(enabDir)) {
+        let dir = path.join(enabDir, entry)
+        try {
+          if (!fs.statSync(dir).isDirectory()) {
+            const target = fs.readFileSync(dir, "utf-8").trim()
+            if (target !== "") dir = target
+          }
+        } catch {
+          continue
+        }
+        try {
+          const manifest = JSON.parse(fs.readFileSync(path.join(dir, "widget.json"), "utf-8")) as Record<string, unknown>
+          const id = typeof manifest["id"] === "string" ? (manifest["id"] as string) : entry
+          const v = (values[id] ?? {}) as Record<string, unknown>
+          const schema = Array.isArray(manifest["settings"]) ? (manifest["settings"] as Array<Record<string, unknown>>) : []
+          // Saved values the manifest does not declare (the in-place
+          // editor's geoX/geoY/geoW/geoH, future keys) must round-
+          // trip too — a value that saves but never reads back is a
+          // silent no-op. Priority stays a top-level field.
+          const schemaKeys = new Set(schema.map((s) => String(s["key"])))
+          const extraSettings: Array<HomedashSettingEntry> = Object.keys(v)
+            .filter((k) => k !== "priority" && !schemaKeys.has(k))
+            .map((k) => ({ key: k, type: "number", label: k, value: v[k] as string | number | boolean }))
+          widgets.push({
+            id,
+            name: typeof manifest["name"] === "string" ? (manifest["name"] as string) : id,
+            description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
+            version: typeof manifest["version"] === "string" ? (manifest["version"] as string) : "0.0.0",
+            priority: typeof v["priority"] === "number" ? (v["priority"] as number) : typeof manifest["priority"] === "number" ? (manifest["priority"] as number) : 500,
+            settings: [
+              ...schema.map((s): HomedashSettingEntry => ({
+                key: String(s["key"]),
+                type: String(s["type"]),
+                label: String(s["label"]),
+                value: (v[String(s["key"])] ?? s["default"]) as string | number | boolean,
+                ...(typeof s["min"] === "number" ? { min: s["min"] as number } : {}),
+                ...(typeof s["max"] === "number" ? { max: s["max"] as number } : {}),
+                ...(typeof s["step"] === "number" ? { step: s["step"] as number } : {}),
+                ...(Array.isArray(s["options"]) ? { options: s["options"] as Array<string> } : {}),
+              })),
+              ...extraSettings,
+            ],
+          })
+        } catch {
+          // A broken widget folder skips; the dash survives it.
+        }
+      }
+      widgets.sort((a, b) => a.priority - b.priority)
+      console.log(`[aimy] homedash.list: enabled=${widgets.map((w) => `${w.id}@${w.priority}`).join(",")}`)
+      return { widgets }
+    },
+    "homedash.setSetting": async (payload) => {
+      const widgetId = reqString(payload, "widgetId")
+      const key = reqString(payload, "key")
+      const value = (payload as Record<string, unknown>)["value"]
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        throw new Error("homedash.setSetting: value must be a string, number, or boolean")
+      }
+      if (key === "priority" && (typeof value !== "number" || value < 1 || value > 1000)) {
+        throw new Error("homedash.setSetting: priority must be a number 1-1000")
+      }
+      const aimyHome = path.join(os.homedir(), ".aimy")
+      const hdRoot = path.join(aimyHome, "homedash")
+      fs.mkdirSync(hdRoot, { recursive: true })
+      const file = path.join(hdRoot, "settings.json")
+      let values: Record<string, Record<string, unknown>> = {}
+      try {
+        values = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, Record<string, unknown>>
+      } catch {
+        values = {}
+      }
+      values[widgetId] = { ...(values[widgetId] ?? {}), [key]: value }
+      fs.writeFileSync(file, JSON.stringify(values, null, 2), "utf-8")
+      console.log(`[aimy] homedash.setSetting: ${widgetId}.${key} = ${JSON.stringify(value)}`)
+    },
+    // ── Projects UI (2026-10-12) ─────────────────────────────────────
+    // Direct-manipulation surface over the SAME store AImy's tools use
+    // (agent-loop projects.ts) — the two paths can never disagree.
+    "projects.list": async () => {
+      const projects = storeListProjects()
+      const active = storeGetActiveProject()
+      console.log(`[aimy] projects.list: ${projects.length} project(s), active=${active.id}`)
+      return {
+        activeProjectId: active.id,
+        projects: projects.map((p) => ({ id: p.id, name: p.name, purpose: p.purpose, isDefault: p.isDefault, assetCount: p.assets.length }))
+      }
+    },
+    "projects.create": async (payload) => {
+      const { project, created } = storeCreateProject(payload.name, payload.purpose)
+      storeSetActiveProject(project.id)
+      console.log(`[aimy] projects.create: ${project.id} created=${created} (now active)`)
+      return { id: project.id, name: project.name, created }
+    },
+    "projects.setActive": async (payload) => {
+      const ok = storeSetActiveProject(payload.id)
+      const active = storeGetActiveProject()
+      console.log(`[aimy] projects.setActive: ${payload.id} ok=${ok}`)
+      return { activeProjectId: active.id }
+    },
+    "projects.moveAsset": async (payload) => {
+      const kinds = ["document", "paper", "brief", "research-run", "request", "card", "file"]
+      if (!kinds.includes(payload.kind)) return { moved: false }
+      const moved = storeMoveAsset(payload.fromId, payload.toId, {
+        kind: payload.kind as StoreProjectAsset["kind"],
+        title: payload.title,
+        ...(typeof payload.path === "string" && payload.path !== "" ? { path: payload.path } : {})
+      })
+      console.log(`[aimy] projects.moveAsset: [${payload.kind}] "${payload.title}" ${payload.fromId} -> ${payload.toId} moved=${moved}`)
+      return { moved }
+    },
+    "projects.addAsset": async (payload) => {
+      const added = storeAddDocumentAsset(payload.projectId, payload.path, payload.title)
+      console.log(`[aimy] projects.addAsset: ${payload.path} into ${payload.projectId} added=${added}`)
+      return { added }
     },
   }
 }

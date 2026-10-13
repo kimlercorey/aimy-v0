@@ -20,6 +20,8 @@ import { AgentLoop } from "../../agent-loop/src/index.js"
 import { ChunkSanitizer } from "./rendering.js"
 import { chatChunkToMessage } from "./chat/streaming.js"
 import { chatPanelView } from "./chat/view.js"
+import { drawerView } from "./chat/drawer.js"
+import { icon } from "./icons.js"
 import { initialModel, Model } from "./model.js"
 import { Message } from "./messages.js"
 import { update, type ShellServices } from "./update.js"
@@ -37,15 +39,41 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
 
 const shellView = (model: Model, h: HtmlBuilder<Message>): Document => {
   const subject = model.session.subject || ""
+  // Defensive: old persisted state may lack drawer (added 2026-10-12).
+  const drawerState = model.session.drawer ?? { open: false, spaces: [], activeSpaceId: null, maxSpaces: 3 }
+  const drawer = drawerView(h, drawerState)
   return {
   title: subject ? `AImy — ${subject}` : "AImy",
   body: h.div([h.Class("shell")], [
     h.header([h.Class("shell-header")], [
-      h.h1([h.Class("shell-title")], ["AImy"]),
+      // Wayfinding header (2026-10-13): home mark + location. The
+      // mark is the door back to the homedash (its own panel now):
+      // a class-hooked button — the renderer's click pump routes
+      // .js-home-nav to the composed SelectPanel home, the DOM
+      // side-effect channel, since panel selection is composed
+      // state, not shell state.
+      h.h1([h.Class("shell-title")], [
+        h.button([h.Class("home-mark js-home-nav"), h.Title("Home — the dash")], [icon.home(h)]),
+        "Chat",
+      ]),
       h.span([h.Class("shell-session")], [subject]),
+      // Drawer toggle (Phase I 2026-10-12): mirrors the hamburger menu button.
+      h.button(
+        [
+          h.Class(
+            drawerState.open
+              ? "icon-btn drawer-toggle drawer-toggle-open"
+              : "icon-btn drawer-toggle"
+          ),
+          h.Title(drawerState.open ? "Close drawer" : "Open drawer"),
+          h.OnClick(Message.DrawerToggled({ open: !drawerState.open })),
+        ],
+        [icon.panelLeft(h)]
+      ),
     ]),
     h.main([h.Class("shell-main")], [
       chatPanelView(model.session, h),
+      ...(drawer ? [drawer] : []),
     ]),
   ]),
   }

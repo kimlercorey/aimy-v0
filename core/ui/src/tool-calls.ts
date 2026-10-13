@@ -8,7 +8,9 @@
  *
  * Display contract (Kimler, 2026-10-10):
  * - Bubble shows ONLY user-facing text (never raw JSON).
- * - Below the bubble, right-aligned, faint: tool names (e.g. "narrate").
+ * - Below the bubble, right-aligned, faint: tool ALIASES (plain-language
+ *   labels from tool-alias.ts, e.g. "Spoke aloud" for narrate) — never raw
+ *   function names (Kimler, 2026-10-12). The real name rides the tooltip.
  * - If tool args text and display text are the same, show the text in the
  *   bubble plus the faint tool label below.
  */
@@ -123,9 +125,44 @@ const findJsonEnd = (text: string, start: number): number => {
  */
 export const extractToolCalls = (text: string): ParsedToolCall[] => {
   const calls: ParsedToolCall[] = []
+  // XML-wrapped calls first (2026-10-12): `<tool_call>...{JSON}...</tool_call>`
+  // — the wrapper is part of the call's raw text so stripping removes the
+  // WHOLE region (previously only the inner JSON was stripped and the
+  // wrapper leaked into chat as a junk bubble). Spans are remembered so
+  // the scans below never double-count the JSON inside a wrapper.
+  const xmlSpans: Array<readonly [number, number]> = []
+  {
+    let cursor = 0
+    for (;;) {
+      const open = text.indexOf("<tool_call", cursor)
+      if (open === -1) break
+      const closeTag = text.indexOf("</tool_call>", open)
+      const regionEnd = closeTag === -1 ? text.length : closeTag + "</tool_call>".length
+      cursor = regionEnd
+      const braceStart = text.indexOf("{", open)
+      if (braceStart === -1 || braceStart >= regionEnd) continue
+      const objEnd = findJsonEnd(text, braceStart)
+      if (objEnd === -1 || objEnd >= regionEnd) continue
+      try {
+        const obj = JSON.parse(text.slice(braceStart, objEnd + 1)) as { tool?: unknown; args?: unknown }
+        if (typeof obj.tool === "string" && obj.tool.length > 0) {
+          const args = (obj.args !== null && typeof obj.args === "object" && !Array.isArray(obj.args))
+            ? obj.args as Record<string, unknown>
+            : {}
+          calls.push({ tool: obj.tool, args, raw: text.slice(open, regionEnd) })
+          xmlSpans.push([open, regionEnd])
+        }
+      } catch {
+        // Not valid JSON inside the wrapper — the scans below may still
+        // find pieces; the strip fallback handles the debris.
+      }
+    }
+  }
+  const inXmlSpan = (idx: number): boolean => xmlSpans.some(([s, e]) => idx >= s && idx < e)
   // Fenced blocks: ```aimy-tool\n{...}\n``` — parse the JSON properly.
   const fencePattern = /```aimy-tool\s*\n([\s\S]*?)\n```/g
   let fenceMatch: RegExpExecArray | null
+  let fenceCalls = 0
   while ((fenceMatch = fencePattern.exec(text)) !== null) {
     const json = (fenceMatch[1] ?? "").trim()
     const raw = fenceMatch[0]
@@ -136,13 +173,14 @@ export const extractToolCalls = (text: string): ParsedToolCall[] => {
           ? obj.args as Record<string, unknown>
           : {}
         calls.push({ tool: obj.tool, args, raw })
+        fenceCalls += 1
         continue
       }
     } catch {
       // Malformed JSON in fence — fall through to bare JSON scan below.
     }
   }
-  if (calls.length > 0) return calls
+  if (fenceCalls > 0) return calls
   // Fallback: bare {"tool": "...", "args": {...}} not in a fence.
   // Balanced-brace scan (2026-10-11): the old regex `\{[^}]*\}` broke on
   // nested objects (e.g. journal.write with large content). Scan for `{`,
@@ -151,6 +189,11 @@ export const extractToolCalls = (text: string): ParsedToolCall[] => {
   for (;;) {
     const toolKeyIdx = text.indexOf('"tool"', searchFrom)
     if (toolKeyIdx === -1) break
+    // Already captured as an XML-wrapped call above — never double-count.
+    if (inXmlSpan(toolKeyIdx)) {
+      searchFrom = toolKeyIdx + 6
+      continue
+    }
     // Find the opening `{` before the "tool" key (scan backwards).
     let objStart = -1
     for (let i = toolKeyIdx; i >= searchFrom; i--) {
@@ -249,6 +292,49 @@ const stripToolCalls = (text: string): string => {
     // Replace only the first occurrence (each call has a unique raw string).
     out = out.replace(c.raw, "\n\n")
   }
+  // Fallback (2026-10-12): if raw JSON tool calls remain (parser failed on
+  // huge args like full document content), strip them aggressively.
+  // The model sometimes emits fragments (just "args": {...} without the
+  // {"tool": wrapper), so we strip any line that looks like JSON when
+  // the text contains tool-call markers.
+  if (/"tool"\s*:/.test(out)) {
+    // First, try to find and remove JSON objects via balanced-brace scan,
+    // even if JSON.parse fails (malformed JSON from huge content).
+    let searchFrom = 0
+    for (;;) {
+      const toolIdx = out.indexOf('"tool"', searchFrom)
+      if (toolIdx === -1) break
+      // Find the opening brace.
+      let start = -1
+      for (let i = toolIdx; i >= Math.max(0, toolIdx - 20); i--) {
+        if (out[i] === "{") { start = i; break }
+      }
+      if (start === -1) { searchFrom = toolIdx + 6; continue }
+      const end = findJsonEnd(out, start)
+      if (end === -1) { searchFrom = toolIdx + 6; continue }
+      // Remove this JSON blob.
+      out = out.slice(0, start) + "\n\n" + out.slice(end + 1)
+      searchFrom = start
+    }
+    // Line-based fallback for fragments.
+    if (/"tool"\s*:/.test(out)) {
+      out = out
+        .split("\n")
+        .filter((line) => {
+          const t = line.trim()
+          // Keep lines that are clearly prose, drop JSON fragments.
+          if (t === "") return true
+          if (/^\{\s*"tool"/.test(t)) return false
+          if (/^"args"\s*:/.test(t)) return false
+          if (/^"(path|id|title|content|text)"\s*:/.test(t)) return false
+          if (/^[\{\}]\s*$/.test(t)) return false
+          // Drop lines that are mostly JSON (contain "tool": or "args": with braces).
+          if (t.includes('"tool"') && t.includes('"args"')) return false
+          return true
+        })
+        .join("\n")
+    }
+  }
   return out
     .replace(/\n{3,}/g, "\n\n")
     .trim()
@@ -275,7 +361,10 @@ export const parseMessageTools = (rawText: string): ParsedMessage => {
   // hover introspection for all tools, not just narrate).
   const toolSummaries = effectiveCalls.map((c) => summarizeToolCall(c.tool, c.args))
   if (calls.length === 0) {
-    return { text: stripArtifacts(rawText), toolsUsed: [], narratedTexts: [], toolSummaries: [] }
+    // Parser found no valid calls, but the text may still contain malformed
+    // tool JSON (huge args, broken escaping). Run the aggressive fallback
+    // stripper to ensure raw JSON never leaks into chat.
+    return { text: stripArtifacts(stripToolCalls(rawText)), toolsUsed: [], narratedTexts: [], toolSummaries: [] }
   }
 
   const toolsUsed = effectiveCalls.map((c) => c.tool)
@@ -293,6 +382,9 @@ export const parseMessageTools = (rawText: string): ParsedMessage => {
   }
 
   // Generic: strip tool JSON, keep remaining text.
+  // (2026-10-12): NEVER fall back to rawText — if stripping leaves nothing,
+  // the bubble is empty (tools show as faint labels below). Raw JSON must
+  // never appear in chat.
   const text = stripToolCalls(rawText)
-  return { text: stripArtifacts(text || rawText), toolsUsed, narratedTexts, toolSummaries }
+  return { text: stripArtifacts(text), toolsUsed, narratedTexts, toolSummaries }
 }

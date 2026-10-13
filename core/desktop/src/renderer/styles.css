@@ -57,6 +57,23 @@
   --radius: 4px;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* Detail-language tokens (UI workplan F1, 2026-10-12; report §2.1/§2.3).
+ * Theme-independent: the same closed scales in every theme. New UI code
+ * uses these — no off-scale values. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --radius-chip: 4px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -72,7 +89,7 @@ body {
 /* shell */
 .shell { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .shell-header {
-  display: flex; align-items: baseline; gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   padding: 10px 16px; border-bottom: none;
   background: transparent;
 }
@@ -87,9 +104,9 @@ body {
 .app { display: flex; flex-direction: row; height: 100%; overflow: hidden; }
 .app { display: flex; flex-direction: row; height: 100%; overflow: hidden; }
 .app-nav {
-  width: 200px; flex-shrink: 0;
+  width: 208px; flex-shrink: 0;
   background: var(--bg-panel); border-right: 1px solid var(--border);
-  padding: 14px 10px; display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-3) var(--space-2); display: flex; flex-direction: column; gap: var(--space-1);
 }
 .app-nav-header {
   display: flex; flex-direction: row;
@@ -150,12 +167,32 @@ body {
 
 /* Empty/welcome state: centered in the middle of the window */
 .empty-state {
+  position: relative;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   text-align: center;
   flex: 1; min-height: 40vh;
   padding: 32px 24px;
 }
+/* The Mirror Field (2026-10-12): ambient canvas behind the welcome
+ * text — counter-rotating pyramids. Whisper opacity via the canvas
+ * alphas; the fade-in is CSS. Text always rides above. */
+.mirror-field-hook {
+  position: absolute; inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.mirror-field-hook canvas {
+  display: block; width: 100%; height: 100%;
+  opacity: 0; transition: opacity 1600ms ease;
+  /* The field is interactive (grab the globe, hover/click nodes):
+   * the hook stays click-through, the canvas takes the events. */
+  pointer-events: auto;
+}
+.mirror-field-hook canvas.on { opacity: 1; }
+/* The field's data carrier: graph JSON for mirror-field.ts, never seen. */
+.mirror-field-data { display: none; }
+.empty-state > *:not(.mirror-field-hook) { position: relative; z-index: 1; }
 .empty-suggestions {
   display: flex; flex-direction: row; gap: 8px;
   justify-content: center; flex-wrap: wrap;
@@ -435,13 +472,36 @@ body {
 .voice-default-btn { width: 28px; height: 28px; }
 .voice-default-btn:hover { color: var(--action); }
 .app-nav-title { font-size: 17px; font-weight: 700; padding: 2px 10px 12px; }
+/* Nav rows (UI workplan Part 1A/1B): icon + label, fixed geometry in
+ * every state — the selected bar exists at rest (transparent) so
+ * nothing shifts. Selected = accent layer + bar + weight, never
+ * colour alone. Icon size is a class constant (20px primary rows,
+ * 18px platform rows), enforced here over the svg attributes. */
 .nav-item {
-  background: none; border: none; text-align: left;
-  padding: 8px 12px; border-radius: 6px;
+  display: flex; align-items: center; gap: var(--space-2);
+  min-height: 32px; width: 100%;
+  background: none; border: none; text-align: left; cursor: pointer;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius);
   color: var(--text-dim); font-size: 13px;
+  box-shadow: inset 3px 0 0 transparent;
+  transition: background 100ms ease, color 100ms ease;
 }
-.nav-item:hover:not(.nav-active) { color: var(--text); background: var(--bg-inset); }
-.nav-item.nav-active { color: var(--text); background: var(--bg-inset); font-weight: 600; }
+.nav-item svg.icon { width: 20px; height: 20px; }
+.nav-item:hover:not(.nav-active) { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.nav-item:active { background: color-mix(in srgb, var(--text) 12%, transparent); }
+.nav-item.nav-active {
+  color: var(--text); font-weight: 600;
+  background: color-mix(in srgb, var(--action) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--action);
+}
+.nav-item.nav-active svg.icon { color: var(--action); }
+.nav-item.nav-sub { min-height: 28px; font-size: 12.5px; padding-left: var(--space-4); }
+.nav-item.nav-sub svg.icon { width: 18px; height: 18px; }
+.nav-group-label {
+  margin: var(--space-4) var(--space-3) var(--space-1);
+  font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-dim);
+}
 .app-main { flex: 1; min-width: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; }
 .app-main > .app-panel { flex: 1; }
 .app-main > .shell { flex: 1; min-height: 0; }
@@ -627,8 +687,10 @@ input[type="text"], input:not([type]) {
 .markdown-body ul, .markdown-body ol {
   margin: 0 !important;
   padding-left: 1.5rem !important;
-  font-size: 0 !important;
-  line-height: 0 !important;
+  /* (2026-10-12 readability pass: the font-size:0/line-height:0 hack
+     that used to live here is gone — it pinched list text to 18px
+     lines under the later 1.6 body leading. The unified type block
+     at the end of this file owns list metrics now.) */
 }
 /* Minimal gap between label paragraph and list */
 .markdown-body p + ul, .markdown-body p + ol,
@@ -644,10 +706,10 @@ input[type="text"], input:not([type]) {
   margin-bottom: 0 !important;
   padding-bottom: 2px !important;
 }
-.markdown-body li { margin: 0 !important; padding: 0 !important; line-height: 18px !important; font-size: 14px !important; }
+.markdown-body li { margin: 0 !important; padding: 0 !important; }
 .markdown-body li + li { margin-top: 1px !important; }
 .markdown-body li::marker { color: var(--action); }
-.markdown-body li > p, .markdown-body li > div { margin: 0 !important; padding: 0 !important; line-height: 1.3 !important; }
+.markdown-body li > p, .markdown-body li > div { margin: 0 !important; padding: 0 !important; }
 /* Nested lists: zero all margins, minimal top gap */
 .markdown-body li ul, .markdown-body li ol {
   margin: 0 !important;
@@ -1631,11 +1693,235 @@ textarea.composer-input {
   cursor: help;
   border-bottom: 1px dotted var(--text-dim);
 }
+/* Tool outcome tints (2026-10-12): green = the call succeeded, red = it
+ * failed, running = still processing (spinner + dim). Untinted tags are
+ * calls whose completion was never observed (blocked/unexecuted). */
+.tool-tag--ok {
+  color: #2ea043;
+  border-bottom-color: #2ea043;
+}
+.tool-tag--failed {
+  color: #f85149;
+  border-bottom-color: #f85149;
+}
+.tool-tag--running {
+  color: var(--text-dim);
+}
+.tool-spin {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 4px;
+  border: 2px solid var(--text-dim);
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: tool-spin 0.7s linear infinite;
+}
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
 /* Legacy narrate-tag kept for backwards compat (now uses tool-tag). */
 .narrate-tag {
   cursor: help;
   border-bottom: 1px dotted var(--text-dim);
 }
+/* Drawer: right-hand collaboration spaces (Phase I 2026-10-12). */
+/* Override .shell-main from column to row so drawer sits on the right. */
+.shell-main {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.chat-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px;
+}
+.drawer {
+  width: 38%;
+  min-width: 320px;
+  max-width: 600px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.drawer-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.drawer-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.drawer-tab {
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.drawer-tab:hover {
+  color: var(--text);
+}
+.drawer-tab-active {
+  color: var(--text);
+  border-bottom-color: var(--action);
+}
+.drawer-space-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  min-height: 0;
+}
+.drawer-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.drawer-markdown {
+  line-height: 1.6;
+}
+.drawer-markdown h1,
+.drawer-markdown h2,
+.drawer-markdown h3 {
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
+}
+.drawer-markdown p {
+  margin-bottom: 0.8em;
+}
+.drawer-markdown ul,
+.drawer-markdown ol {
+  margin-bottom: 0.8em;
+  padding-left: 1.5em;
+}
+.drawer-markdown blockquote {
+  border-left: 2px solid var(--action-dim);
+  padding-left: 12px;
+  margin: 0.8em 0;
+  color: var(--text-dim);
+}
+.drawer-markdown code {
+  background: var(--bg-inset);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.drawer-markdown pre {
+  background: var(--bg-inset);
+  padding: 12px;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  margin-bottom: 0.8em;
+}
+.drawer-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.drawer-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 0.8em;
+}
+.drawer-markdown th,
+.drawer-markdown td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.drawer-markdown th {
+  background: var(--bg-inset);
+}
+.drawer-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-dim);
+}
+/* Drawer toggle mirrors the hamburger menu button: same size, same style,
+ * positioned at the right edge of the header. */
+.shell-header .drawer-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: auto;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.shell-header .drawer-toggle:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+/* Active state when drawer is open. */
+.shell-header .drawer-toggle.drawer-toggle-open {
+  border-color: var(--action);
+  color: var(--action);
+}
+
+/* Drawer resize (2026-10-12): draggable divider, double-click to reset.
+ * Width controlled by --drawer-width var, set by the resize subscription. */
+:root {
+  --drawer-width: 400px;
+}
+.drawer {
+  position: relative;
+  width: var(--drawer-width);
+  min-width: 280px;
+  max-width: 60vw;
+  flex-shrink: 0;
+}
+.drawer-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: ew-resize;
+  z-index: 10;
+}
+.drawer-resize-handle:hover {
+  background: var(--action);
+  opacity: 0.3;
+}
+
 /* Fixed-position tooltip div (positioned by main.ts from bubble geometry).
  * Must NOT be inside the chat flow — it's appended to document.body. */
 .tool-tip-fixed,
@@ -1656,4 +1942,829 @@ textarea.composer-input {
   z-index: 1000;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   pointer-events: auto;
+}
+
+/* ── Drawer: vertical stacked panes (2026-10-12) ─────────────────── */
+/* The drawer is a flex column. Spaces stack vertically, each with a
+ * flex-grow ratio controlling its height proportion. Resize handles
+ * between spaces allow drag-to-resize. */
+.drawer-spaces {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.drawer-space {
+  display: flex;
+  flex-direction: column;
+  min-height: 80px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-space:last-child {
+  border-bottom: none;
+}
+
+.drawer-space-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.drawer-space-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drawer-space-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
+}
+
+/* Resize handle between spaces: horizontal bar, drag vertically. */
+.drawer-space-resize-handle {
+  height: 8px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  background: transparent;
+  position: relative;
+}
+
+.drawer-space-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.drawer-space-resize-handle:hover::after {
+  background: var(--action);
+}
+
+.drawer-space-resize-handle.dragging::after {
+  background: var(--action);
+}
+
+/* ── Mermaid diagrams (2026-10-12) ─────────────────────────────── */
+.mermaid-block {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.mermaid-block.mermaid-rendered {
+  padding: 16px;
+  text-align: center;
+}
+
+.mermaid-block.mermaid-rendered svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-block.mermaid-error {
+  border-color: var(--danger);
+}
+
+/* ── Space header actions, sync state, history (2026-10-12) ────── */
+.drawer-space-header {
+  gap: 8px;
+}
+
+.drawer-space-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawer-space-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.drawer-space-actions .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.drawer-space-actions .icon-btn:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.drawer-space-actions .icon-btn.active {
+  background: var(--bg-inset);
+  color: var(--action);
+}
+
+.drawer-space-actions .icon-btn.dim {
+  opacity: 0.45;
+}
+
+/* Out-of-sync indicator: amber dot; red when the last save failed. */
+.drawer-sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex-shrink: 0;
+}
+
+.drawer-sync-dot.error {
+  background: var(--danger);
+}
+
+/* In sync with disk: green dot (hover shows the synced time). */
+.drawer-sync-dot.synced {
+  background: #2ea043;
+}
+
+/* Leading space-type icon (eye = preview): rendered/raw toggle. */
+.drawer-type-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.drawer-type-btn:hover {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.drawer-type-btn.active {
+  color: var(--action);
+}
+
+/* Raw markdown view (eye toggled): mono, whitespace preserved. */
+.drawer-space-raw {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* Copy feedback on document spaces (mirrors .msg-copy-btn.copied). */
+.drawer-copy-btn.copied {
+  color: var(--success);
+}
+
+/* ── Drawer home panel (2026-10-12): Continue / Needs you / What she knows ── */
+.drawer-home {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0 12px;
+}
+
+.drawer-home-section {
+  padding: 10px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-home-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 2px 0 8px;
+}
+
+.drawer-home-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 0 0 8px;
+  line-height: 1.45;
+}
+
+.drawer-home-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.drawer-home-row:hover {
+  background: var(--bg-inset);
+}
+
+.drawer-home-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.drawer-home-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.drawer-home-request {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 0 8px;
+}
+
+.drawer-home-request-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawer-home-request-cap {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--action);
+}
+
+.drawer-home-request-why {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.drawer-home-section-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  padding: 0 0 4px;
+}
+
+.drawer-home-request-action {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--action);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.drawer-home-request-action:hover {
+  background: var(--bg-inset);
+  border-color: var(--action);
+}
+
+.drawer-home-request .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.drawer-home-request .icon-btn:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.drawer-home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0 8px;
+}
+
+.drawer-home-run {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0 8px;
+  border-left: 2px solid var(--accent, #22d3ee);
+  padding-left: 8px;
+  margin: 4px 0;
+}
+
+.drawer-home-subheading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+  margin-top: 8px;
+}
+/* Project UI (2026-10-12): switcher chips, inline form, asset actions. */
+.drawer-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 0;
+}
+.drawer-home-chip {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.drawer-home-chip.active {
+  border-color: var(--action);
+  color: var(--action);
+}
+.drawer-home-chip.new {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+.drawer-home-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.drawer-home-input {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.drawer-home-row.grow {
+  flex: 1;
+  text-align: left;
+}
+
+.drawer-home-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drawer-home-proven {
+  font-size: 11px;
+  color: #2ea043;
+  flex-shrink: 0;
+}
+
+.drawer-home-proven.zero {
+  color: var(--text-muted);
+}
+
+.drawer-home-foot {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.drawer-space-error {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* History dropdown: session versions, newest first. */
+.drawer-history {
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 4px;
+}
+
+.drawer-history-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.drawer-history-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.drawer-history-item:hover {
+  background: var(--bg-inset);
+}
+
+.drawer-history-item.current {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.drawer-history-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.drawer-history-snippet {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ── Markdown callout containers (2026-10-12: :::name blocks) ──── */
+.md-callout {
+  border-left: 3px solid var(--action);
+  background: var(--bg-inset);
+  padding: 8px 12px;
+  margin: 12px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.md-callout > :first-child {
+  margin-top: 0;
+}
+
+.md-callout > :last-child {
+  margin-bottom: 0;
+}
+
+.md-callout-aside {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.md-callout-warning {
+  border-left-color: var(--danger);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.md-callout-tip {
+  border-left-color: #00ff41;
+  background: rgba(0, 255, 65, 0.06);
+}
+
+/* ── Direct editing + download source (2026-10-12) ─────────────── */
+.drawer-space-source {
+  display: none;
+}
+
+.drawer-space-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Readability pass (2026-10-12, Kimler: "bleeding eyes") ────────
+ * ONE authoritative type system for rendered markdown, replacing the
+ * two warring blocks above (2026-10-08 "tight" vs 2026-10-11
+ * "GitHub-style"), whose mixture produced shouty headings, gappy
+ * blocks, and list text pinched to 18px lines. This block is LAST on
+ * purpose: equal-specificity rules here win. Applies everywhere
+ * markdown renders — chat bubbles and the drawer document preview
+ * share .markdown-body. Targets (detail-language report §2.2): body
+ * 15px/1.6, caption floor respected, headings a short ramp — a
+ * heading is a signpost, not a headline. */
+.markdown-body {
+  font-size: 15px;
+  line-height: 1.62;
+}
+/* Plain (non-markdown) message text gets the same body metrics. */
+.msg-body {
+  font-size: 15px;
+  line-height: 1.6;
+}
+/* Cap the reading measure in chat: ~78 characters is where scanning
+ * stays effortless; the bubble already carries 20% side margins. */
+.msg-row .msg-assistant .markdown-body,
+.msg-row .msg-user .markdown-body {
+  max-width: 78ch;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 18px;
+  margin-bottom: 6px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+.markdown-body h1 { font-size: 1.27em; }
+.markdown-body h2 { font-size: 1.17em; }
+.markdown-body h3 { font-size: 1.07em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: 0.93em; }
+.markdown-body h6 { font-size: 0.87em; }
+.markdown-body > h1:first-child,
+.markdown-body > h2:first-child,
+.markdown-body > h3:first-child {
+  margin-top: 2px;
+}
+.markdown-body p { margin-bottom: 10px; }
+.markdown-body ul,
+.markdown-body ol {
+  margin-bottom: 10px;
+}
+.markdown-body li {
+  font-size: 15px;
+  line-height: 1.55;
+  margin-bottom: 3px;
+}
+.markdown-body li > p { margin-bottom: 4px; line-height: 1.55; }
+/* Bold is emphasis, not a second voice: 600 reads firm without the
+ * 700 shout that made densely-bolded answers hard to scan. */
+.markdown-body strong,
+.markdown-body b {
+  font-weight: 600;
+}
+/* Inline code sits a touch smaller so it stops breaking the line. */
+.markdown-body code {
+  font-size: 0.88em;
+}
+/* Document references in chat are doors (2026-10-13): an inline-code
+   .md name is a chip that opens the document in the drawer. */
+.markdown-body code.doc-ref {
+  cursor: pointer; color: var(--action);
+  text-decoration: underline dotted rgba(34, 211, 238, 0.55); text-underline-offset: 3px;
+}
+.markdown-body code.doc-ref:hover { text-decoration-style: solid; filter: brightness(1.3); }
+
+/* ── Progressive disclosure, project panel (2026-10-12) ────────────
+ * Kimler: the project panel must look simple at rest with everything
+ * still available. Run rows now carry two lines (question + plain-
+ * word outcome, then one caption); all counters, stage, and paths
+ * moved into hover tooltips in the markup. Asset actions (Move)
+ * rest invisible — present on hover or keyboard focus-within — so
+ * cards stop shouting their buttons. The open move menu is never
+ * classed `reveal`, so it stays put while in use. */
+.drawer-home-actions.reveal {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.drawer-home-card:hover .drawer-home-actions.reveal,
+.drawer-home-card:focus-within .drawer-home-actions.reveal {
+  opacity: 1;
+}
+/* Asset title = open action: the title is a button that opens the
+ * document in the drawer. Chrome-less, inherits the row typography;
+ * the panel icon sits dim at rest and the pair lights up on hover —
+ * examine first, then decide about moving. */
+.drawer-home-open-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  color: inherit; font: inherit; text-align: left; min-width: 0;
+}
+.drawer-home-open-btn .icon { color: var(--text-dim); opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
+.drawer-home-open-btn:hover .drawer-home-row-title { color: var(--action); }
+.drawer-home-open-btn:hover .icon { color: var(--action); opacity: 1; }
+.drawer-home-open-btn:focus-visible { outline: 1px solid var(--action); outline-offset: 2px; }
+.drawer-home-open-btn:focus-visible .icon { opacity: 1; }
+
+/* Wayfinding headers (2026-10-13): homedash door + location name.
+ * Panel headers and the shell header share the pattern: a 30px home
+ * control, then the location title. On panels the glyph is a button
+ * home; in the shell (home itself) it is an active-state mark. */
+.app-panel-header { display: flex; align-items: center; gap: 10px; }
+.app-panel-header .app-panel-title { margin: 0; font-size: 20px; font-weight: 600; }
+.app-home-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.app-home-btn:hover { color: var(--action); border-color: var(--border); }
+.app-home-btn:focus-visible { outline: 1px solid var(--action); outline-offset: 2px; }
+.home-mark { display: inline-flex; align-items: center; color: var(--action); margin-right: 9px; background: none; border: none; padding: 0; cursor: pointer; }
+.home-mark:hover { filter: brightness(1.3); }
+.shell-title { display: inline-flex; align-items: center; }
+
+/* ── HomeDash (2026-10-13, workplan Part 8) ─────────────────────────
+ * The dash is a stage of widget LAYERS composited by priority
+ * (inline z-index from the widget's priority value, 1–1000).
+ * Layers never eat clicks meant for the widgets beneath them;
+ * each widget's own surface opts back in (canvases, the WorkOn
+ * card). The same stage renders in the Home destination (tall)
+ * and the chat empty state (flex-grown). */
+.homedash-stage { position: relative; width: 100%; min-height: 380px; }
+.app-panel .homedash-stage { height: calc(100vh - 170px); }
+.empty-state .homedash-stage { flex: 1 1 auto; align-self: stretch; min-height: 340px; }
+/* Layer geometry (left/top/width/height in %) comes from the view —
+   per-widget geoX/geoY/geoW/geoH settings, edited in place. */
+.homedash-layer { position: absolute; pointer-events: none; }
+.homedash-layer > * { pointer-events: none; }
+.mindmap-hook { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.mindmap-hook canvas {
+  pointer-events: auto; display: block; width: 100%; height: 100%;
+  opacity: 0; transition: opacity 0.9s ease;
+}
+.mindmap-hook canvas.on { opacity: 1; }
+.mirror-field-settings, .mindmap-data, .mindmap-settings, .homedash-layer-meta { display: none; }
+
+/* WorkOn: the greeting IS the widget (2026-10-13). The hero fills
+   its layer with content centered; only the chips take pointer
+   events, so the globe and map stay grabbable right through the
+   rest of the widget's frame. The status strip under the chips
+   carries the active project / running jobs / needs-you lines. */
+.workon-hero {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 20px; text-align: center;
+  pointer-events: none;
+}
+.workon-title { font-size: 30px; font-weight: 650; color: var(--ink); margin: 0; letter-spacing: -0.01em; }
+.workon-sub { font-size: 15px; color: var(--muted); margin: 0; }
+.workon-chips {
+  display: flex; flex-direction: row; gap: 8px;
+  justify-content: center; flex-wrap: wrap; margin-top: 6px;
+}
+.workon-chips .suggestion-chip {
+  pointer-events: auto; cursor: pointer;
+  background: rgba(13, 17, 23, 0.55); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 16px; font-size: 13.5px;
+  backdrop-filter: blur(4px);
+}
+.workon-chips .suggestion-chip:hover { border-color: var(--action); }
+.workon-strip { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; align-items: center; }
+.workon-strip-line { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--ink); }
+.workon-strip-label { font-size: 10px; letter-spacing: 0.14em; color: var(--muted); }
+.workon-strip-project { font-weight: 600; }
+.workon-strip-purpose { color: var(--muted); font-size: 12px; }
+.workon-row-eta { color: var(--action); white-space: nowrap; }
+/* A WorkOn dragged down to card size gets the compact hero. */
+.homedash-layer-workon { container-type: size; }
+@container (max-width: 480px) {
+  .workon-title { font-size: 21px; }
+  .workon-sub { font-size: 13px; }
+  .workon-hero { gap: 9px; padding: 12px; }
+}
+@container (max-height: 240px) {
+  .workon-sub { display: none; }
+  .workon-strip { display: none; }
+}
+
+/* Settings transposition: widgets declare, the platform renders. */
+.settings-section { margin-top: 28px; }
+.dash-widget-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+.dash-widget-head { display: flex; align-items: baseline; gap: 8px; }
+.dash-widget-name { font-weight: 600; font-size: 14px; color: var(--ink); }
+.dash-widget-version { font-size: 11px; color: var(--muted); }
+.dash-widget-desc { font-size: 12.5px; color: var(--muted); margin: 4px 0 8px; line-height: 1.5; }
+.dash-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 5px 0; }
+.dash-setting-label { font-size: 12.5px; color: var(--ink); }
+.dash-slider-wrap { display: inline-flex; align-items: center; gap: 8px; }
+.dash-slider { width: 150px; accent-color: var(--action); }
+.dash-slider-value { font-size: 12px; color: var(--muted); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.dash-toggle {
+  min-width: 52px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); cursor: pointer; font-size: 12px;
+}
+.dash-toggle.on { color: #06202a; background: var(--action); border-color: transparent; font-weight: 600; }
+.dash-select, .dash-number {
+  background: rgba(255, 255, 255, 0.05); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 8px; font-size: 12.5px;
+}
+
+/* HomeDash in-place editing (2026-10-13): Cmd+right-click the dash.
+   The editor module (homedash-edit.ts) adds .homedash-editing to the
+   stage and builds a drag surface + badge + corner handle per layer.
+   Everything here is presentation; persistence rides the normal
+   HomedashSettingChanged path into settings.json. */
+.homedash-stage.homedash-editing { user-select: none; }
+/* Edit surfaces live on a plane above the whole layer stack:
+   priority orders how widgets render, never whether they can be
+   edited. The outline rides the surface, which mirrors its
+   layer's frame exactly. */
+.homedash-edit-plane {
+  position: absolute; inset: 0; z-index: 2000; pointer-events: none;
+}
+.homedash-edit-surface {
+  position: absolute;
+  pointer-events: auto; cursor: move;
+  outline: 1.5px dashed rgba(34, 211, 238, 0.55);
+  outline-offset: -1px;
+}
+.homedash-edit-badge {
+  position: absolute; top: 6px; left: 6px; z-index: 60;
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border-radius: 8px;
+  background: rgba(8, 12, 18, 0.94);
+  border: 1px solid rgba(34, 211, 238, 0.55);
+  color: var(--ink); font-size: 11px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  pointer-events: auto; cursor: move; white-space: nowrap;
+}
+.homedash-edit-badge .hd-name { color: #9fb2c8; }
+.homedash-edit-badge .hd-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.homedash-edit-badge input {
+  width: 54px; padding: 2px 5px; border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06); color: var(--ink);
+  border: 1px solid var(--border); font: inherit;
+  font-variant-numeric: tabular-nums; cursor: text;
+}
+.homedash-edit-handle {
+  position: absolute; right: 0; bottom: 0; z-index: 60;
+  width: 20px; height: 20px; cursor: nwse-resize; pointer-events: auto;
+  background: linear-gradient(135deg, transparent 52%, rgba(34, 211, 238, 0.75) 52%);
+}
+.homedash-edit-hint {
+  position: absolute; top: auto; bottom: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 2000; pointer-events: none;
+  padding: 6px 14px; border-radius: 999px;
+  background: rgba(8, 12, 18, 0.92); border: 1px solid rgba(34, 211, 238, 0.55);
+  color: var(--ink); font-size: 12px; white-space: nowrap;
 }

@@ -17,8 +17,10 @@ import { Option } from "effect"
 import type { ChatMessage, ContextMeter, SessionSlice } from "../model.js"
 import { sanitizeTerminalOutput, visibleWindow } from "../rendering.js"
 import { Message } from "../messages.js"
+import { homeDashView } from "../homedash-view.js"
 import { icon } from "../icons.js"
 import { extractToolCalls } from "../tool-calls.js"
+import { toolAlias } from "../tool-alias.js"
 
 /** Format an STT engine ID (e.g. "parakeet-mlx-0.6b-v2") for display. */
 const sttDisplayName = (engineId: string | undefined): string => {
@@ -124,38 +126,63 @@ const messageRow = (h: H, m: ChatMessage) => {
   // Prefer stored metadata; fall back to parsed.
   const toolsUsed = m.toolsUsed && m.toolsUsed.length > 0 ? m.toolsUsed : parsed.toolsUsed
   const narratedTexts = m.narratedTexts && m.narratedTexts.length > 0 ? m.narratedTexts : parsed.narratedTexts
-  const toolSummaries = m.toolSummaries && m.toolSummaries.length > 0 ? m.toolSummaries : parsed.toolSummaries
   // ALWAYS use parsed.text — m.text may still contain the tool-call fence.
   const displayText = parsed.text
 
   const body = looksLikeMarkdown(displayText)
     ? h.div([h.Class("msg-body markdown-body"), h.InnerHTML(renderMarkdown(displayText))], [])
     : h.div([h.Class("msg-body")], [sanitizeTerminalOutput(displayText)])
-  // Footer nodes: every tool tag gets a hover tooltip with its summary
-  // (2026-10-11: introspection for all tools, not just narrate). The k-th
-  // tag maps to toolSummaries[k]; tags without a summary stay plain.
-  // The .tool-tip span is a hidden text source — main.ts positions a fixed
-  // div from bubble geometry (CSS positioning proved unreliable).
+  // Footer nodes (2026-10-12, Kimler's spec): each tag is the tool's
+  // ONE-WORD alias, tinted by outcome — green when the call succeeded,
+  // red when it failed, untinted when no completion was observed (a
+  // blocked or unexecuted call). The hover tooltip presents the
+  // CONCLUSION — what the tool returned — never the request that
+  // produced it. narrate is the exception: its tooltip is what she
+  // said (narratedTexts). The .tool-tip span is a hidden text source —
+  // main.ts positions a fixed div from bubble geometry.
   const footerNodes: Array<string | ReturnType<H["span"]>> = []
   {
+    let narrateOrdinal = 0
     toolsUsed.forEach((tool, idx) => {
       if (idx > 0) footerNodes.push(", ")
-      const summary = toolSummaries[idx]
-      if (summary !== undefined && summary.length > 0) {
+      const outcome = m.toolOutcomes?.[idx]
+      const tint =
+        outcome === undefined || outcome.status === "none"
+          ? ""
+          : outcome.status === "ok"
+            ? " tool-tag--ok"
+            : " tool-tag--failed"
+      let tip: string | undefined
+      if (tool === "narrate") {
+        // The spoken text is the tooltip only when the narrate call
+        // actually ran (2026-10-12: a parsed-but-unexecuted narrate
+        // presented its text as spoken while Kimler heard silence).
+        // Unexecuted/failed → the conclusion or plain name instead.
+        const spoken = narratedTexts[narrateOrdinal]
+        narrateOrdinal += 1
+        if (outcome === undefined || outcome.status === "ok") tip = spoken
+        else if (outcome.conclusion !== "") tip = outcome.conclusion
+      } else if (outcome !== undefined && outcome.conclusion !== "") {
+        tip = outcome.conclusion
+      }
+      if (tip !== undefined && tip.length > 0) {
         footerNodes.push(
-          h.span([h.Class("tool-tag")], [
-            tool,
-            h.span([h.Class("tool-tip"), h.Style({ display: "none" })], [summary]),
+          h.span([h.Class(`tool-tag${tint}`)], [
+            toolAlias(tool),
+            h.span([h.Class("tool-tip"), h.Style({ display: "none" })], [`${tool} — ${tip}`]),
           ])
         )
       } else {
-        footerNodes.push(tool)
+        footerNodes.push(
+          h.span([h.Class(`tool-tag${tint}`), h.Title(tool)], [toolAlias(tool)])
+        )
       }
     })
   }
   // Copy source (2026-10-11): clean text for the copy button, hidden like
-  // the narrate tooltip source — main.ts reads it on click. Voice tags
-  // stripped, code blocks kept.
+  // the narrate tooltip source. Voice tags stripped, code blocks kept.
+  // Gesture (2026-10-12): click copies rich text (rendered HTML + this
+  // text as the plain representation); long-click copies this markdown.
   const copyText = cleanCopyText(displayText)
   // Images (2026-10-11): thumbnails at the top of the bubble, click to expand.
   const imageNodes = (m.images ?? []).length > 0
@@ -174,7 +201,7 @@ const messageRow = (h: H, m: ChatMessage) => {
   return h.div([h.Class("msg-row"), h.Key(m.id)], [
     h.div([h.Class(`msg ${roleClass(m.role)}`)], [
       h.span([h.Class("msg-role")], [roleLabel(m.role)]),
-      h.button([h.Class("msg-copy-btn"), h.Title("Copy message text")], [icon.copy(h)]),
+      h.button([h.Class("msg-copy-btn"), h.Title("Copy — click for rich text, long-click for markdown")], [icon.copy(h)]),
       h.span([h.Class("msg-copy-source")], [copyText]),
       ...imageNodes,
       body,
@@ -848,7 +875,52 @@ const stripStreamingToolCalls = (text: string): string => {
   return cleaned.trim()
 }
 
-const streamingView = (h: H, text: string) => {
+/**
+ * Live footer tags for the streaming bubble (2026-10-12): calls parsed
+ * from the streaming text render with a spinner until their completion
+ * lands (chat.tool), then flip to the outcome tint. Matching is by
+ * name, FIFO per name — the same rule the settle path uses.
+ */
+const streamingToolTags = (
+  h: H,
+  text: string,
+  activity: ReadonlyArray<{ tool: string; ok: boolean; conclusion: string }> | undefined
+): Array<ReturnType<H["div"]>> => {
+  const calls = extractToolCalls(text)
+  if (calls.length === 0) return []
+  const queues = new Map<string, Array<{ ok: boolean; conclusion: string }>>()
+  for (const a of activity ?? []) {
+    const q = queues.get(a.tool) ?? []
+    q.push({ ok: a.ok, conclusion: a.conclusion })
+    queues.set(a.tool, q)
+  }
+  const nodes: Array<string | ReturnType<H["span"]>> = []
+  calls.forEach((c, idx) => {
+    if (idx > 0) nodes.push(", ")
+    const q = queues.get(c.tool)
+    const hit = q !== undefined && q.length > 0 ? q.shift()! : undefined
+    if (hit !== undefined) {
+      nodes.push(
+        h.span([h.Class(`tool-tag ${hit.ok ? "tool-tag--ok" : "tool-tag--failed"}`)], [toolAlias(c.tool)])
+      )
+    } else {
+      nodes.push(
+        h.span([h.Class("tool-tag tool-tag--running")], [
+          h.span([h.Class("tool-spin")], []),
+          toolAlias(c.tool),
+        ])
+      )
+    }
+  })
+  return [h.div([h.Class("msg-tools")], nodes)]
+}
+
+const streamingView = (
+  h: H,
+  streaming: { text: string; toolActivity?: ReadonlyArray<{ tool: string; ok: boolean; conclusion: string }> | undefined }
+) => {
+  const text = streaming.text
+  const tags = streamingToolTags(h, text, streaming.toolActivity)
   // Never render tool-call JSON while streaming (2026-10-11: fixes the
   // ugly code-block flash and layout jumping). If only tool calls have
   // arrived, show a subtle working indicator instead.
@@ -861,6 +933,7 @@ const streamingView = (h: H, text: string) => {
           h.span([h.Class("working-shimmer")], ["working\u2026"]),
         ]),
       ]),
+      ...tags,
     ])
   }
   const { stable, tail } = segmentStreamingText(cleanText)
@@ -885,6 +958,7 @@ const streamingView = (h: H, text: string) => {
         h.span([h.Class("stream-caret")], ["▍"]),
       ]),
     ]),
+    ...tags,
   ])
 }
 
@@ -1052,26 +1126,17 @@ const composerView = (h: H, session: SessionSlice) => {
 /**
  * Empty state: inviting, shows what Aimy can do. Not an empty box.
  */
-const emptyStateView = (h: H) => {
+const emptyStateView = (h: H, session: SessionSlice) => {
   return h.div([h.Class("empty-state")], [
-    h.h2([h.Class("empty-title")], ["What should we work on?"]),
-    h.p([h.Class("empty-sub")], [
-      "Aimy runs on your machine. Ask anything, build something, or just talk.",
-    ]),
-    h.div([h.Class("empty-suggestions")], [
-      h.button(
-        [h.Class("suggestion-chip"), h.OnClick(Message.UserSentMessage({ id: `msg-${Date.now()}`, text: "What can you do?", at: Date.now() }))],
-        ["What can you do?"]
-      ),
-      h.button(
-        [h.Class("suggestion-chip"), h.OnClick(Message.UserSentMessage({ id: `msg-${Date.now()}`, text: "Help me plan my day", at: Date.now() }))],
-        ["Plan my day"]
-      ),
-      h.button(
-        [h.Class("suggestion-chip"), h.OnClick(Message.UserSentMessage({ id: `msg-${Date.now()}-2`, text: "Write something with me", at: Date.now() }))],
-        ["Write with me"]
-      ),
-    ]),
+    // The HomeDash (2026-10-13): a new chat's empty state IS the
+    // dash — the layered widget stage (WorkOn / GlobeNews /
+    // MindMap by priority). It dies with this element when a
+    // conversation starts; the Home destination keeps it alive.
+    // The greeting block that used to sit under the stage here
+    // ("What should we work on?" + suggestion chips) is the WorkOn
+    // widget's content now (Kimler, 2026-10-13) — it lives inside
+    // the dash, in WorkOn's layer, and moves/resizes with it.
+    homeDashView(h, session),
   ])
 }
 
@@ -1089,7 +1154,7 @@ export const chatPanelView = (session: SessionSlice, h: H) => {
   // The browser pins to DOM start (visual bottom) automatically — no JS scrolling.
   const children = [...rows].reverse()
   if (session.streaming.active) {
-    children.unshift(streamingView(h, session.streaming.text))
+    children.unshift(streamingView(h, session.streaming))
   }
   const isEmpty = session.messages.length === 0 && !session.streaming.active
   return h.section([h.Class("chat-panel"), h.Id("chat-panel")], [
@@ -1099,7 +1164,9 @@ export const chatPanelView = (session: SessionSlice, h: H) => {
         h.Class("message-list"),
         h.OnScroll((scrollTop) => Message.ChatListScrolled({ scrollTop })),
       ],
-      isEmpty ? [emptyStateView(h)] : children,
+      isEmpty
+        ? [emptyStateView(h, session)]
+        : children,
     ),
     composerView(h, session),
   ])

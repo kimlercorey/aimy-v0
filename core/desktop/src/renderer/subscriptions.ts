@@ -35,6 +35,7 @@ import {
   type AppModel
 } from "../../../ui/src/composed/index.js"
 import { Message as ShellMessage } from "../../../ui/src/messages.js"
+import { uiStateMarker } from "../../../ui/src/update.js"
 import { BannersMessage } from "../../../ui/src/ops/index.js"
 import { JobsMessage } from "../../../ui/src/ops/index.js"
 import { Message as TimelineMessage } from "../../../ui/src/timeline/index.js"
@@ -504,6 +505,21 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
               )
               break
             }
+            case "chat.tool": {
+              // A tool call completed in the loop: footer outcome
+              // (tint + conclusion) for the active stream's tags.
+              push(
+                AppMessage.GotShell({
+                  message: ShellMessage.StreamToolActivity({
+                    streamId: evt.streamId,
+                    tool: evt.tool,
+                    ok: evt.ok,
+                    conclusion: evt.conclusion,
+                  }),
+                })
+              )
+              break
+            }
             case "tts.installProgress": {
               const p = evt.progress
               push(
@@ -552,6 +568,13 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
     ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
   )
 
+/**
+ * Per-stream composed inference inputs for the chatPump subscription
+ * (2026-10-12): streamId -> "[AIMY-UISTATE]..." + user text, composed
+ * once when the stream arms. See chatPump's modelToDependencies.
+ */
+const pumpInputCache = new Map<string, string>()
+
 export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((entry) => ({
   chatPump: entry(
     {
@@ -577,10 +600,31 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
         const userMessage = model.shell.session.messages.find(
           (m) => m.id === streaming.streamId && m.role === "user"
         )
+        // The inference input is the [AIMY-UISTATE] marker + the user's
+        // text (2026-10-12 fix): update.ts puts the marker in the
+        // SendToInference command's argument, but THIS subscription is
+        // what actually sends, and it derives the input from the stored
+        // user message — the marker never crossed IPC (field evidence:
+        // main logged inputLen equal to the raw dictated text on six
+        // straight voice turns while the renderer logged the marker).
+        // Compose it HERE, once per stream: the cache keeps the
+        // dependency value stable while the drawer changes mid-turn
+        // (a changing input would restart this subscription and send
+        // the turn twice).
+        let input = pumpInputCache.get(streaming.streamId)
+        if (input === undefined) {
+          input = userMessage !== undefined ? uiStateMarker(model.shell) + userMessage.text : ""
+          if (userMessage !== undefined) {
+            pumpInputCache.set(streaming.streamId, input)
+            for (const k of Array.from(pumpInputCache.keys())) {
+              if (k !== streaming.streamId) pumpInputCache.delete(k)
+            }
+          }
+        }
         return {
           streamId: streaming.streamId,
           sessionId: model.shell.session.sessionId,
-          input: userMessage?.text ?? "",
+          input,
           interrupted: streaming.interrupted ?? false,
           images: (userMessage?.images ?? []).map((img) => ({
             dataUrl: img.dataUrl,
@@ -846,6 +890,48 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
       dependenciesToStream: () => pumpMicPreRoll(),
     }
   ),
+  // Drawer resize (2026-10-12): drag the divider to adjust width,
+  // double-click to reset to default. Always active.
+  drawerResize: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpDrawerResize(),
+    }
+  ),
+  // Validation reports (2026-10-12): renderer validators (mermaid.ts)
+  // dispatch `aimy:validation` DOM events; yields
+  // DrawerValidationReported so failures/recoveries become change
+  // notes for her next turn. Always active.
+  validation: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpValidation(),
+    }
+  ),
+  // Mirror Field actions (2026-10-12): the empty-state mind map
+  // (mirror-field.ts) dispatches `aimy:field-open` /
+  // `aimy:field-project` DOM events when a node is clicked; yields
+  // the same shell messages the drawer home uses. Always active.
+  fieldActions: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpFieldActions(),
+    }
+  ),
+  // HomeDash in-place editor (2026-10-13): homedash-edit.ts
+  // dispatches `aimy:homedash-setting` when a priority or geometry
+  // value is committed; folds the normal HomedashSettingChanged so
+  // editor and Settings panel share one persistence path. Always on.
+  homedashEdit: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpHomedashSetting(),
+    }
+  ),
 }))
 
 /**
@@ -879,6 +965,181 @@ const pumpImageDrop = (): Stream.Stream<AppMessage> => {
           Effect.sync(() => {
             window.removeEventListener("aimy:image-dropped", onImageDropped)
             console.log("[image] drop listener removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Listens for `aimy:validation` CustomEvents (from mermaid.ts render
+ * outcomes) and yields DrawerValidationReported messages (2026-10-12).
+ */
+const pumpValidation = (): Stream.Stream<AppMessage> => {
+  console.log("[aimy] validation subscription starting")
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const onValidation = (e: Event) => {
+          const detail = (e as CustomEvent).detail as {
+            spaceId: string
+            lang: string
+            ok: boolean
+            error?: string
+          }
+          console.log(`[aimy] validation report: space=${detail.spaceId} lang=${detail.lang} ok=${detail.ok}`)
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.DrawerValidationReported(detail),
+            })
+          )
+        }
+        window.addEventListener("aimy:validation", onValidation)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:validation", onValidation)
+            console.log("[aimy] validation listener removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Listens for `aimy:field-open` / `aimy:field-project` CustomEvents
+ * (from mirror-field.ts node clicks on the empty state) and yields
+ * the drawer's own open/switch messages (2026-10-12).
+ */
+const pumpFieldActions = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const onOpen = (e: Event) => {
+          const detail = (e as CustomEvent).detail as { path: string }
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.HomeRecentClicked({ path: detail.path }),
+            })
+          )
+        }
+        const onProject = (e: Event) => {
+          const detail = (e as CustomEvent).detail as { id: string }
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.HomeProjectSwitchClicked({ id: detail.id }),
+            })
+          )
+        }
+        const onRefresh = () => {
+          // The dash mounted with no data behind it (cold start):
+          // load both the home data and the dash state.
+          Queue.offerUnsafe(queue, AppMessage.GotShell({ message: ShellMessage.HomeDataRefreshRequested() }))
+          Queue.offerUnsafe(queue, AppMessage.GotShell({ message: ShellMessage.HomedashRefreshRequested() }))
+        }
+        const onPanel = (e: Event) => {
+          const detail = (e as CustomEvent).detail as { panel: string }
+          // The field's nodes route to their homes: chat / memory /
+          // subject / knowledge → Memory; projects → Projects; the
+          // hub → Presence. A closed whitelist, nothing else routes.
+          const panel = detail.panel
+          if (panel === "memory" || panel === "projects" || panel === "presence") {
+            Queue.offerUnsafe(queue, AppMessage.SelectPanel({ panel }))
+          }
+        }
+        // The shell header's home mark (a class-hooked button in
+        // the shell view) is the door back to the homedash. Panel
+        // selection is composed state the shell cannot dispatch,
+        // so the click routes through this pump.
+        const onHomeNav = (e: Event) => {
+          const t = e.target as HTMLElement | null
+          if (t !== null && typeof t.closest === "function" && t.closest(".js-home-nav") !== null) {
+            Queue.offerUnsafe(queue, AppMessage.SelectPanel({ panel: "home" }))
+          }
+        }
+        // Document references in chat (.doc-ref code chips, marked
+        // by the markdown renderer) open in the drawer: the chip's
+        // text is the document's name or path, and the drawer-open
+        // flow is the same one the home lists already use — the
+        // space it creates is how she knows what he is reading.
+        const onDocRef = (e: Event) => {
+          const t = e.target as HTMLElement | null
+          const el = t !== null && typeof t.closest === "function" ? t.closest("code.doc-ref") : null
+          if (el !== null) {
+            const name = (el.textContent ?? "").trim()
+            if (name !== "") {
+              Queue.offerUnsafe(queue, AppMessage.GotShell({ message: ShellMessage.HomeRecentClicked({ path: name }) }))
+            }
+          }
+        }
+        window.addEventListener("aimy:field-open", onOpen)
+        window.addEventListener("aimy:field-project", onProject)
+        window.addEventListener("aimy:field-panel", onPanel)
+        window.addEventListener("aimy:field-refresh", onRefresh)
+        document.addEventListener("click", onHomeNav)
+        document.addEventListener("click", onDocRef)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:field-open", onOpen)
+            window.removeEventListener("aimy:field-project", onProject)
+            window.removeEventListener("aimy:field-panel", onPanel)
+            window.removeEventListener("aimy:field-refresh", onRefresh)
+            document.removeEventListener("click", onHomeNav)
+            document.removeEventListener("click", onDocRef)
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * HomeDash editor settings (2026-10-13): the in-place editor
+ * (homedash-edit.ts) commits a priority or geometry change as an
+ * `aimy:homedash-setting` DOM event carrying a JSON detail
+ * {widgetId, key, value}. Folds HomedashSettingChanged — the same
+ * message the Settings panel dispatches, one persistence path.
+ */
+const pumpHomedashSetting = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const onSetting = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as {
+              widgetId: string
+              key: string
+              value: string | number | boolean
+            }
+            if (typeof detail.widgetId !== "string" || typeof detail.key !== "string") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({
+                message: ShellMessage.HomedashSettingChanged({
+                  widgetId: detail.widgetId,
+                  key: detail.key,
+                  value: detail.value,
+                }),
+              })
+            )
+          } catch {
+            // A malformed editor event is ignored, never fatal.
+          }
+        }
+        window.addEventListener("aimy:homedash-setting", onSetting)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:homedash-setting", onSetting)
           })
         )
         return queue
@@ -1162,6 +1423,313 @@ const pumpMicPreRoll = (): Stream.Stream<AppMessage> => {
           Effect.sync(() => {
             window.removeEventListener("aimy:mic-preroll", onPreRoll)
             console.log("[mic] pre-roll listener removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Drawer resize (2026-10-12): drag the resize handle to adjust width,
+ * double-click to reset to default (400px).
+ *
+ * Uses event delegation — the handle is re-rendered by Foldkit, so we
+ * listen on document and check the target.
+ */
+export const pumpDrawerResize = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const DEFAULT_WIDTH = 400
+        const MIN_WIDTH = 280
+        let dragging = false
+        let startX = 0
+        let startWidth = 0
+
+        const getDrawer = (): HTMLElement | null =>
+          document.querySelector(".drawer") as HTMLElement | null
+
+        const onMouseDown = (e: MouseEvent) => {
+          const target = e.target as HTMLElement
+          if (!target.classList.contains("drawer-resize-handle")) return
+          const drawer = getDrawer()
+          if (!drawer) return
+          dragging = true
+          startX = e.clientX
+          startWidth = drawer.getBoundingClientRect().width
+          e.preventDefault()
+          console.log("[drawer] resize start")
+        }
+
+        const onMouseMove = (e: MouseEvent) => {
+          if (!dragging) return
+          const drawer = getDrawer()
+          if (!drawer) return
+          // Dragging left increases width (drawer is on the right).
+          const delta = startX - e.clientX
+          const maxWidth = window.innerWidth * 0.6
+          const newWidth = Math.min(Math.max(startWidth + delta, MIN_WIDTH), maxWidth)
+          document.documentElement.style.setProperty("--drawer-width", `${newWidth}px`)
+        }
+
+        const onMouseUp = () => {
+          if (dragging) {
+            dragging = false
+            console.log("[drawer] resize end")
+          }
+        }
+
+        const onDblClick = (e: MouseEvent) => {
+          const target = e.target as HTMLElement
+          if (!target.classList.contains("drawer-resize-handle")) return
+          document.documentElement.style.setProperty("--drawer-width", `${DEFAULT_WIDTH}px`)
+          console.log("[drawer] resize reset")
+        }
+
+        document.addEventListener("mousedown", onMouseDown)
+        document.addEventListener("mousemove", onMouseMove)
+        document.addEventListener("mouseup", onMouseUp)
+        document.addEventListener("dblclick", onDblClick)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            document.removeEventListener("mousedown", onMouseDown)
+            document.removeEventListener("mousemove", onMouseMove)
+            document.removeEventListener("mouseup", onMouseUp)
+            document.removeEventListener("dblclick", onDblClick)
+            console.log("[drawer] resize listeners removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Drawer space resize (2026-10-12): drag the handle between spaces to
+ * adjust their height proportions. The layout uses flex-grow ratios —
+ * dragging computes new ratios from the pixel delta.
+ *
+ * Uses event delegation — handles are re-rendered by Foldkit.
+ */
+export const pumpSpaceResize = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        const push = (m: AppMessage) => Queue.offerUnsafe(queue, m)
+        let dragging = false
+        let startY = 0
+        let aboveId = ""
+        let belowId = ""
+        let aboveEl: HTMLElement | null = null
+        let belowEl: HTMLElement | null = null
+        let aboveStartHeight = 0
+        let belowStartHeight = 0
+
+        const onMouseDown = (e: MouseEvent) => {
+          const target = e.target as HTMLElement
+          if (!target.classList.contains("drawer-space-resize-handle")) return
+          // Find adjacent spaces by DOM traversal. The handle is between two
+          // .drawer-space elements. Space IDs are encoded in class names as
+          // "space-id-<id>" (see drawer.ts).
+          const prevEl = target.previousElementSibling as HTMLElement | null
+          const nextEl = target.nextElementSibling as HTMLElement | null
+          if (!prevEl || !nextEl) return
+          const getSpaceId = (el: HTMLElement): string | null => {
+            for (const cls of el.classList) {
+              if (cls.startsWith("space-id-")) {
+                return cls.slice("space-id-".length)
+              }
+            }
+            return null
+          }
+          aboveId = getSpaceId(prevEl) ?? ""
+          belowId = getSpaceId(nextEl) ?? ""
+          if (!aboveId || !belowId) {
+            console.warn("[drawer] space resize: could not determine space IDs")
+            return
+          }
+          aboveEl = prevEl
+          belowEl = nextEl
+          dragging = true
+          startY = e.clientY
+          aboveStartHeight = aboveEl.getBoundingClientRect().height
+          belowStartHeight = belowEl.getBoundingClientRect().height
+          target.classList.add("dragging")
+          e.preventDefault()
+          console.log(`[drawer] space resize start: ${aboveId} / ${belowId}`)
+        }
+
+        const onMouseMove = (e: MouseEvent) => {
+          if (!dragging || !aboveEl || !belowEl) return
+          const delta = e.clientY - startY
+          const MIN_HEIGHT = 80
+          // Compute new pixel heights, clamped to minimum.
+          let newAbove = Math.max(aboveStartHeight + delta, MIN_HEIGHT)
+          let newBelow = Math.max(belowStartHeight - delta, MIN_HEIGHT)
+          // If one hits min, the other gets the remainder.
+          const total = aboveStartHeight + belowStartHeight
+          if (newAbove === MIN_HEIGHT) {
+            newBelow = total - MIN_HEIGHT
+          } else if (newBelow === MIN_HEIGHT) {
+            newAbove = total - MIN_HEIGHT
+          }
+          // Convert to flex-grow ratios (normalize so they sum to 2).
+          // The actual ratio values don't matter, only their proportion.
+          const sum = newAbove + newBelow
+          const aboveRatio = (newAbove / sum) * 2
+          const belowRatio = (newBelow / sum) * 2
+          // Apply directly to DOM for smooth dragging (no re-render).
+          aboveEl.style.flexGrow = String(aboveRatio)
+          belowEl.style.flexGrow = String(belowRatio)
+          // Store for mouseup dispatch.
+          ;(aboveEl as any)._pendingRatio = aboveRatio
+          ;(belowEl as any)._pendingRatio = belowRatio
+        }
+
+        const onMouseUp = (e: MouseEvent) => {
+          if (!dragging) return
+          dragging = false
+          document.querySelectorAll(".drawer-space-resize-handle.dragging").forEach((el) =>
+            el.classList.remove("dragging")
+          )
+          if (aboveEl && belowEl) {
+            const aboveRatio = (aboveEl as any)._pendingRatio ?? 1
+            const belowRatio = (belowEl as any)._pendingRatio ?? 1
+            console.log(`[drawer] space resize end: ${aboveId}=${aboveRatio.toFixed(2)} ${belowId}=${belowRatio.toFixed(2)}`)
+            push(
+              AppMessage.GotShell({
+                message: ShellMessage.DrawerSpaceResized({
+                  aboveId,
+                  belowId,
+                  aboveRatio,
+                  belowRatio,
+                }),
+              })
+            )
+          }
+          aboveEl = null
+          belowEl = null
+        }
+
+        document.addEventListener("mousedown", onMouseDown)
+        document.addEventListener("mousemove", onMouseMove)
+        document.addEventListener("mouseup", onMouseUp)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            document.removeEventListener("mousedown", onMouseDown)
+            document.removeEventListener("mousemove", onMouseMove)
+            document.removeEventListener("mouseup", onMouseUp)
+            console.log("[drawer] space resize listeners removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Mermaid diagram rendering (2026-10-12).
+ *
+ * Watches for `.mermaid-block` elements (rendered by markdown.ts) and
+ * transforms them into SVG diagrams via the mermaid library.
+ *
+ * Uses MutationObserver to catch newly added blocks (foldkit re-renders).
+ * Each block is rendered once (marked with `data-mermaid-rendered`).
+ */
+export const pumpMermaid = (): Stream.Stream<AppMessage> => {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        // Dynamic import to avoid bundling mermaid if not needed.
+        // Actually, static import is fine — it's already a dependency.
+        let mermaid: any = null
+        try {
+          const mod = yield* Effect.promise(() => import("mermaid"))
+          mermaid = mod.default
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: "dark",
+            themeVariables: {
+              // Match AImy's dark theme.
+              primaryColor: "#22d3ee",
+              primaryTextColor: "#e6edf3",
+              primaryBorderColor: "#30363d",
+              lineColor: "#8b949e",
+              secondaryColor: "#161b22",
+              tertiaryColor: "#0d1117",
+            },
+          })
+          console.log("[mermaid] initialized")
+        } catch (e) {
+          console.error("[mermaid] failed to load:", e)
+          return queue
+        }
+
+        const renderBlock = async (el: HTMLElement) => {
+          if (el.getAttribute("data-mermaid-rendered") === "true") return
+          const codeEl = el.querySelector("code")
+          if (!codeEl) return
+          const definition = codeEl.textContent ?? ""
+          if (!definition.trim()) return
+          try {
+            // Generate a unique ID for this diagram.
+            const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+            const { svg } = await mermaid.render(id, definition)
+            el.innerHTML = svg
+            el.setAttribute("data-mermaid-rendered", "true")
+            el.classList.add("mermaid-rendered")
+            console.log(`[mermaid] rendered diagram (${definition.length} chars)`)
+          } catch (e) {
+            console.error("[mermaid] render failed:", e)
+            // Leave the code block as-is on failure.
+            el.setAttribute("data-mermaid-rendered", "true")
+            el.classList.add("mermaid-error")
+          }
+        }
+
+        const renderAll = () => {
+          document.querySelectorAll(".mermaid-block:not([data-mermaid-rendered])").forEach((el) => {
+            renderBlock(el as HTMLElement)
+          })
+        }
+
+        // Initial render.
+        renderAll()
+
+        // Watch for new blocks.
+        const observer = new MutationObserver((mutations) => {
+          let needsRender = false
+          for (const m of mutations) {
+            for (const node of m.addedNodes) {
+              if (node instanceof HTMLElement) {
+                if (node.classList.contains("mermaid-block") || node.querySelector(".mermaid-block")) {
+                  needsRender = true
+                  break
+                }
+              }
+            }
+            if (needsRender) break
+          }
+          if (needsRender) {
+            // Defer to next tick to ensure DOM is settled.
+            setTimeout(renderAll, 0)
+          }
+        })
+
+        observer.observe(document.body, { childList: true, subtree: true })
+        console.log("[mermaid] observer started")
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            observer.disconnect()
+            console.log("[mermaid] observer stopped")
           })
         )
         return queue

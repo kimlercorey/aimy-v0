@@ -53,12 +53,317 @@ export const ChatMessage = Schema.Struct({
    */
   toolSummaries: Schema.optional(Schema.Array(Schema.String)),
   /**
+   * Per-call outcomes, parallel to toolsUsed (2026-10-12): status tints
+   * the footer tag (green ok / red failed / untinted when no completion
+   * was observed — a blocked or unexecuted call), and the conclusion is
+   * the hover tooltip: what the tool returned, never the request.
+   */
+  toolOutcomes: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        status: Schema.Literals(["ok", "failed", "none"]),
+        conclusion: Schema.String,
+      })
+    )
+  ),
+  /**
    * Images attached to this message (2026-10-11: drag-and-drop).
    * Rendered as thumbnails in the bubble; sent to vision-capable models.
    */
   images: Schema.optional(Schema.Array(ChatImage)),
 })
 export type ChatMessage = typeof ChatMessage.Type
+
+/* ------------------------------------------------------------------ */
+/* drawer (right-hand collaboration spaces) — Phase I 2026-10-12       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A space in the drawer. PHASE I: minimal — just a preview panel.
+ * Forward-compatible: `kind` becomes the bundle ID, `content` becomes
+ * the bundle state proxy. The drawer shell doesn't care what's inside,
+ * only that it has an id, title, and renderable content.
+ */
+/**
+ * One recorded state of a space's document (2026-10-12: session history).
+ * Every content change appends a snapshot; the full history is retained
+ * until the session closes (it lives only in this model — never persisted).
+ */
+export const DrawerSpaceVersion = Schema.Struct({
+  /** Space title at this state (2026-10-12: restore must restore the
+   * title too — a content-only restore left a bad title in the header). */
+  title: Schema.String,
+  /** Full document content at this state. */
+  content: Schema.String,
+  /** Epoch millis when this state was recorded. */
+  at: Schema.Number,
+  /** How this state came to be: "Opened" | "Updated" | "Restored". */
+  label: Schema.String,
+})
+export type DrawerSpaceVersion = typeof DrawerSpaceVersion.Type
+
+export const DrawerSpace = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  /** "preview" for now; becomes bundle ID (e.g. "chart", "repl") later. */
+  kind: Schema.String,
+  /** Markdown content for preview; becomes structured state later. */
+  content: Schema.String,
+  /**
+   * Repo-relative path this space is bound to (e.g. "planning/brief.md"),
+   * when the document came from disk or has been saved. Save writes here.
+   */
+  path: Schema.optional(Schema.String),
+  /**
+   * The content as last known on disk (at open-from-disk, or after a
+   * successful save). `undefined` = never on disk. Drives the sync dot:
+   * the space is out of sync when this differs from `content`.
+   */
+  savedContent: Schema.optional(Schema.String),
+  /** Epoch ms when `content` last matched disk (save / restore / open-from-disk). Drives the green sync dot's hover time. */
+  savedAt: Schema.optional(Schema.Number),
+  /** True while the space shows raw markdown instead of the rendered view (eye toggle, 2026-10-12). */
+  showRaw: Schema.optional(Schema.Boolean),
+  /** Session version history, oldest first (2026-10-12). */
+  history: Schema.optional(Schema.Array(DrawerSpaceVersion)),
+  /** Last save failure, shown in the space header until the next save. */
+  saveError: Schema.optional(Schema.String),
+})
+export type DrawerSpace = typeof DrawerSpace.Type
+
+/** True when the space's working content differs from what's on disk. */
+export const spaceDirty = (s: DrawerSpace): boolean =>
+  s.savedContent === undefined || s.savedContent !== s.content
+
+/** Slugify a title into a filename stem ("Nuclear Power!" -> "nuclear-power"). */
+export const docSlug = (title: string): string =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "document"
+
+/** Default save path for a space with no bound path yet. */
+export const defaultDocPath = (s: DrawerSpace): string =>
+  `planning/${docSlug(s.title)}.md`
+
+/** Drawer home panel: one recent document (2026-10-12). */
+export const HomeRecent = Schema.Struct({
+  path: Schema.String,
+  title: Schema.String,
+  /** Epoch ms of the file's last modification. */
+  at: Schema.Number,
+})
+export type HomeRecent = typeof HomeRecent.Type
+
+/** Drawer home panel: one pending capability request (2026-10-12). */
+export const HomeRequest = Schema.Struct({
+  capability: Schema.String,
+  why: Schema.String,
+  /** ISO timestamp from the request record. */
+  at: Schema.String,
+})
+export type HomeRequest = typeof HomeRequest.Type
+
+/** Drawer home panel: one knowledge card (2026-10-12). */
+export const HomeCard = Schema.Struct({
+  slug: Schema.String,
+  title: Schema.String,
+  whenToUse: Schema.String,
+  proven: Schema.Number,
+  updated: Schema.String,
+})
+export type HomeCard = typeof HomeCard.Type
+
+/** Drawer home panel: one asset in the active project (2026-10-12). */
+export const HomeProjectAsset = Schema.Struct({
+  kind: Schema.String,
+  title: Schema.String,
+  role: Schema.String,
+  path: Schema.optional(Schema.String),
+  addedAt: Schema.String,
+})
+export type HomeProjectAsset = typeof HomeProjectAsset.Type
+
+/** Drawer home panel: one research run in the active project (E16). */
+export const HomeResearchRun = Schema.Struct({
+  runId: Schema.String,
+  query: Schema.String,
+  mode: Schema.String,
+  depth: Schema.String,
+  status: Schema.String,
+  stage: Schema.String,
+  startedAt: Schema.String,
+  finishedAt: Schema.optional(Schema.String),
+  counters: Schema.Struct({
+    searches: Schema.Number,
+    fetches: Schema.Number,
+    claims: Schema.Number,
+    clusters: Schema.Number,
+    rounds: Schema.Number,
+  }),
+  etaMs: Schema.NullOr(Schema.Number),
+  deliverableTitle: Schema.String,
+  deliverablePath: Schema.NullOr(Schema.String),
+  termination: Schema.optional(Schema.String),
+})
+export type HomeResearchRun = typeof HomeResearchRun.Type
+
+/** Drawer home panel: the active project section (Projects v1). */
+export const HomeProject = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  purpose: Schema.String,
+  isDefault: Schema.Boolean,
+  goals: Schema.Array(Schema.String),
+  assets: Schema.Array(HomeProjectAsset),
+  runs: Schema.Array(HomeResearchRun),
+})
+export type HomeProject = typeof HomeProject.Type
+
+/** Drawer home panel: one project in the switcher list (2026-10-12). */
+export const HomeProjectListEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  isDefault: Schema.Boolean,
+})
+export type HomeProjectListEntry = typeof HomeProjectListEntry.Type
+
+/** One past conversation, from its session record (Mirror Field, 2026-10-13). */
+export const HomeChat = Schema.Struct({
+  id: Schema.String,
+  subject: Schema.String,
+  at: Schema.Number,
+  messages: Schema.Number,
+})
+export type HomeChat = typeof HomeChat.Type
+
+/** One archived thread memory — what she kept of a past conversation. */
+export const HomeMemory = Schema.Struct({
+  sessionId: Schema.String,
+  summary: Schema.String,
+  messageCount: Schema.Number,
+  archivedAt: Schema.Number,
+})
+export type HomeMemory = typeof HomeMemory.Type
+
+/** Journal metadata: existence + freshness. Never content. */
+export const HomeJournal = Schema.Struct({
+  updatedAt: Schema.Number,
+  chars: Schema.Number,
+})
+export type HomeJournal = typeof HomeJournal.Type
+
+/** One HomeDash widget setting, as presented (2026-10-13). */
+export const HomedashSetting = Schema.Struct({
+  key: Schema.String,
+  type: Schema.String,
+  label: Schema.String,
+  value: Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
+  min: Schema.optional(Schema.Number),
+  max: Schema.optional(Schema.Number),
+  step: Schema.optional(Schema.Number),
+  options: Schema.optional(Schema.Array(Schema.String)),
+})
+export type HomedashSetting = typeof HomedashSetting.Type
+
+/** One enabled HomeDash widget with effective settings (2026-10-13). */
+export const HomedashWidget = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  version: Schema.String,
+  priority: Schema.Number,
+  settings: Schema.Array(HomedashSetting),
+})
+export type HomedashWidget = typeof HomedashWidget.Type
+
+export const HomedashData = Schema.Struct({
+  widgets: Schema.Array(HomedashWidget),
+})
+export type HomedashData = typeof HomedashData.Type
+
+/** Drawer home panel data: Project / Continue / Needs you / Knowledge. */
+export const HomeData = Schema.Struct({
+  recents: Schema.Array(HomeRecent),
+  requests: Schema.Array(HomeRequest),
+  cards: Schema.Array(HomeCard),
+  project: Schema.NullOr(HomeProject),
+  projectList: Schema.Array(HomeProjectListEntry),
+  chats: Schema.Array(HomeChat),
+  memories: Schema.Array(HomeMemory),
+  journal: Schema.NullOr(HomeJournal),
+})
+export type HomeData = typeof HomeData.Type
+
+/** Drawer state: open/closed, spaces, active tab. */
+export const DrawerState = Schema.Struct({
+  open: Schema.Boolean,
+  spaces: Schema.Array(DrawerSpace),
+  activeSpaceId: Schema.NullOr(Schema.String),
+  /** Max spaces allowed (app preference, default 3). */
+  maxSpaces: Schema.Number,
+  /**
+   * Height ratios for vertical stacked layout (2026-10-12).
+   * Maps space ID -> flex-grow ratio. Default 1 (equal split).
+   * Reset when space count changes.
+   */
+  heightRatios: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  /** Space id whose history list is currently open, if any (2026-10-12). */
+  historyOpenFor: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Space id currently in direct-edit mode, if any (2026-10-12). */
+  editingId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The edit-mode draft text for the space being edited. */
+  editDraft: Schema.optional(Schema.String),
+  /**
+   * Notes for AImy about changes Kimler made in the UI (restores,
+   * direct edits, rejected stale tool calls) since her last turn
+   * (2026-10-12). Delivered once via the [AIMY-UISTATE] marker on the
+   * next user message, then cleared. UI-side changes are otherwise
+   * invisible in her conversation history — she kept editing from
+   * superseded copies because nothing told her the head had moved.
+   */
+  pendingNotes: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Current validation issues per space+language (2026-10-12, design:
+   * planning/knowledge-and-validation-design.md). Key: "<spaceId>:<lang>"
+   * ("entity:mermaid"), value: the current error summary. Present only
+   * while the issue persists — the diff against incoming validation
+   * results produces failure/recovery change notes exactly once.
+   */
+  validationIssues: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /**
+   * Drawer home panel data (2026-10-12): Continue (recent documents),
+   * Needs you (pending capability requests), What she knows (knowledge
+   * cards). Loaded from the user's stores via the HomeIpc seam when
+   * the drawer opens; rendered only while no spaces are open.
+   */
+  homeData: Schema.optional(HomeData),
+  /**
+   * HomeDash state (2026-10-13): enabled widgets + effective
+   * settings, loaded via the HomedashIpc seam. Renders the dash on
+   * the chat empty state and the Home destination; edited from the
+   * HomeDash section of Settings.
+   */
+  dash: Schema.optional(HomedashData),
+  /** Project UI (2026-10-12): the new-project form is open. */
+  projectFormOpen: Schema.optional(Schema.Boolean),
+  /** Project UI: new-project form draft fields. */
+  projectDraftName: Schema.optional(Schema.String),
+  projectDraftPurpose: Schema.optional(Schema.String),
+  /** Project UI: asset key ("kind|title") whose move menu is open. */
+  assetMoveFor: Schema.optional(Schema.NullOr(Schema.String)),
+})
+export type DrawerState = typeof DrawerState.Type
+
+export const initialDrawerState = (): DrawerState => ({
+  open: false,
+  spaces: [],
+  activeSpaceId: null,
+  maxSpaces: 3,
+  heightRatios: {},
+  historyOpenFor: null,
+  editingId: null,
+})
 
 /**
  * The in-progress assistant turn. Chunks append to `text` ONLY (never re-parse
@@ -79,6 +384,21 @@ export const StreamingState = Schema.Struct({
    * and can weave the unfinished thought into its reply.
    */
   interrupted: Schema.optional(Schema.Boolean),
+  /**
+   * Tool completions observed during this stream (2026-10-12), in
+   * completion order: the live footer renders these tinted, and calls
+   * parsed from the streaming text without a completion yet render as
+   * running (spinner). At settle they become the message's toolOutcomes.
+   */
+  toolActivity: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        tool: Schema.String,
+        ok: Schema.Boolean,
+        conclusion: Schema.String,
+      })
+    )
+  ),
 })
 export type StreamingState = typeof StreamingState.Type
 
@@ -352,6 +672,11 @@ export const SessionSlice = Schema.Struct({
   activeVoiceId: Schema.optional(Schema.String),
   /** Transient voice-panel error line. */
   voiceError: Schema.optional(Schema.String),
+  /**
+   * Right-hand drawer: collaboration spaces (Phase I 2026-10-12).
+   * Generic slot container — holds preview spaces now, bundle instances later.
+   */
+  drawer: DrawerState,
 })
 export type SessionSlice = typeof SessionSlice.Type
 
@@ -547,6 +872,7 @@ export const initialModel = (): Model => {
       } catch { return "" }
     })(),
     micDevices: [],
+    drawer: initialDrawerState(),
   },
   memoryView: freshPlaceholder("memoryView"),
   moduleRegistry: freshPlaceholder("moduleRegistry"),

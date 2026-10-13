@@ -27,6 +27,7 @@ import { update as exportUpdate } from "../export/index.js"
 import type { ExportMessage, ExportModel } from "../export/index.js"
 import { update as shellUpdate, type ShellServices } from "../update.js"
 import { type Model as ShellModel } from "../model.js"
+import { Message as ShellMessage } from "../messages.js"
 import { update as onboardingUpdate } from "../onboarding/index.js"
 import type { OnboardingMessage, OnboardingModel } from "../onboarding/index.js"
 import type { OnboardingPersistence } from "../onboarding/seam.js"
@@ -159,7 +160,17 @@ export const update = (
   }
   const message: AppMessage = rawMessage
   return AppMessage.match(message, {
-    GotShell: ({ message }) => foldShell(model, message),
+    GotShell: ({ message }) => {
+      const result = foldShell(model, message)
+      // Opening a document (Continue row, project asset) loads it into
+      // the drawer — which lives in the Chat panel. From any other
+      // panel (e.g. Projects) the click would otherwise land invisibly;
+      // bring the user to where the document opened (2026-10-12).
+      if (message._tag === "HomeRecentClicked" && model.activePanel !== "chat") {
+        return { ...result, model: { ...result.model, activePanel: "chat" as const } }
+      }
+      return result
+    },
     GotAsc: ({ message }) => foldAsc(model, message),
     GotSovereignty: ({ message }) => foldSovereignty(model, message),
     GotExport: ({ message }) => foldExport(model, message),
@@ -170,13 +181,34 @@ export const update = (
     GotBanners: ({ message }) => foldBanners(model, message),
     GotMessaging: ({ message }) => foldMessaging(model, message),
     SelectPanel: ({ panel }) => {
-      if (panel !== "messaging") return { model: { ...model, activePanel: panel } }
-      // Opening the messaging panel refreshes its status from main.
       const withPanel = { ...model, activePanel: panel }
-      return foldMessaging(
-        withPanel,
-        MessagingMsg.StatusRequested({})
-      )
+      if (panel === "messaging") {
+        // Opening the messaging panel refreshes its status from main.
+        return foldMessaging(
+          withPanel,
+          MessagingMsg.StatusRequested({})
+        )
+      }
+      if (panel === "home") {
+        // The Home destination IS the dash — refresh both its data
+        // feeds on entry (home data + dash state).
+        const step1 = foldShell(withPanel, ShellMessage.HomeDataRefreshRequested({}))
+        const step2 = foldShell(step1.model, ShellMessage.HomedashRefreshRequested({}))
+        return {
+          model: step2.model,
+          commands: [...(step1.commands ?? []), ...(step2.commands ?? [])],
+        }
+      }
+      if (panel === "projects") {
+        // The Projects destination renders the shell's home data —
+        // refresh it on entry; it otherwise loads only on drawer open
+        // and after home actions (2026-10-12).
+        return foldShell(
+          withPanel,
+          ShellMessage.HomeDataRefreshRequested({})
+        )
+      }
+      return { model: withPanel }
     },
 
     NavToggled: ({ open }) => {

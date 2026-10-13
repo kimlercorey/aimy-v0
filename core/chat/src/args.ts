@@ -59,4 +59,5 @@ usage: npm run chat -- --model <name> [--base-url <url>] [--session <id>]
   --session    resume a named session (default "${DEFAULT_SESSION}")
 
 commands inside the chat: /new  /quit  /help  /retrieval-off  /retrieval-on
-  retrieval <query> — sourced answer with per-claim verification badges`
+  retrieval <query> — sourced answer with per-claim verification badges
+  research <query> — planned, multi-query investigation with ledger-backed claims`

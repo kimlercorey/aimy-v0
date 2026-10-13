@@ -32,6 +32,9 @@ import type { JsonValue, ToolName } from "../../substrate/types.js"
 import { Message } from "./messages.js"
 import { ChatImage } from "./model.js"
 import { TtsIpc } from "./voice/seam.js"
+import { DocsIpc } from "./docs-seam.js"
+import { HomeIpc } from "./home-seam.js"
+import { HomedashIpc } from "./homedash-seam.js"
 
 /** Named array schema so the SendToInference annotation can reference its type. */
 const ChatImageArray = Schema.Array(ChatImage)
@@ -349,3 +352,370 @@ export const RenderMermaid = defineCommand("RenderMermaid", {
     }
   }) as unknown as Effect.Effect<never, never, never>,
 })
+
+/* ------------------------------------------------------------------ */
+/* SaveDocument                                                        */
+/* ------------------------------------------------------------------ */
+
+type DrawerSavedMsg = ReturnType<typeof Message.DrawerSpaceSaved>
+type DrawerSaveFailedMsg = ReturnType<typeof Message.DrawerSpaceSaveFailed>
+
+/**
+ * Write a drawer space's document to disk via the DocsIpc seam
+ * (2026-10-12). Success and failure BOTH surface as messages — the
+ * space's sync state is only updated on DrawerSpaceSaved, so a failed
+ * save can never masquerade as a saved document.
+ */
+export const SaveDocument: CommandDefinitionWithArgs<
+  "SaveDocument",
+  {
+    spaceId: typeof Schema.String
+    path: typeof Schema.String
+    content: typeof Schema.String
+  },
+  Effect.Effect<DrawerSavedMsg | DrawerSaveFailedMsg, never, DocsIpc>
+> = defineCommand("SaveDocument", {
+  args: {
+    spaceId: Schema.String,
+    /** Repo-relative target path (planning/ or docs/). */
+    path: Schema.String,
+    content: Schema.String,
+  },
+  messages: [Message.DrawerSpaceSaved, Message.DrawerSpaceSaveFailed],
+  execute: ({ spaceId, path, content }) =>
+    Effect.gen(function* () {
+      const ipc = yield* DocsIpc
+      const result = yield* Effect.tryPromise({
+        try: () => ipc.saveDocument(path, content),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((r) => Message.DrawerSpaceSaved({ id: spaceId, path: r.path, content })),
+        Effect.catch((e) =>
+          Effect.succeed(
+            Message.DrawerSpaceSaveFailed({ id: spaceId, reason: e.message.slice(0, 300) })
+          )
+        )
+      )
+      return result
+    }),
+})
+
+/* ------------------------------------------------------------------ */
+/* Drawer home panel (2026-10-12)                                     */
+/* ------------------------------------------------------------------ */
+
+type HomeLoadedMsg = ReturnType<typeof Message.HomeDataLoaded>
+type HomeFailedMsg = ReturnType<typeof Message.HomeDataFailed>
+
+/**
+ * Load the drawer home panel data (Continue / Needs you / What she
+ * knows) via the HomeIpc seam. Failure surfaces as HomeDataFailed —
+ * the panel shows the error instead of pretending the stores are empty.
+ */
+export const LoadHomeData: CommandDefinitionWithArgs<
+  "LoadHomeData",
+  { correlationId: typeof Schema.String },
+  Effect.Effect<HomeLoadedMsg | HomeFailedMsg, never, HomeIpc>
+> = defineCommand("LoadHomeData", {
+  args: { correlationId: Schema.String },
+  messages: [Message.HomeDataLoaded, Message.HomeDataFailed],
+  execute: () =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.getHomeData(),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((d) =>
+          Message.HomeDataLoaded({
+            recents: [...d.recents],
+            requests: [...d.requests],
+            cards: [...d.cards],
+            project:
+              d.project === null
+                ? null
+                : {
+                    ...d.project,
+                    goals: [...d.project.goals],
+                    assets: [...d.project.assets],
+                    runs: [...d.project.runs],
+                  },
+            projectList: [...d.projectList],
+            chats: [...d.chats],
+            memories: [...d.memories],
+            journal: d.journal === null ? null : { ...d.journal },
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomeDataFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+type HomeDocLoadedMsg = ReturnType<typeof Message.HomeDocumentLoaded>
+type HomeDocFailedMsg = ReturnType<typeof Message.HomeDocumentLoadFailed>
+
+/**
+ * Open a document from the home panel's Continue list via the DocsIpc
+ * seam. Success and failure both surface as messages — a document that
+ * could not be read is never shown as opened.
+ */
+export const LoadHomeDocument: CommandDefinitionWithArgs<
+  "LoadHomeDocument",
+  { path: typeof Schema.String },
+  Effect.Effect<HomeDocLoadedMsg | HomeDocFailedMsg, never, DocsIpc>
+> = defineCommand("LoadHomeDocument", {
+  args: { path: Schema.String },
+  messages: [Message.HomeDocumentLoaded, Message.HomeDocumentLoadFailed],
+  execute: ({ path }) =>
+    Effect.gen(function* () {
+      const ipc = yield* DocsIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.loadDocument(path),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((r) => Message.HomeDocumentLoaded({ path: r.path, content: r.content })),
+        Effect.catch((e) =>
+          Effect.succeed(
+            Message.HomeDocumentLoadFailed({ path, reason: e.message.slice(0, 300) })
+          )
+        )
+      )
+    }),
+})
+
+type HomeBriefLoadedMsg = ReturnType<typeof Message.HomeRequestBriefLoaded>
+type HomeBriefFailedMsg = ReturnType<typeof Message.HomeRequestBriefLoadFailed>
+
+/**
+ * Load the full text of one pending capability request so the UI can
+ * open it as a build brief. The panel list only carries a truncated
+ * summary; a build detail must not be generated from a truncated need.
+ */
+export const LoadHomeRequestBrief: CommandDefinitionWithArgs<
+  "LoadHomeRequestBrief",
+  { capability: typeof Schema.String, at: typeof Schema.String },
+  Effect.Effect<HomeBriefLoadedMsg | HomeBriefFailedMsg, never, HomeIpc>
+> = defineCommand("LoadHomeRequestBrief", {
+  args: { capability: Schema.String, at: Schema.String },
+  messages: [Message.HomeRequestBriefLoaded, Message.HomeRequestBriefLoadFailed],
+  execute: ({ capability, at }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.getRequestDetail(capability, at),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((r) => Message.HomeRequestBriefLoaded({ capability: r.capability, why: r.why, at: r.at })),
+        Effect.catch((e) =>
+          Effect.succeed(
+            Message.HomeRequestBriefLoadFailed({ capability, reason: e.message.slice(0, 300) })
+          )
+        )
+      )
+    }),
+})
+
+type HomeDismissedMsg = ReturnType<typeof Message.HomeRequestDismissed>
+type HomeDismissFailedMsg = ReturnType<typeof Message.HomeRequestDismissFailed>
+
+/** Dismiss one pending capability request via the HomeIpc seam. */
+export const DismissHomeRequest: CommandDefinitionWithArgs<
+  "DismissHomeRequest",
+  { capability: typeof Schema.String, at: typeof Schema.String },
+  Effect.Effect<HomeDismissedMsg | HomeDismissFailedMsg, never, HomeIpc>
+> = defineCommand("DismissHomeRequest", {
+  args: { capability: Schema.String, at: Schema.String },
+  messages: [Message.HomeRequestDismissed, Message.HomeRequestDismissFailed],
+  execute: ({ capability, at }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.dismissRequest(capability, at),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map(() => Message.HomeRequestDismissed({ capability })),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomeRequestDismissFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+type ProjectActionDoneMsg = ReturnType<typeof Message.HomeProjectActionDone>
+
+/**
+ * Project actions (2026-10-12): switch / create / move / add over the
+ * HomeIpc seam. Each resolves to HomeProjectActionDone; the update
+ * handler answers it with a fresh LoadHomeData so the panel always
+ * reflects the store, never an optimistic guess. Failures also resolve
+ * to ActionDone (logged) — the refresh shows the true state either way.
+ */
+export const SwitchHomeProject: CommandDefinitionWithArgs<
+  "SwitchHomeProject",
+  { id: typeof Schema.String },
+  Effect.Effect<ProjectActionDoneMsg, never, HomeIpc>
+> = defineCommand("SwitchHomeProject", {
+  args: { id: Schema.String },
+  messages: [Message.HomeProjectActionDone],
+  execute: ({ id }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      yield* Effect.tryPromise({
+        try: () => ipc.setActiveProject(id),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(Effect.catch(() => Effect.void))
+      return Message.HomeProjectActionDone()
+    }),
+})
+
+export const CreateHomeProject: CommandDefinitionWithArgs<
+  "CreateHomeProject",
+  { name: typeof Schema.String, purpose: typeof Schema.String },
+  Effect.Effect<ProjectActionDoneMsg, never, HomeIpc>
+> = defineCommand("CreateHomeProject", {
+  args: { name: Schema.String, purpose: Schema.String },
+  messages: [Message.HomeProjectActionDone],
+  execute: ({ name, purpose }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      yield* Effect.tryPromise({
+        try: () => ipc.createProject(name, purpose),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(Effect.catch(() => Effect.void))
+      return Message.HomeProjectActionDone()
+    }),
+})
+
+export const MoveHomeAsset: CommandDefinitionWithArgs<
+  "MoveHomeAsset",
+  { fromId: typeof Schema.String, toId: typeof Schema.String, kind: typeof Schema.String, title: typeof Schema.String, path: typeof Schema.String },
+  Effect.Effect<ProjectActionDoneMsg, never, HomeIpc>
+> = defineCommand("MoveHomeAsset", {
+  args: { fromId: Schema.String, toId: Schema.String, kind: Schema.String, title: Schema.String, path: Schema.String },
+  messages: [Message.HomeProjectActionDone],
+  execute: ({ fromId, toId, kind, title, path }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      yield* Effect.tryPromise({
+        try: () => ipc.moveAsset(fromId, toId, kind, title, path === "" ? undefined : path),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(Effect.catch(() => Effect.void))
+      return Message.HomeProjectActionDone()
+    }),
+})
+
+export const AddHomeRecentToProject: CommandDefinitionWithArgs<
+  "AddHomeRecentToProject",
+  { projectId: typeof Schema.String, path: typeof Schema.String, title: typeof Schema.String },
+  Effect.Effect<ProjectActionDoneMsg, never, HomeIpc>
+> = defineCommand("AddHomeRecentToProject", {
+  args: { projectId: Schema.String, path: Schema.String, title: Schema.String },
+  messages: [Message.HomeProjectActionDone],
+  execute: ({ projectId, path, title }) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomeIpc
+      yield* Effect.tryPromise({
+        try: () => ipc.addAsset(projectId, path, title),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(Effect.catch(() => Effect.void))
+      return Message.HomeProjectActionDone()
+    }),
+})
+
+/* ------------------------------------------------------------------ */
+/* HomeDash (2026-10-13)                                               */
+/* ------------------------------------------------------------------ */
+
+type HomedashLoadedMsg = ReturnType<typeof Message.HomedashLoaded>
+type HomedashFailedMsg = ReturnType<typeof Message.HomedashFailed>
+
+/**
+ * Load the HomeDash state (enabled widgets, manifests, effective
+ * settings) via the HomedashIpc seam.
+ */
+export const LoadHomedash: CommandDefinitionWithArgs<
+  "LoadHomedash",
+  { correlationId: typeof Schema.String },
+  Effect.Effect<HomedashLoadedMsg | HomedashFailedMsg, never, HomedashIpc>
+> = defineCommand("LoadHomedash", {
+  args: { correlationId: Schema.String },
+  messages: [Message.HomedashLoaded, Message.HomedashFailed],
+  execute: () =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.getHomedash(),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((d) =>
+          Message.HomedashLoaded({
+            widgets: d.widgets.map((w) => ({
+              ...w,
+              settings: w.settings.map((s) => ({ ...s })),
+            })),
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomedashFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+/**
+ * Persist one widget setting, then reload so every surface (dash,
+ * Settings) renders the effective value — the store is the truth,
+ * never the control.
+ */
+const HomedashValueSchema = Schema.Union([Schema.String, Schema.Number, Schema.Boolean])
+
+export const ApplyHomedashSetting: CommandDefinitionWithArgs<
+  "ApplyHomedashSetting",
+  {
+    correlationId: typeof Schema.String
+    widgetId: typeof Schema.String
+    key: typeof Schema.String
+    value: typeof HomedashValueSchema
+  },
+  Effect.Effect<HomedashLoadedMsg | HomedashFailedMsg, never, HomedashIpc>
+> = defineCommand("ApplyHomedashSetting", {
+  args: {
+    correlationId: Schema.String,
+    widgetId: Schema.String,
+    key: Schema.String,
+    value: HomedashValueSchema,
+  },
+  messages: [Message.HomedashLoaded, Message.HomedashFailed],
+  execute: (args) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: async () => {
+          await ipc.setSetting(args.widgetId, args.key, args.value)
+          return ipc.getHomedash()
+        },
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((d) =>
+          Message.HomedashLoaded({
+            widgets: d.widgets.map((w) => ({
+              ...w,
+              settings: w.settings.map((s) => ({ ...s })),
+            })),
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomedashFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+/* NOTE (2026-10-12): there is deliberately NO DownloadDocument command.
+ * A no-message DOM command (messages: []) crashes this app with
+ * "Schema validation failed" — the same failure that disabled
+ * FocusComposer/ScrollToBottom/RenderMermaid on 2026-10-10. Download is
+ * a delegated DOM op in desktop main.ts (like the copy button), reading
+ * the space's hidden .drawer-space-source span. */

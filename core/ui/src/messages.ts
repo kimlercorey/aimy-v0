@@ -16,7 +16,7 @@
  */
 import { Schema } from "effect"
 import { defineMessageUnion } from "foldkit/message"
-import { ChatImage } from "./model.js"
+import { ChatImage, HomeCard, HomeChat, HomeJournal, HomeMemory, HomeProject, HomeProjectListEntry, HomeRecent, HomeRequest, HomedashWidget } from "./model.js"
 
 /** Token usage incl. reasoning tokens (Pi #9409); optional until the loop reports it. */
 export const Usage = Schema.Struct({
@@ -79,6 +79,20 @@ export const Message = defineMessageUnion({
     streamId: Schema.String,
     tool: Schema.String,
     resultSummary: Schema.String,
+    /** Full args for drawer tools (Phase I 2026-10-12). */
+    args: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  },
+  /**
+   * A tool call completed in the loop (2026-10-12): forwarded by main as
+   * the `chat.tool` IPC event. Lands on the ACTIVE stream's activity
+   * list (single-stream UI; streamId carried for diagnosis) so the
+   * footer tag can flip from spinner to green/red with a conclusion.
+   */
+  StreamToolActivity: {
+    streamId: Schema.String,
+    tool: Schema.String,
+    ok: Schema.Boolean,
+    conclusion: Schema.String,
   },
 
   /** The turn settled (§4.2): post-turn audit complete, text final. */
@@ -385,6 +399,142 @@ export const Message = defineMessageUnion({
     correlationId: Schema.String,
     reason: Schema.String,
   },
+
+  /* -- drawer (right-hand collaboration spaces, Phase I 2026-10-12) -- */
+
+  DrawerToggled: { open: Schema.Boolean },
+
+  /** Refresh the drawer home data without touching drawer state —
+   *  the composed Projects destination loads through this (2026-10-12). */
+  HomeDataRefreshRequested: {},
+
+  DrawerSpaceOpened: {
+    id: Schema.String,
+    title: Schema.String,
+    kind: Schema.String,
+    content: Schema.String,
+  },
+
+  DrawerSpaceClosed: { id: Schema.String },
+
+  DrawerSpaceSelected: { id: Schema.String },
+
+  DrawerSpaceUpdated: {
+    id: Schema.String,
+    content: Schema.String,
+  },
+
+  /** User dragged a space resize handle — update height ratios. */
+  DrawerSpaceResized: {
+    aboveId: Schema.String,
+    belowId: Schema.String,
+    /** New flex-grow ratio for the above space. */
+    aboveRatio: Schema.Number,
+    /** New flex-grow ratio for the below space. */
+    belowRatio: Schema.Number,
+  },
+
+  /** User clicked the save button on a space (2026-10-12). */
+  DrawerSaveRequested: { id: Schema.String },
+
+  /** The space's content was written to disk (SaveDocument command). */
+  DrawerSpaceSaved: {
+    id: Schema.String,
+    path: Schema.String,
+    content: Schema.String,
+  },
+
+  /** Saving a space to disk failed. */
+  DrawerSpaceSaveFailed: {
+    id: Schema.String,
+    reason: Schema.String,
+  },
+
+  /** User toggled a space's history list open/closed (2026-10-12). */
+  DrawerHistoryToggled: { id: Schema.String },
+  DrawerRawToggled: { id: Schema.String },
+  HomeDataLoaded: {
+    recents: Schema.Array(HomeRecent),
+    requests: Schema.Array(HomeRequest),
+    cards: Schema.Array(HomeCard),
+    project: Schema.NullOr(HomeProject),
+    projectList: Schema.Array(HomeProjectListEntry),
+    chats: Schema.Array(HomeChat),
+    memories: Schema.Array(HomeMemory),
+    journal: Schema.NullOr(HomeJournal),
+  },
+  /** HomeDash (2026-10-13): enabled widgets + settings arrived. */
+  HomedashLoaded: { widgets: Schema.Array(HomedashWidget) },
+  HomedashFailed: { reason: Schema.String },
+  HomedashRefreshRequested: {},
+  /** A widget setting was adjusted (Settings transposition). The
+   * reserved key "priority" sets the widget's screen depth. */
+  HomedashSettingChanged: {
+    widgetId: Schema.String,
+    key: Schema.String,
+    value: Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
+  },
+  HomeDataFailed: { reason: Schema.String },
+  HomeRecentClicked: { path: Schema.String },
+  /** Project UI (2026-10-12): switcher, new-project form, asset moves. */
+  HomeProjectSwitchClicked: { id: Schema.String },
+  HomeProjectNewClicked: {},
+  HomeProjectFormCancelled: {},
+  HomeProjectDraftNameChanged: { value: Schema.String },
+  HomeProjectDraftPurposeChanged: { value: Schema.String },
+  HomeProjectCreateSubmitted: {},
+  HomeProjectActionDone: {},
+  HomeAssetMoveMenuToggled: { key: Schema.String },
+  HomeAssetMoveTargetClicked: {
+    fromId: Schema.String,
+    toId: Schema.String,
+    kind: Schema.String,
+    title: Schema.String,
+    path: Schema.optional(Schema.String),
+  },
+  HomeRecentAddToProjectClicked: { path: Schema.String, title: Schema.String },
+  HomeDocumentLoaded: { path: Schema.String, content: Schema.String },
+  HomeDocumentLoadFailed: { path: Schema.String, reason: Schema.String },
+  HomeRequestBuildBriefClicked: { capability: Schema.String, at: Schema.String },
+  HomeRequestBriefLoaded: { capability: Schema.String, why: Schema.String, at: Schema.String },
+  HomeRequestBriefLoadFailed: { capability: Schema.String, reason: Schema.String },
+  HomeRequestDismissClicked: { capability: Schema.String, at: Schema.String },
+  HomeRequestDismissed: { capability: Schema.String },
+  HomeRequestDismissFailed: { reason: Schema.String },
+
+  /** User picked a version from a space's history to restore (2026-10-12). */
+  DrawerVersionRestored: {
+    id: Schema.String,
+    /** Index into the space's history array. */
+    index: Schema.Number,
+  },
+
+  /** User clicked the edit (pencil) button on a space — enter edit mode. */
+  DrawerEditStarted: { id: Schema.String },
+
+  /** The edit textarea changed. */
+  DrawerEditDraftChanged: { text: Schema.String },
+
+  /** User confirmed the edit (check button) — apply the draft. */
+  DrawerEditApplied: { id: Schema.String },
+
+  /** User cancelled editing — discard the draft. */
+  DrawerEditCancelled: { id: Schema.String },
+
+  /**
+   * A validator result for a drawer space's rendered blocks (2026-10-12,
+   * design: planning/knowledge-and-validation-design.md). Dispatched by
+   * the desktop renderer (mermaid render success/failure) via the
+   * `aimy:validation` DOM event + subscription. update.ts diffs it
+   * against DrawerState.validationIssues and turns failures/recoveries
+   * into change notes for her next turn.
+   */
+  DrawerValidationReported: {
+    spaceId: Schema.String,
+    lang: Schema.String,
+    ok: Schema.Boolean,
+    error: Schema.optional(Schema.String),
+  },
 })
 export type Message = typeof Message.Type
 
@@ -397,6 +547,7 @@ export const MESSAGE_TAGS = [
   "StreamStarted",
   "StreamChunkReceived",
   "StreamToolCallObserved",
+  "StreamToolActivity",
   "StreamSettled",
   "StreamFailed",
   "SessionBranched",
@@ -409,4 +560,47 @@ export const MESSAGE_TAGS = [
   "MemoryPersisted",
   "MemoryPersistFailed",
   "MicPreRollChanged",
+  "DrawerToggled",
+  "HomeDataRefreshRequested",
+  "DrawerSpaceOpened",
+  "DrawerSpaceClosed",
+  "DrawerSpaceSelected",
+  "DrawerSpaceUpdated",
+  "DrawerSpaceResized",
+  "DrawerSaveRequested",
+  "DrawerSpaceSaved",
+  "DrawerSpaceSaveFailed",
+  "DrawerHistoryToggled",
+  "DrawerRawToggled",
+  "HomeDataLoaded",
+  "HomeDataFailed",
+  "HomeRecentClicked",
+  "HomeProjectSwitchClicked",
+  "HomeProjectNewClicked",
+  "HomeProjectFormCancelled",
+  "HomeProjectDraftNameChanged",
+  "HomeProjectDraftPurposeChanged",
+  "HomeProjectCreateSubmitted",
+  "HomeProjectActionDone",
+  "HomeAssetMoveMenuToggled",
+  "HomeAssetMoveTargetClicked",
+  "HomeRecentAddToProjectClicked",
+  "HomeDocumentLoaded",
+  "HomeDocumentLoadFailed",
+  "HomeRequestBuildBriefClicked",
+  "HomeRequestBriefLoaded",
+  "HomeRequestBriefLoadFailed",
+  "HomeRequestDismissClicked",
+  "HomeRequestDismissed",
+  "HomeRequestDismissFailed",
+  "DrawerVersionRestored",
+  "DrawerEditStarted",
+  "DrawerEditDraftChanged",
+  "DrawerEditApplied",
+  "DrawerEditCancelled",
+  "DrawerValidationReported",
+  "HomedashLoaded",
+  "HomedashFailed",
+  "HomedashRefreshRequested",
+  "HomedashSettingChanged",
 ] as const

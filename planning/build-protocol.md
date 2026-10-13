@@ -19,15 +19,21 @@ A module is code that runs inside one host. A protocol is a contract many hosts 
 
 ## 3. The pipeline
 
-```
-┌─────────┐    ┌──────────────┐    ┌──────┐    ┌──────────────┐    ┌────────┐
-│ problem │    │     spec     │    │ docs │    │     code     │    │ bundle │
-│   or    ├─┬─►│  (contract)  ├─┬─►│(arch) ├─┬─►│  (generated) ├─┬─►│(shipp- │
-│  spec   │ │  │              │ │  │      │ │  │              │ │  │ able)  │
-└─────────┘ │  └──────────────┘ │  └──────┘ │  └──────────────┘ │  └────────┘
-            │                   │           │                   │
-            ▼                   ▼           ▼                   ▼
-       spec.validate       docs.derive  code.generate     evidence.seal
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1a1a2e", "primaryTextColor": "#e0e0e0", "lineColor": "#475569", "fontSize": "14px", "edgeLabelBackground": "transparent"}}}%%
+flowchart LR
+  classDef input fill:#1e293b,stroke:#00e5ff,stroke-width:0.75px,color:#00e5ff,filter:none,text-shadow:none
+  classDef contract fill:#0f172a,stroke:#a855f7,stroke-width:0.75px,color:#a855f7,filter:none,text-shadow:none
+  classDef docs fill:#1a0f2e,stroke:#22d3ee,stroke-width:0.75px,color:#22d3ee,filter:none,text-shadow:none
+  classDef code fill:#0a1628,stroke:#34d399,stroke-width:0.75px,color:#34d399,filter:none,text-shadow:none
+  classDef bundle fill:#111827,stroke:#f59e0b,stroke-width:0.75px,color:#f59e0b,filter:none,text-shadow:none
+
+  A["problem or<br/>spec"]:::input -->|"spec.validate"| B["spec<br/>(contract)"]:::contract
+  B -->|"docs.derive"| C["docs<br/>(arch)"]:::docs
+  C -->|"code.generate"| D["code<br/>(generated)"]:::code
+  D -->|"evidence.seal"| E["bundle<br/>(sealed)"]:::bundle
+
+  linkStyle default stroke:#475569,stroke-width:0.75px
 ```
 
 ### Stage 1 — `spec.validate`: problem → contract
@@ -48,53 +54,4 @@ A module is code that runs inside one host. A protocol is a contract many hosts 
 
 - **Input:** derived docs + the pinned spec.
 - **Output:** source code, contract-first: interfaces/types before implementations.
-- **Rules:** this is the only stage where model nondeterminism is allowed, and its output is *always* treated as unverified until Stage 4. The generator may not skip the docs — code must trace to doc sections, which trace to spec requirements.
-- **Evidence:** generation provenance (model, prompt hash, timestamp) is recorded. The code itself carries no badge until verified.
-
-### Stage 4 — `evidence.seal`: code → verified bundle
-
-- **Input:** generated code + docs + spec.
-- **Output:** a `Bundle` — code, docs, and an evidence ledger.
-- **The gate cascade** (Forge2's, adopted): contract gates → static gates → behavior gates → runtime gates. Plus AImy's executable judges as an independent verification arm: deterministic checks over final state, side effects, and claim resolution.
-- **Rules:** a failed gate is a finding recorded in the ledger, never silently repaired. The bundle ships with its failures visible if the client accepts them explicitly — nothing is hidden.
-- **Evidence:** the ledger. Every claim `verified` (evidence attached), `unverified` (no evidence), or `failed` (evidence contradicts). The bundle includes a `verifyBundle` procedure so a third party can check it independently (cf. AImy's one-click export).
-
-## 4. The typed API
-
-Version: `build-protocol/0.1`. Transport-agnostic — the same operations work in-process (AImy module), over the first-party LAN (paired instances), or over HTTPS (Forge2 Studio, open-code).
-
-| Operation | Input | Output |
-|---|---|---|
-| `build.submit` | `Spec` (or problem text for Stage 1) | `buildId`, stage cursor |
-| `build.status` | `buildId` | stage, per-stage state, gate results so far |
-| `build.artifacts` | `buildId`, stage | typed artifacts for that stage |
-| `build.verify` | `buildId` | re-run the gate cascade; full ledger |
-| `build.cancel` | `buildId` | terminal state; partial artifacts preserved |
-
-All operations are idempotent except `build.submit`. All errors are typed (`SpecInvalid`, `GateFailed`, `StageSkipped`, `BuildNotFound`) — never free-text failures.
-
-## 5. Client bindings
-
-- **AImy module (`software-builder`).** The in-process binding: a SKILL.md manifest declaring `tools: [build.submit, build.status, build.artifacts, build.verify, build.cancel]`, `subprocess: true` (T2/T3 — sandboxed execution), `network: {}` (no egress needed; the builder is local). This is the reference implementation.
-- **Forge2 Studio.** Its Generate stage is re-pointed at the protocol: Formulate/Optimize/Roadmap produce the `Spec`; `build.submit` replaces the string-patch repair fabric; Execute/Evidence consume the bundle's ledger. The failed-gate-is-a-finding rule is already Forge2's — the protocol just gives it a typed home.
-- **open-code.** An API client binding: open-code drives `build.submit` / `build.status` like any other client. No fork of open-code required if the transport is HTTP; a plugin if deeper integration is wanted.
-- **Other AImy instances.** Over the first-party network (§4.11: paired instances, UUID identity). Same operations, same types.
-
-## 6. Execution environment
-
-Code execution (Stage 3 generation harnesses, Stage 4 gate runs) happens inside the sandbox backend — the honest-stub area (MoSCoW #10). Until real backends land, `code.generate` and `evidence.seal` run in-process with the capability manifest enforced and network denied; the bundle's ledger records the sandbox level honestly (`sandbox: none (stub)` vs `sandbox: seatbelt/macos`, etc.). The IronProxy pattern (opaque tokens in-sandbox, real keys swapped at the boundary) is adopted for when execution needs network-adjacent resources.
-
-## 7. Open decisions
-
-1. **Transport for cross-instance/cross-tool use.** HTTP+JSON is the default candidate; the operations are transport-agnostic by design, but one transport must be chosen for v0.1.
-2. **Spec schema versioning.** The `Spec` type will evolve; the protocol version covers the operations, but the spec schema needs its own versioning story.
-3. **Human-check criteria.** Acceptance criteria labeled `human-check` need a defined handoff (who checks, where the verdict lands in the ledger).
-4. **Deterministic docs derivation.** Stage 2's "derivation, not invention" needs teeth — likely a structural check that every doc section cites a requirement id. The exact mechanism is open.
-5. **Relationship to AImy's learning loop.** Successful builds are experience; the quarantine→verification→trusted pipeline could promote build patterns to skills. Explicitly out of v0.1, noted for later.
-
-## 8. What v0.1 does NOT include
-
-- The sandbox backends themselves (MoSCoW #10 — separate work).
-- First-party LAN pairing (MoSCoW Could — separate work).
-- The AImy module implementation, Forge2 integration, or open-code adapter (conformance work after the protocol is accepted).
-- Training or shipping model weights (Won't — the builder is model-agnostic; the model is a parameter, not the product).
+- **Rules:** this is the only stage where model nondeterminism is allowed, and its output is *always* tre

@@ -40,6 +40,7 @@
  */
 export * from "./errors.js"
 export * from "./timeline.js"
+export * from "./file-store.js"
 export * from "./fossilization.js"
 export * from "./types.js"
 export * from "./quarantine.js"

@@ -35,6 +35,13 @@ import {
   makeRetrievalToolForChat,
   type RetrievalTool
 } from "../../../chat/src/retrieval.js"
+import {
+  bootResearchModule,
+  makePoolPlanModel,
+  makeResearchAgentTool,
+  makeResearchToolForChat,
+  type ResearchToolFactory
+} from "../../../chat/src/research.js"
 import { HonestyService } from "../../../honesty/index.js"
 import { InferencePool } from "../../../inference-pool/index.js"
 import { MemoryService } from "../../../memory/index.js"
@@ -214,6 +221,12 @@ export const bootDesktopEngine = async (opts?: {
   let retrievalTool: RetrievalTool | undefined
   const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
 
+  // Same pattern for deep-research (2026-10-12): the model-callable
+  // research.query tool, closing over a boot-stashed FACTORY (each run
+  // builds its tool with that run's stage sink for the run record).
+  let researchToolFactory: ResearchToolFactory | undefined
+  const researchAgentTool = makeResearchAgentTool((onStage) => researchToolFactory?.(onStage))
+
   // Background job registry: process-lifetime, shared across turns.
   // Spawned jobs (via `job.spawn` tool) outlive the turn that created them.
   const backgroundJobs = await Effect.runPromise(makeBackgroundJobRegistry())
@@ -239,7 +252,7 @@ export const bootDesktopEngine = async (opts?: {
     baseUrl: config.baseUrl,
     model: config.model,
     streaming,
-    extraTools: [retrievalAgentTool],
+    extraTools: [retrievalAgentTool, researchAgentTool],
     backgroundJobs,
     narration: narrationSink
   })
@@ -259,6 +272,8 @@ export const bootDesktopEngine = async (opts?: {
       const http = yield* HttpClient
       yield* bootRetrievalModule(host)
       retrievalTool = makeRetrievalToolForChat(http, honesty)
+      yield* bootResearchModule(host)
+      researchToolFactory = (onStage) => makeResearchToolForChat(http, honesty, makePoolPlanModel(pool), onStage)
     })
   )
 

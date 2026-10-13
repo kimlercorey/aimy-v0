@@ -36,8 +36,8 @@ const VALID_INTENTS = new Set(["background", "evidence", "counterpoint", "primar
 
 /**
  * Narrow model interface the planner needs. InferencePool satisfies this via
- * an adapter in research.ts; tests stub it. The planner never sees the full
- * pool surface.
+ * the adapter in core/chat/src/research.ts (makePoolPlanModel); tests stub
+ * it. The planner never sees the full pool surface.
  */
 export interface PlanModel {
   readonly generateText: (system: string, user: string) => Effect.Effect<string, PlanError>

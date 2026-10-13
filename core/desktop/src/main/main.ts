@@ -43,6 +43,33 @@ import type { TraceWriter } from "./trace.js"
 const hereDir = (): string => path.dirname(fileURLToPath(import.meta.url))
 
 /**
+ * Set AIMY_REPO_ROOT for agent-loop tools (doc.list, doc.read).
+ * Walks up from the main process location looking for planning/.
+ * Also checks cwd and its parents (dev mode may launch from core/).
+ */
+const setRepoRoot = (): void => {
+  if (process.env.AIMY_REPO_ROOT) return
+  const roots: string[] = [hereDir(), process.cwd()]
+  for (const base of roots) {
+    for (let levels = 0; levels <= 6; levels++) {
+      const candidate = path.resolve(base, ...Array(levels).fill(".."))
+      try {
+        if (
+          fs.existsSync(path.join(candidate, "planning")) &&
+          fs.existsSync(path.join(candidate, "core"))
+        ) {
+          process.env.AIMY_REPO_ROOT = candidate
+          return
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
+}
+setRepoRoot()
+
+/**
  * Preload location contract with Track 2: `src/preload.ts` bundles to
  * `dist/preload.cjs`. NOTE the `.cjs`: Electron does not support ESM
  * imports in *sandboxed* preload scripts, so the preload is bundled to a

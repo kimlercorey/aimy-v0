@@ -25,6 +25,10 @@ export const summarizeToolResult = (result: unknown): string => {
  * every chunk the loop can emit has a mapping — nothing is silently dropped.
  */
 export const chatChunkToMessage = (streamId: string, chunk: ChatChunk): Message => {
+  // DIAG: log all chunk types to see what's arriving
+  if (chunk._tag === "ToolCall") {
+    console.warn(`[diag] streaming: received ToolCall chunk, tool=${(chunk as {tool?: unknown}).tool}`)
+  }
   switch (chunk._tag) {
     case "Token":
       return Message.StreamChunkReceived({
@@ -32,10 +36,16 @@ export const chatChunkToMessage = (streamId: string, chunk: ChatChunk): Message 
         delta: sanitizeTerminalOutput(chunk.delta),
       })
     case "ToolCall":
+      // DIAG 2026-10-12: log drawer tool mapping.
+      if (chunk.tool.startsWith("drawer.")) {
+        console.warn(`[diag] streaming: ToolCall ${chunk.tool} -> StreamToolCallObserved, hasArgs=${(chunk as {args?: unknown}).args !== undefined}`)
+      }
       return Message.StreamToolCallObserved({
         streamId,
         tool: chunk.tool,
         resultSummary: summarizeToolResult(chunk.result),
+        // Pass through args for drawer tools (Phase I 2026-10-12).
+        ...(chunk.args !== undefined ? { args: chunk.args as Record<string, string> } : {}),
       })
     case "Done":
       return Message.StreamSettled({

@@ -153,6 +153,174 @@ export interface DevRebuildResult {
   readonly error?: string | undefined
 }
 
+/** Result of a `docs.save` write: the repo-relative path actually written. */
+export interface DocsSaveResult {
+  readonly path: string
+}
+
+/** Result of a `docs.load` read: the repo-relative path and its content. */
+export interface DocsLoadResult {
+  readonly path: string
+  readonly content: string
+}
+
+/** One recent document for the drawer home panel (mtime-derived). */
+export interface HomeRecentEntry {
+  readonly path: string
+  readonly title: string
+  /** Epoch ms of the file's last modification. */
+  readonly at: number
+}
+
+/** One pending capability request for the drawer home panel. */
+export interface HomeRequestEntry {
+  readonly capability: string
+  readonly why: string
+  /** ISO timestamp from the request record. */
+  readonly at: string
+}
+
+/** One knowledge card for the drawer home panel. */
+export interface HomeCardEntry {
+  readonly slug: string
+  readonly title: string
+  readonly whenToUse: string
+  readonly proven: number
+  readonly updated: string
+}
+
+/** One asset registered in the active project (reference, not a copy). */
+export interface HomeProjectAssetEntry {
+  readonly kind: string
+  readonly title: string
+  readonly role: string
+  readonly path?: string
+  readonly addedAt: string
+}
+
+/** One research run in the active project (E16 run-record summary). */
+export interface HomeResearchRunEntry {
+  readonly runId: string
+  readonly query: string
+  readonly mode: string
+  readonly depth: string
+  /** scheduled | running | done | failed | unknown */
+  readonly status: string
+  readonly stage: string
+  readonly startedAt: string
+  readonly finishedAt?: string
+  readonly counters: { searches: number; fetches: number; claims: number; clusters: number; rounds: number }
+  /** Estimated ms remaining; null while the run is still estimating. */
+  readonly etaMs: number | null
+  readonly deliverableTitle: string
+  readonly deliverablePath: string | null
+  readonly termination?: string
+}
+
+/** The active project section of the home panel (2026-10-12, Projects v1). */
+export interface HomeProjectSection {
+  readonly id: string
+  readonly name: string
+  readonly purpose: string
+  readonly isDefault: boolean
+  readonly goals: ReadonlyArray<string>
+  readonly assets: ReadonlyArray<HomeProjectAssetEntry>
+  readonly runs: ReadonlyArray<HomeResearchRunEntry>
+}
+
+/** One project in the switcher list (2026-10-12, project UI). */
+export interface HomeProjectListEntry {
+  readonly id: string
+  readonly name: string
+  readonly isDefault: boolean
+}
+
+/** One widget setting, as presented to the user (HomeDash, 2026-10-13). */
+export interface HomedashSettingEntry {
+  readonly key: string
+  /** "slider" | "toggle" | "select" | "number" — the control to render. */
+  readonly type: string
+  readonly label: string
+  readonly value: string | number | boolean
+  readonly min?: number | undefined
+  readonly max?: number | undefined
+  readonly step?: number | undefined
+  readonly options?: ReadonlyArray<string> | undefined
+}
+
+/** One enabled HomeDash widget with its effective settings. */
+export interface HomedashWidgetEntry {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly version: string
+  /** Screen depth on the dash stage, 1–1000. Higher is on top. */
+  readonly priority: number
+  readonly settings: ReadonlyArray<HomedashSettingEntry>
+}
+
+export interface HomedashListResult {
+  readonly widgets: ReadonlyArray<HomedashWidgetEntry>
+}
+
+/** One past conversation, from its session record (Mirror Field, 2026-10-13). */
+export interface HomeChatEntry {
+  readonly id: string
+  readonly subject: string
+  readonly at: number
+  readonly messages: number
+}
+
+/** One archived thread memory — what she kept of a past conversation. */
+export interface HomeMemoryEntry {
+  readonly sessionId: string
+  readonly summary: string
+  readonly messageCount: number
+  readonly archivedAt: number
+}
+
+/** The journal's metadata for the dash: existence + freshness only. */
+export interface HomeJournalEntry {
+  readonly updatedAt: number
+  readonly chars: number
+}
+
+/** Drawer home panel data: Project / Continue / Needs you / Knowledge. */
+export interface HomeDataResult {
+  readonly recents: ReadonlyArray<HomeRecentEntry>
+  readonly requests: ReadonlyArray<HomeRequestEntry>
+  readonly cards: ReadonlyArray<HomeCardEntry>
+  /** Null when no projects store exists yet. */
+  readonly project: HomeProjectSection | null
+  /** Every project, for the switcher + move targets. */
+  readonly projectList: ReadonlyArray<HomeProjectListEntry>
+  /** Past conversations, newest first (Mirror Field chat nodes). */
+  readonly chats: ReadonlyArray<HomeChatEntry>
+  /** Archived thread memories, newest first (Mirror Field memory nodes). */
+  readonly memories: ReadonlyArray<HomeMemoryEntry>
+  /** Journal metadata, or null when no journal exists yet. */
+  readonly journal: HomeJournalEntry | null
+}
+
+/** projects.list result: every project plus which one is active. */
+export interface ProjectsListResult {
+  readonly activeProjectId: string
+  readonly projects: ReadonlyArray<HomeProjectListEntry & { purpose: string; assetCount: number }>
+}
+
+export interface ProjectsCreateResult {
+  readonly id: string
+  readonly name: string
+  readonly created: boolean
+}
+
+/** Full capability-request detail for turning a request into a build brief. */
+export interface HomeRequestDetailResult {
+  readonly capability: string
+  readonly why: string
+  readonly at: string
+}
+
 export interface BannersListResult {
   readonly banners: ReadonlyArray<Banner>
 }
@@ -278,6 +446,30 @@ export type IpcCommand =
   | { _tag: "messaging.setForwarding"; kinds: ReadonlyArray<string> }
   | { _tag: "messaging.testMessage" }
   | { _tag: "dev.rebuild" }
+  /** Write a markdown document to disk (2026-10-12: drawer save). Main validates the path (planning/ or docs/, no traversal) and resolves it against the repo root. */
+  | { _tag: "docs.save"; path: string; content: string }
+  /** Read a markdown document from disk (2026-10-12: drawer home panel "Continue"). Same path validation as docs.save. */
+  | { _tag: "docs.load"; path: string }
+  /** Drawer home panel data (2026-10-12): recents (mtime scan), pending capability requests, knowledge cards — all read from the user's own stores by main. */
+  | { _tag: "home.data" }
+  /** Read the full text of one pending capability request (2026-10-12): used to open it as a build brief without truncating the request detail. */
+  | { _tag: "home.requestDetail"; capability: string; at: string }
+  /** Dismiss one pending capability request (2026-10-12): matched by capability + timestamp; main marks it dismissed in the ledger. */
+  | { _tag: "home.dismissRequest"; capability: string; at: string }
+  /** HomeDash (2026-10-13): enabled widgets, their manifests and effective settings. Main seeds the widget folders on first call. */
+  | { _tag: "homedash.list" }
+  /** Persist one HomeDash widget setting (the reserved key "priority" sets screen depth 1–1000). */
+  | { _tag: "homedash.setSetting"; widgetId: string; key: string; value: string | number | boolean }
+  /** Every project + the active one (2026-10-12, project UI). */
+  | { _tag: "projects.list" }
+  /** Create a user-declared project and make it active (2026-10-12). */
+  | { _tag: "projects.create"; name: string; purpose: string }
+  /** Declare a different project active (2026-10-12). */
+  | { _tag: "projects.setActive"; id: string }
+  /** Move an asset record between projects (2026-10-12): files never move, only the binding. */
+  | { _tag: "projects.moveAsset"; fromId: string; toId: string; kind: string; title: string; path?: string }
+  /** Register an existing document into a project as a reference asset (2026-10-12). */
+  | { _tag: "projects.addAsset"; projectId: string; path: string; title: string }
   | { _tag: "shell.openExternal"; url: string }
   /** Debug trace (2026-10-11): renderer forwards one trace event to the main-process writer. No-op unless debugTrace is on. */
   | { _tag: "trace.log"; trace: string; event: string; fields?: Record<string, unknown> }
@@ -323,6 +515,18 @@ export interface IpcResponse {
   "messaging.setForwarding": void
   "messaging.testMessage": MessagingTestResult
   "dev.rebuild": DevRebuildResult
+  "docs.save": DocsSaveResult
+  "docs.load": DocsLoadResult
+  "home.data": HomeDataResult
+  "projects.list": ProjectsListResult
+  "projects.create": ProjectsCreateResult
+  "projects.setActive": { activeProjectId: string }
+  "projects.moveAsset": { moved: boolean }
+  "projects.addAsset": { added: boolean }
+  "home.requestDetail": HomeRequestDetailResult
+  "home.dismissRequest": void
+  "homedash.list": HomedashListResult
+  "homedash.setSetting": void
   "shell.openExternal": void
   "trace.log": void
   "providers.load": unknown
@@ -339,6 +543,8 @@ export type IpcCommandResult<C extends IpcCommand> = IpcResponse[C["_tag"]]
 
 export type IpcEvent =
   | { _tag: "chat.token"; streamId: string; delta: string }
+  /** One tool call completed in the loop (2026-10-12): the footer tag's outcome — ok/failed plus a conclusion (what the tool returned, never the request). */
+  | { _tag: "chat.tool"; streamId: string; tool: string; ok: boolean; conclusion: string }
   | { _tag: "chat.done"; streamId: string; outputTokens: number }
   | { _tag: "chat.error"; streamId: string; error: string }
   | { _tag: "chat.channels"; channels: ChatChannelsResult }
@@ -393,11 +599,24 @@ export const IPC_COMMAND_TAGS = [
   "messaging.checkPairing",
   "messaging.getForwarding",
   "messaging.setForwarding",
-  "messaging.testMessage"
+  "messaging.testMessage",
+  "docs.save",
+  "docs.load",
+  "home.data",
+  "home.requestDetail",
+  "home.dismissRequest",
+  "homedash.list",
+  "homedash.setSetting",
+  "projects.list",
+  "projects.create",
+  "projects.setActive",
+  "projects.moveAsset",
+  "projects.addAsset"
 ] as const
 
 export const IPC_EVENT_TAGS = [
   "chat.token",
+  "chat.tool",
   "chat.done",
   "chat.error",
   "chat.channels",

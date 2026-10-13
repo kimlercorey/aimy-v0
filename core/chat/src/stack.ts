@@ -62,6 +62,7 @@ import { PermissionDenied } from "../../substrate/errors.js"
 import { ToolName } from "../../substrate/types.js"
 import { HttpClient, HttpClientLive } from "../../web-retrieval/src/http.js"
 import { RETRIEVAL_MODULE, retrievalHookImpls } from "../../web-retrieval/src/index.js"
+import { RESEARCH_MODULE, researchHookImpls } from "../../deep-research/src/index.js"
 
 /** T0/T1 allowed (chat + memory), T2/T3 denied. Same posture as the wiring tests. */
 export const openPolicy: PolicyDocument = {
@@ -223,7 +224,9 @@ export const buildChatStack = (opts: {
       const kernel = yield* SafetyKernel
       const seam = seamFromKernel(kernel)
       const moduleHooks = makeModuleHooks({
-        impls: [countingRetrievalImpls(retrievalHookCounts)],
+        // Every installed module's hooks register here (2026-10-12:
+        // generalized from retrieval-only for deep-research, E17).
+        impls: [countingRetrievalImpls(retrievalHookCounts), researchHookImpls(RESEARCH_MODULE)],
         kernel: seam
       })
       return makeModuleHost({

@@ -6,7 +6,7 @@
  * Image). More global app settings can live here later.
  */
 import type { HtmlBuilder } from "foldkit/html"
-import type { Provider, ProviderCategory, SessionSlice } from "./model.js"
+import type { HomedashSetting, Provider, ProviderCategory, SessionSlice } from "./model.js"
 import { Message } from "./messages.js"
 
 type H = HtmlBuilder<any>
@@ -37,6 +37,110 @@ const KNOWN_PORTS: Record<string, number> = {
   "llama.cpp": 8080,
   A1111: 7860,
   ComfyUI: 8188,
+}
+
+/**
+ * The HomeDash section (2026-10-13): settings TRANSPOSITION — each
+ * widget declared its settings in its manifest; this section renders
+ * them generically (slider / toggle / select / number). Priority is
+ * a first-class row on every widget: it is the screen depth on the
+ * dash stage, 1–1000, higher on top. Every change round-trips
+ * through the store (ApplyHomedashSetting) — the control never
+ * becomes the truth.
+ */
+const homeDashSettingsView = (h: H, session: SessionSlice) => {
+  const dash = session.drawer.dash
+  const change = (widgetId: string, key: string, value: string | number | boolean) =>
+    Message.HomedashSettingChanged({ widgetId, key, value })
+  if (dash === undefined) {
+    return h.div([h.Class("settings-section")], [
+      h.h2([h.Class("settings-title")], ["HomeDash"]),
+      h.p([h.Class("settings-sub")], [
+        "Widget settings load with the dash — open Home once and this section fills in.",
+      ]),
+    ])
+  }
+  const control = (widgetId: string, s: HomedashSetting) => {
+    switch (s.type) {
+      case "toggle":
+        return h.button(
+          [
+            h.Class(`dash-toggle${s.value === true ? " on" : ""}`),
+            h.OnClick(change(widgetId, s.key, s.value !== true)),
+          ],
+          [s.value === true ? "On" : "Off"]
+        )
+      case "slider":
+        return h.span([h.Class("dash-slider-wrap")], [
+          h.input([
+            h.Class("dash-slider"),
+            h.Type("range"),
+            h.Min(String(s.min ?? 0)),
+            h.Max(String(s.max ?? 100)),
+            h.Step(String(s.step ?? 1)),
+            h.Value(String(s.value)),
+            h.OnInput((v: string) => {
+              const n = Number(v)
+              return change(widgetId, s.key, Number.isFinite(n) ? n : (s.value as number))
+            }),
+          ]),
+          h.span([h.Class("dash-slider-value")], [String(s.value)]),
+        ])
+      case "select":
+        return h.select(
+          [
+            h.Class("dash-select"),
+            h.Value(String(s.value)),
+            h.OnInput((v: string) => change(widgetId, s.key, v)),
+          ],
+          (s.options ?? []).map((o) => h.option([h.Value(o)], [o]))
+        )
+      default:
+        return h.input([
+          h.Class("dash-number"),
+          h.Value(String(s.value)),
+          h.OnInput((v: string) => {
+            const n = Number(v)
+            return change(widgetId, s.key, v.trim() !== "" && Number.isFinite(n) ? n : s.value)
+          }),
+        ])
+    }
+  }
+  return h.div([h.Class("settings-section")], [
+    h.h2([h.Class("settings-title")], ["HomeDash"]),
+    h.p([h.Class("settings-sub")], [
+      "Widgets declare their settings; the platform presents them. Priority is screen depth — higher sits on top where widgets overlap.",
+    ]),
+    ...[...dash.widgets]
+      .sort((a, b) => b.priority - a.priority)
+      .map((w) =>
+        h.div([h.Class("dash-widget-card")], [
+          h.div([h.Class("dash-widget-head")], [
+            h.span([h.Class("dash-widget-name")], [w.name]),
+            h.span([h.Class("dash-widget-version")], [`v${w.version}`]),
+          ]),
+          ...(w.description !== "" ? [h.p([h.Class("dash-widget-desc")], [w.description])] : []),
+          h.div([h.Class("dash-setting-row")], [
+            h.label([h.Class("dash-setting-label")], ["Priority (depth)"]),
+            control(w.id, {
+              key: "priority",
+              type: "slider",
+              label: "Priority (depth)",
+              value: w.priority,
+              min: 1,
+              max: 1000,
+              step: 1,
+            }),
+          ]),
+          ...w.settings.map((s) =>
+            h.div([h.Class("dash-setting-row")], [
+              h.label([h.Class("dash-setting-label")], [s.label]),
+              control(w.id, s),
+            ])
+          ),
+        ])
+      ),
+  ])
 }
 
 export const settingsView = (h: H, session: SessionSlice) => {
@@ -102,6 +206,7 @@ export const settingsView = (h: H, session: SessionSlice) => {
             ),
           ]),
     ]),
+    homeDashSettingsView(h, session),
   ])
 }
 

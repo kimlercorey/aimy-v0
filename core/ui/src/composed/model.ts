@@ -49,7 +49,10 @@ import {
 
 /** The nav panel ids. Chat is the default — everything else is one click away. */
 export const PanelId = Schema.Literals([
+  "home",
   "chat",
+  "projects",
+  "memory",
   "presence",
   "timeline",
   "jobs",

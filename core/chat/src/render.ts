@@ -39,6 +39,18 @@ export const parseRetrievalCommand = (line: string): string | undefined => {
   return undefined
 }
 
+/**
+ * The `research <query>` prefix (2026-10-12, charter E2): the CLI spelling
+ * of the research.query tool. Whole-word prefix like `retrieval` —
+ * "researching x" is chat, not a command.
+ */
+export const parseResearchCommand = (line: string): string | undefined => {
+  const t = line.trim()
+  if (t === "research") return ""
+  if (t.startsWith("research ")) return t.slice("research ".length)
+  return undefined
+}
+
 const badgeMark = (status: "verified" | "unverified" | "failed"): string =>
   status === "verified" ? "✓" : status === "failed" ? "✗" : "?"
 
