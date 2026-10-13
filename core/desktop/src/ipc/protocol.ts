@@ -363,6 +363,10 @@ export interface TimelineListResult {
   readonly nodes: ReadonlyArray<LearningNode>
 }
 
+export interface TimelineNodeResult {
+  readonly node: LearningNode
+}
+
 export interface DesktopConfigView {
   readonly baseUrl: string
   readonly model: string
@@ -414,6 +418,12 @@ export type IpcCommand =
   | { _tag: "jobs.list" }
   | { _tag: "jobs.runNow"; id: string }
   | { _tag: "timeline.list" }
+  /** Record one learning event as a timeline node (2026-10-13). The event is the learning module's LearningEvent as JSON; the service validates serializability and fingerprints it. */
+  | { _tag: "timeline.record"; event: unknown }
+  /** Archive (tombstone) a timeline node — never a delete (2026-10-13). Provenance is the learning module's Provenance as JSON. */
+  | { _tag: "timeline.archive"; nodeId: string; reason: string; provenance: unknown }
+  /** Lift a node's tombstone (2026-10-13). */
+  | { _tag: "timeline.restore"; nodeId: string; reason: string; provenance: unknown }
   | { _tag: "config.get" }
   | { _tag: "config.set"; baseUrl: string; model: string }
   | { _tag: "tts.health" }
@@ -488,6 +498,9 @@ export interface IpcResponse {
   "jobs.list": JobsListResult
   "jobs.runNow": void
   "timeline.list": TimelineListResult
+  "timeline.record": TimelineNodeResult
+  "timeline.archive": TimelineNodeResult
+  "timeline.restore": TimelineNodeResult
   "config.get": DesktopConfigView
   "config.set": void
   "tts.health": TtsHealthResult
@@ -569,6 +582,9 @@ export const IPC_COMMAND_TAGS = [
   "jobs.list",
   "jobs.runNow",
   "timeline.list",
+  "timeline.record",
+  "timeline.archive",
+  "timeline.restore",
   "config.get",
   "config.set",
   "tts.health",

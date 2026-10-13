@@ -29,6 +29,8 @@ import { Effect, Layer } from "effect"
 
 import {
   TimelineStore,
+  nodeIdFor,
+  type LearningEvent,
   type LearningNode,
   type TimelineStoreShape,
 } from "./timeline.js"
@@ -80,8 +82,86 @@ export const fileTimelineStore = (filePath: string): Layer.Layer<TimelineStore> 
       }
     }
 
+    // Producer drop file (2026-10-13): the agent loop's ledgers
+    // append learning events as JSON lines to timeline-events.jsonl
+    // beside the nodes file (learning-events.ts in agent-loop).
+    // This store is their only importer, so the nodes file keeps a
+    // single writer. The drop file is renamed aside BEFORE reading,
+    // so a producer appending mid-import starts a fresh file
+    // instead of racing the read; import is idempotent (the node id
+    // fingerprints the content), so a crash between persist and
+    // cleanup can only ever re-import, never duplicate.
+    const dropPath = path.join(path.dirname(filePath), "timeline-events.jsonl")
+    const importDropped = (): void => {
+      const processing = `${dropPath}.importing`
+      let raw: string
+      try {
+        fs.renameSync(dropPath, processing)
+        raw = fs.readFileSync(processing, "utf-8")
+      } catch {
+        return // No drop file — the common case.
+      }
+      let added = 0
+      for (const line of raw.split("\n")) {
+        if (line.trim() === "") continue
+        try {
+          const ev = JSON.parse(line) as {
+            type?: unknown
+            provenance?: LearningEvent["provenance"]
+            subject?: unknown
+            evidenceIds?: unknown
+            payload?: unknown
+            recordedAt?: unknown
+          }
+          if (typeof ev.type !== "string" || ev.provenance === undefined || ev.payload === undefined) continue
+          const recordedAt = typeof ev.recordedAt === "string" ? ev.recordedAt : new Date().toISOString()
+          // The line's shape was checked above and nodeIdFor
+          // re-validates serializability below; the union itself
+          // is asserted through unknown (a JSON line is not typed).
+          const event = {
+            type: ev.type,
+            provenance: ev.provenance,
+            ...(typeof ev.subject === "string" ? { subject: ev.subject } : {}),
+            evidenceIds: Array.isArray(ev.evidenceIds) ? (ev.evidenceIds as Array<string>) : [],
+            payload: ev.payload,
+          } as unknown as LearningEvent
+          const nodeId = nodeIdFor(event, recordedAt)
+          if (!nodes.has(nodeId)) {
+            const node: LearningNode = {
+              nodeId,
+              type: event.type,
+              recordedAt,
+              provenance: event.provenance,
+              evidenceIds: event.evidenceIds,
+              payload: event.payload,
+              ...(typeof ev.subject === "string" ? { subject: ev.subject } : {}),
+            }
+            order.push(nodeId)
+            nodes.set(nodeId, freezeCopy(node))
+            added++
+          }
+        } catch {
+          console.error("[aimy] learning timeline: skipped an unreadable dropped event line")
+        }
+      }
+      try {
+        fs.unlinkSync(processing)
+      } catch {
+        // Already gone — nothing to clean.
+      }
+      if (added > 0) {
+        persist()
+        console.log(`[aimy] learning timeline: imported ${added} dropped event(s); ${order.length} node(s) total`)
+      }
+    }
+    importDropped()
+
     const store: TimelineStoreShape = {
-      getNode: (nodeId) => Effect.sync(() => nodes.get(nodeId)),
+      getNode: (nodeId) =>
+        Effect.sync(() => {
+          importDropped()
+          return nodes.get(nodeId)
+        }),
       putNode: (node) =>
         Effect.sync(() => {
           if (!nodes.has(node.nodeId)) order.push(node.nodeId)
@@ -89,7 +169,10 @@ export const fileTimelineStore = (filePath: string): Layer.Layer<TimelineStore> 
           persist()
         }),
       listNodes: () =>
-        Effect.sync(() => order.map((id) => nodes.get(id)) as ReadonlyArray<LearningNode>),
+        Effect.sync(() => {
+          importDropped()
+          return order.map((id) => nodes.get(id)) as ReadonlyArray<LearningNode>
+        }),
     }
     return store
   })

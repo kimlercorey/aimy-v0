@@ -103,7 +103,7 @@ const viewFilters = (model: Model, h: HtmlBuilder<Message>): Html => {
       "from ",
       h.input([
         h.Value(model.filters.fromDate),
-        h.Placeholder("2026-10-01"),
+        h.Placeholder("YYYY-MM-DD"),
         h.OnInput((fromDate) => Message.TimelineFromDateFilterChanged({ fromDate })),
       ]),
     ]),
@@ -111,7 +111,7 @@ const viewFilters = (model: Model, h: HtmlBuilder<Message>): Html => {
       "to ",
       h.input([
         h.Value(model.filters.toDate),
-        h.Placeholder("2026-10-07"),
+        h.Placeholder("YYYY-MM-DD"),
         h.OnInput((toDate) => Message.TimelineToDateFilterChanged({ toDate })),
       ]),
     ]),

@@ -41,7 +41,7 @@ import {
 } from "../ops/index.js"
 import { update as sovereigntyUpdate } from "../sovereignty/index.js"
 import type { SovereigntyMessage, SovereigntyModel } from "../sovereignty/index.js"
-import { update as timelineUpdate } from "../timeline/index.js"
+import { update as timelineUpdate, Message as TimelineMsg } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
 import { update as messagingUpdate, Message as MessagingMsg } from "../messaging/index.js"
 import type { MessagingMessage, MessagingModel } from "../messaging/index.js"
@@ -206,6 +206,16 @@ export const update = (
         return foldShell(
           withPanel,
           ShellMessage.HomeDataRefreshRequested({})
+        )
+      }
+      if (panel === "memory" || panel === "timeline") {
+        // The Memory destination IS the learning timeline — refresh
+        // it on entry, like Home and Projects refresh theirs
+        // (2026-10-13). Without this the panel opened on its initial
+        // empty snapshot until its own refresh button was pressed.
+        return foldTimeline(
+          withPanel,
+          TimelineMsg.TimelineRefreshRequested({})
         )
       }
       return { model: withPanel }

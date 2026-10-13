@@ -83,10 +83,12 @@ import {
 } from "../../../jobs/index.js"
 import type { JobAlert } from "../../../jobs/src/types.js"
 import {
-  InMemoryTimelineStore,
   LearningTimeline,
   LearningTimelineLive,
-  type LearningTimelineShape
+  fileTimelineStore,
+  type LearningEvent,
+  type LearningTimelineShape,
+  type Provenance as LearningProvenance
 } from "../../../learning/src/index.js"
 import { ExportError } from "../../../substrate/errors.js"
 import { resolvePaths, type AimyPaths } from "../../../substrate/config.js"
@@ -432,6 +434,136 @@ const loadOrCreateLockerPassphrase = (): Redacted<string> => {
  * it per command; these are the services the chat stack doesn't own.
  * Failures reject (never hang); the caller maps them to clean messages.
  */
+// ── Learning timeline backfill (2026-10-13) ─────────────────────────
+// The timeline store is new; her learning history is not — it lives in
+// the two ledgers the live producers mirror (the knowledge track
+// record and the capability requests). At boot, translate those
+// entries into timeline events THROUGH the service, each keeping its
+// ORIGINAL timestamp, so the Memory page opens on her real history.
+// recordEvent fingerprints content, so re-running this on every boot
+// is a no-op once the nodes exist — no marker file, no migration
+// state to corrupt. A failed backfill never blocks boot.
+const backfillLearningTimeline = (
+  timeline: LearningTimelineShape
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const aimyHome = path.join(os.homedir(), ".aimy")
+    const known = new Set(
+      (yield* timeline.query({ includeArchived: true })).map((n) => n.nodeId)
+    )
+    let considered = 0
+    let added = 0
+    const record = (event: LearningEvent) =>
+      timeline.recordEvent(event).pipe(
+        Effect.tap((node) =>
+          Effect.sync(() => {
+            considered++
+            if (!known.has(node.nodeId)) {
+              known.add(node.nodeId)
+              added++
+            }
+          })
+        ),
+        Effect.catch(() => Effect.void)
+      )
+
+    // Knowledge track record: validation attempts and verdicts.
+    try {
+      const raw = fs.readFileSync(path.join(aimyHome, "knowledge", "track-record.jsonl"), "utf-8")
+      for (const line of raw.split("\n")) {
+        if (line.trim() === "") continue
+        try {
+          const e = JSON.parse(line) as { at?: unknown; cls?: unknown; kind?: unknown; detail?: unknown }
+          if (typeof e.at !== "string" || typeof e.cls !== "string") continue
+          const base = {
+            provenance: { origin: "verification-arm", sessionId: "backfill", profileId: "default" } as const,
+            subject: e.cls,
+            evidenceIds: [] as Array<string>,
+            recordedAt: e.at,
+          }
+          if (e.kind === "attempt") {
+            yield* record({ type: "verification.started", ...base, payload: { judgeIds: [e.cls] } })
+          } else if (e.kind === "pass") {
+            yield* record({ type: "verification.passed", ...base, payload: { verdictIds: [] } })
+          } else if (e.kind === "fail") {
+            yield* record({
+              type: "verification.failed",
+              ...base,
+              payload: { verdictIds: [], reasons: typeof e.detail === "string" ? [e.detail] : [] },
+            })
+          }
+          // "correction" stays track-record-only (the live hook's rule).
+        } catch {
+          // One bad line never hides the rest.
+        }
+      }
+    } catch {
+      // No track record yet — nothing to backfill.
+    }
+
+    // Capability requests: filed → proposed; verified/fulfilled → trusted.
+    try {
+      const raw = fs.readFileSync(path.join(aimyHome, "capability-requests.jsonl"), "utf-8")
+      for (const line of raw.split("\n")) {
+        if (line.trim() === "") continue
+        try {
+          const r = JSON.parse(line) as {
+            at?: unknown
+            capability?: unknown
+            why?: unknown
+            sessionId?: unknown
+            status?: unknown
+            probeAt?: unknown
+          }
+          if (typeof r.at !== "string" || typeof r.capability !== "string") continue
+          if (r.status === "dismissed" || r.status === "declined") continue
+          yield* record({
+            type: "review-fork.proposed-add",
+            provenance: {
+              origin: "review-fork",
+              sessionId: typeof r.sessionId === "string" ? r.sessionId : "backfill",
+              profileId: "default",
+            },
+            subject: r.capability,
+            evidenceIds: [],
+            payload: { store: "skills", summary: typeof r.why === "string" ? r.why : "" },
+            recordedAt: r.at,
+          })
+          const trustAt = typeof r.probeAt === "string" ? r.probeAt : r.at
+          if (r.status === "verified") {
+            yield* record({
+              type: "skill.trusted",
+              provenance: { origin: "verification-arm", sessionId: "preflight", profileId: "default" },
+              subject: r.capability,
+              evidenceIds: [],
+              payload: { judgeVersions: ["preflight-probe"] },
+              recordedAt: trustAt,
+            })
+          } else if (r.status === "fulfilled") {
+            yield* record({
+              type: "skill.trusted",
+              provenance: { origin: "system", sessionId: "agent-loop", profileId: "default" },
+              subject: r.capability,
+              evidenceIds: [],
+              payload: { judgeVersions: ["first-successful-use"] },
+              recordedAt: trustAt,
+            })
+          }
+        } catch {
+          // One bad line never hides the rest.
+        }
+      }
+    } catch {
+      // No requests yet — nothing to backfill.
+    }
+
+    if (considered > 0) {
+      console.log(
+        `[aimy] timeline backfill: ${considered} legacy event(s) considered, ${added} new node(s) recorded`
+      )
+    }
+  }).pipe(Effect.catch(() => Effect.void))
+
 export const bootDesktopServices = (): Promise<DesktopServices> =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -485,17 +617,27 @@ export const bootDesktopServices = (): Promise<DesktopServices> =>
           commsLayer,
           Layer.provide(ASCEngineFullLive, InMemoryMemoryReaderLive),
           jobsLayer,
-          Layer.provide(LearningTimelineLive, InMemoryTimelineStore),
+          // The learning timeline is DURABLE (2026-10-13): the
+          // in-memory store left the Memory page reading an empty
+          // store forever. Nodes persist under the data home.
+          Layer.provide(
+            LearningTimelineLive,
+            fileTimelineStore(path.join(paths.data, "learning", "timeline-nodes.json"))
+          ),
           Layer.provide(IdentityServiceLive({ instanceId, paths }), lockerLayer),
           lockerLayer
         )
       ).pipe(Effect.provideService(Scope.Scope, scope))
 
+      const timeline = Context.get(ctx, LearningTimeline)
+      // Populate the (new) durable timeline from the ledgers that
+      // predate it — see backfillLearningTimeline. Idempotent.
+      yield* backfillLearningTimeline(timeline)
       return {
         comms: Context.get(ctx, CommsBanner),
         asc: Context.get(ctx, ASCEngine),
         jobs: Context.get(ctx, JobRunner),
-        timeline: Context.get(ctx, LearningTimeline),
+        timeline,
         identity: Context.get(ctx, IdentityService),
         locker: Context.get(ctx, SecretLocker),
         paths,
@@ -673,6 +815,31 @@ export const createHandlerTable = (
     "timeline.list": async () => ({
       nodes: await engine.run(deps.timeline.query({}))
     }),
+    // Timeline writes (2026-10-13): the durable store is the truth;
+    // every write is logged with its node id so a missing entry can
+    // be traced from either side.
+    "timeline.record": async (payload) => {
+      const { event } = payload as { event: LearningEvent }
+      const node = await engine.run(deps.timeline.recordEvent(event))
+      console.log(`[aimy] timeline.record: ${event.type} subject=${event.subject ?? "-"} node=${node.nodeId.slice(0, 12)}`)
+      return { node }
+    },
+    "timeline.archive": async (payload) => {
+      const p = payload as { nodeId: string; reason: string; provenance: LearningProvenance }
+      const node = await engine.run(
+        deps.timeline.archiveNode(p.nodeId, { reason: p.reason, provenance: p.provenance })
+      )
+      console.log(`[aimy] timeline.archive: node=${p.nodeId.slice(0, 12)} reason=${p.reason}`)
+      return { node }
+    },
+    "timeline.restore": async (payload) => {
+      const p = payload as { nodeId: string; reason: string; provenance: LearningProvenance }
+      const node = await engine.run(
+        deps.timeline.restoreNode(p.nodeId, { reason: p.reason, provenance: p.provenance })
+      )
+      console.log(`[aimy] timeline.restore: node=${p.nodeId.slice(0, 12)}`)
+      return { node }
+    },
     "config.get": async () => {
       const config = readDesktopConfig()
       return { baseUrl: config.baseUrl, model: config.model }

@@ -16,7 +16,8 @@
  * - ASCEngine.currentDials / recordEvidence(tuningChange) → asc.readDials / asc.tune
  * - CommsBanner.listBanners / dismiss → banners.list / banners.dismiss
  * - JobRunner.list / runNow → jobs.list / jobs.runNow
- * - LearningTimeline.query → timeline.list
+ * - LearningTimeline.query → timeline.list; recordEvent/archive/restore →
+ *   timeline.record/archive/restore (2026-10-13; edit stays main-side)
  * - ExportInterpreter.run → export.run (receipt shown ONLY when the main
  *   side returns one — never fabricated)
  * - OnboardingPersistence.apply → config.get (preserve model) + config.set
@@ -31,7 +32,7 @@
  *   session transcript in the main process.
  * - JobRunner pause/resume/cancel + RunHistory: not exposed by the IPC
  *   contract v1 (protocol has jobs.list/jobs.runNow only).
- * - LearningTimeline archive/restore/edit/record: not exposed by IPC v1.
+ * - LearningTimeline editNode: not exposed by IPC (no UI caller yet).
  */
 import { Effect, Layer, Stream } from "effect"
 
@@ -539,15 +540,31 @@ const timelineUnsupported = (operation: string) =>
   Effect.fail(new LearningStoreError({ operation, reason: "not in the IPC contract v1" }))
 
 const ipcLearningTimeline: LearningTimelineShape = {
-  recordEvent: (_event) => timelineUnsupported("recordEvent"),
+  // Writes ride IPC since 2026-10-13: the durable store in the main
+  // process is the single truth, whichever side produces the event.
+  recordEvent: (event) =>
+    invokeIpc({ _tag: "timeline.record", event }).pipe(
+      Effect.map((result): LearningNode => result.node),
+      Effect.mapError((error) => toTimelineError("recordEvent", error))
+    ),
   getNode: (_nodeId) => Effect.succeed(undefined),
   query: (_q) =>
     invokeIpc({ _tag: "timeline.list" }).pipe(
       Effect.map((result): ReadonlyArray<LearningNode> => result.nodes),
       Effect.mapError((error) => toTimelineError("query", error))
     ),
-  archiveNode: (nodeId, _request) => timelineUnsupported(`archiveNode(${nodeId})`),
-  restoreNode: (nodeId, _request) => timelineUnsupported(`restoreNode(${nodeId})`),
+  archiveNode: (nodeId, request) =>
+    invokeIpc({ _tag: "timeline.archive", nodeId, reason: request.reason, provenance: request.provenance }).pipe(
+      Effect.map((result): LearningNode => result.node),
+      Effect.mapError((error) => toTimelineError("archiveNode", error))
+    ),
+  restoreNode: (nodeId, request) =>
+    invokeIpc({ _tag: "timeline.restore", nodeId, reason: request.reason, provenance: request.provenance }).pipe(
+      Effect.map((result): LearningNode => result.node),
+      Effect.mapError((error) => toTimelineError("restoreNode", error))
+    ),
+  // No edit affordance exists in the UI yet, and no IPC variant
+  // carries it; main-side producers call the service directly.
   editNode: (nodeId, _payload, _provenance) => timelineUnsupported(`editNode(${nodeId})`)
 }
 

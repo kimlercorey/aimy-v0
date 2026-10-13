@@ -20,6 +20,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
+import { appendLearningEvent } from "./learning-events.js"
+
 export const knowledgeDir = (): string => path.join(os.homedir(), ".aimy", "knowledge")
 export const cardsDir = (): string => path.join(knowledgeDir(), "cards")
 export const indexPath = (): string => path.join(knowledgeDir(), "INDEX.md")
@@ -152,6 +154,32 @@ export const appendTrackRecord = (cls: string, kind: TrackKind, detail?: string)
       ...(detail !== undefined ? { detail } : {}),
     }
     fs.appendFileSync(trackRecordPath(), JSON.stringify(event) + "\n", "utf-8")
+    // Learning timeline mirror (2026-10-13): the track record is
+    // the loop's private ledger; the timeline is where he SEES it.
+    // Attempts and verdicts map onto the verification trio;
+    // corrections stay track-record-only (no honest timeline type).
+    if (kind === "attempt") {
+      appendLearningEvent({
+        type: "verification.started",
+        provenance: { origin: "verification-arm", sessionId: "agent-loop", profileId: "default" },
+        subject: cls,
+        payload: { judgeIds: [cls] },
+      })
+    } else if (kind === "pass") {
+      appendLearningEvent({
+        type: "verification.passed",
+        provenance: { origin: "verification-arm", sessionId: "agent-loop", profileId: "default" },
+        subject: cls,
+        payload: { verdictIds: [] },
+      })
+    } else if (kind === "fail") {
+      appendLearningEvent({
+        type: "verification.failed",
+        provenance: { origin: "verification-arm", sessionId: "agent-loop", profileId: "default" },
+        subject: cls,
+        payload: { verdictIds: [], reasons: detail !== undefined ? [detail] : [] },
+      })
+    }
   } catch (e) {
     console.warn(`[diag] knowledge: track record append failed (${e instanceof Error ? e.message : String(e)})`)
   }

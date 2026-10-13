@@ -18,6 +18,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
+import { appendLearningEvent } from "./learning-events.js"
+
 export interface ToolStats {
   readonly called: number
   readonly succeeded: number
@@ -230,6 +232,13 @@ export const recordCapabilityRequest = (
     fs.mkdirSync(dir, { recursive: true })
     const entry: CapabilityRequest = { ...req, at: new Date().toISOString(), status: "pending" }
     fs.appendFileSync(requestsPath(), JSON.stringify(entry) + "\n", "utf8")
+    // Learning timeline: a filed request is a proposal to grow.
+    appendLearningEvent({
+      type: "review-fork.proposed-add",
+      provenance: { origin: "review-fork", sessionId: req.sessionId, profileId: "default" },
+      subject: req.capability,
+      payload: { store: "skills", summary: req.why },
+    })
     return { recorded: true, alreadyPending: false }
   } catch (e) {
     console.error(`[aimy] capability request: write failed (${e instanceof Error ? e.message : e})`)
@@ -263,6 +272,12 @@ export const markCapabilityFulfilled = (capability: string): boolean => {
     )
     fs.writeFileSync(requestsPath(), lines.join("\n") + "\n", "utf8")
     console.warn(`[aimy] capabilities: request fulfilled by successful use: ${capability}`)
+    appendLearningEvent({
+      type: "skill.trusted",
+      provenance: { origin: "system", sessionId: "agent-loop", profileId: "default" },
+      subject: capability,
+      payload: { judgeVersions: ["first-successful-use"] },
+    })
     return true
   } catch (e) {
     console.error(`[aimy] capabilities: fulfill write failed (${e instanceof Error ? e.message : e})`)
@@ -316,6 +331,12 @@ export const markCapabilityVerified = (capability: string, note: string): boolea
         : r
     )
     console.warn(`[aimy] preflight: ${capability} VERIFIED — ${note}`)
+    appendLearningEvent({
+      type: "skill.trusted",
+      provenance: { origin: "verification-arm", sessionId: "preflight", profileId: "default" },
+      subject: capability,
+      payload: { judgeVersions: ["preflight-probe"] },
+    })
     return true
   } catch (e) {
     console.error(`[aimy] preflight: verify write failed (${e instanceof Error ? e.message : e})`)
@@ -355,6 +376,12 @@ export const demoteCapability = (capability: string, note: string): boolean => {
         : r
     )
     console.warn(`[aimy] preflight: ${capability} DEMOTED to pending — ${note}`)
+    appendLearningEvent({
+      type: "skill.rejected",
+      provenance: { origin: "verification-arm", sessionId: "preflight", profileId: "default" },
+      subject: capability,
+      payload: { reasons: [note] },
+    })
     return true
   } catch (e) {
     console.error(`[aimy] preflight: demote write failed (${e instanceof Error ? e.message : e})`)
