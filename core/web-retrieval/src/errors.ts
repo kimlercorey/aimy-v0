@@ -27,6 +27,21 @@ export class MalformedSearchResponse extends Data.TaggedError("MalformedSearchRe
   readonly reason: string
 }> {}
 
+/**
+ * The provider refused the query with a bot-challenge / rate-limit
+ * interstitial instead of results (DuckDuckGo's anomaly page,
+ * observed live 2026-10-13: an HTTP-200 page carrying an
+ * `anomaly-modal` / `challenge-form`, no result markup). Distinct
+ * from MalformedSearchResponse: the parser is fine — the provider
+ * is temporarily blocking automated queries from this network, so
+ * the honest report is "blocked", never "no results" and never
+ * "markup changed".
+ */
+export class SearchChallenged extends Data.TaggedError("SearchChallenged")<{
+  readonly provider: string
+  readonly reason: string
+}> {}
+
 /** Fetching a result URL failed (transport error, non-2xx, wrong content type). */
 export class FetchError extends Data.TaggedError("FetchError")<{
   readonly url: string
@@ -57,6 +72,7 @@ export class InvalidRetrievalArgs extends Data.TaggedError("InvalidRetrievalArgs
 export type RetrievalError =
   | SearchError
   | MalformedSearchResponse
+  | SearchChallenged
   | FetchError
   | FetchTimeout
   | EgressDenied

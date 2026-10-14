@@ -39,6 +39,7 @@ import { timelineSubmodelView } from "../timeline/index.js"
 import type { Message as TimelineMessage, Model as TimelineModel } from "../timeline/index.js"
 import { settingsView } from "../settings-view.js"
 import { projectsPanelView } from "../chat/drawer.js"
+import { composerView } from "../chat/view.js"
 import { homeDashView } from "../homedash-view.js"
 import { AppMessage } from "./messages.js"
 import type { AppModel, PanelId } from "./model.js"
@@ -67,6 +68,15 @@ const projectsSubmodelView = defineView<ShellModel, ShellMessage>(
 )
 const homeDashSubmodelView = defineView<ShellModel, ShellMessage>(
   (model, h) => homeDashView(h, model.session),
+)
+// The Home panel's composer (2026-10-13): the same composer the
+// chat panel renders under its message list, mounted under the
+// dash stage — the dash is where work starts, and a home with
+// no way to type strands the user (Kimler: "I no longer have a
+// chat bar at the bottom"). Draft + send state live in the shell
+// model, so the two mounts never disagree.
+const homeComposerSubmodelView = defineView<ShellModel, ShellMessage>(
+  (model, h) => composerView(h, model.session),
 )
 const devtoolsSubmodelView = defineView<DevtoolsModel, DevtoolsMessage>((model, h) =>
   devtoolsView(model, h),
@@ -169,12 +179,20 @@ const activePanelView = (model: AppModel, h: HtmlBuilder<AppMessage>): Html => {
         h,
         "app-home",
         "Home",
-        h.submodel({
-          slotId: "app-home",
-          model: model.shell,
-          view: homeDashSubmodelView,
-          toParentMessage: (message) => AppMessage.GotShell({ message }),
-        }),
+        h.div([h.Class("app-home-stack")], [
+          h.submodel({
+            slotId: "app-home",
+            model: model.shell,
+            view: homeDashSubmodelView,
+            toParentMessage: (message) => AppMessage.GotShell({ message }),
+          }),
+          h.submodel({
+            slotId: "app-home-composer",
+            model: model.shell,
+            view: homeComposerSubmodelView,
+            toParentMessage: (message) => AppMessage.GotShell({ message }),
+          }),
+        ]),
       )
     case "chat":
       return h.submodel({

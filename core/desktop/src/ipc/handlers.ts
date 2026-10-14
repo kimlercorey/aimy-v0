@@ -106,12 +106,65 @@ import {
   type IpcResponse
 } from "./protocol.js"
 import { loadSovereigntyStore, type SovereigntyStore } from "./sovereignty.js"
+import { GLOBENEWS_MANIFEST } from "../widgets/globenews/manifest.js"
+import { dismissVoiceAlert, globenewsDir, markNewsRead, readNewsStore } from "../widgets/globenews/events.js"
+import { extractArticleMarkdown, isMachineReadableDocument } from "../widgets/globenews/article.js"
+import { fetchTextLive } from "../widgets/globenews/scan.js"
+import { NEWS_CATEGORY_LABEL } from "../widgets/globenews/types.js"
+/** Manual-scan guard: one news scan at a time (hourly job + clicks). */
+let newsScanRunning = false
+
+// ── Voice alerts (Threat Channel §8; Kimler, 2026-10-13) ──────
+// Warning-tier threats inside the risk circle are SPOKEN by the
+// dedicated alerts voice (a voice named "alerts" or "alert" on
+// the local TTS server — never AImy's conversational voice):
+// once on arrival, then repeating every repeatMinutes until
+// silenced in the interface. The announcer is constructed during
+// boot (it needs the broadcast channel + a NarrationQueue);
+// dismissals persist in the events store, and on boot the
+// announcer replays whatever is still alert-tier and
+// un-dismissed, so a restart never drops an active threat.
+interface VoiceAnnouncer {
+  readonly activate: (alert: NewsAlert, speakNow: boolean) => void
+  readonly dismiss: (id: string) => void
+  readonly list: () => ReadonlyArray<HomedashVoiceAlert>
+  readonly replayFromStore: () => void
+}
+
+let voiceAnnouncer: VoiceAnnouncer | undefined
+
+/** The globenews widget's voice settings, read live each use so
+ *  Settings changes land without a restart. */
+const readVoiceAlertSettings = (): { announce: boolean; repeatMinutes: number } => {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(os.homedir(), ".aimy", "homedash", "settings.json"), "utf-8")
+    ) as Record<string, Record<string, unknown>>
+    const v = raw["globenews"] ?? {}
+    return {
+      announce: typeof v["announce"] === "boolean" ? v["announce"] : true,
+      repeatMinutes:
+        typeof v["repeatMinutes"] === "number" ? Math.min(15, Math.max(1, v["repeatMinutes"])) : 3,
+    }
+  } catch {
+    return { announce: true, repeatMinutes: 3 }
+  }
+}
+import {
+  NEWS_SCAN_INTERVAL_MS,
+  WORLD_NEWS_SCAN_ID,
+  buildNewsAlert,
+  worldNewsScanJob,
+  runNewsScan,
+  setNewsAlertSink,
+  type NewsAlert,
+} from "../widgets/globenews/job.js"
 import { HttpClient } from "../../../web-retrieval/src/http.js"
 import { makeMessagingGateway, type MessagingGateway } from "../main/messaging.js"
 import { createTraceWriter, traceError, type TraceWriter } from "../main/trace.js"
 import { makeTtsEngine, type TtsEngine } from "../main/tts-engine.js"
 import { fanOutChannels } from "../main/channels.js"
-import type { ChatChannelsResult, HomedashSettingEntry, HomedashWidgetEntry } from "./protocol.js"
+import type { ChatChannelsResult, HomedashSettingEntry, HomedashVoiceAlert, HomedashWidgetEntry } from "./protocol.js"
 
 // ── Error hygiene ───────────────────────────────────────────────────────────
 
@@ -633,10 +686,53 @@ export const bootDesktopServices = (): Promise<DesktopServices> =>
       // Populate the (new) durable timeline from the ledgers that
       // predate it — see backfillLearningTimeline. Idempotent.
       yield* backfillLearningTimeline(timeline)
+      const jobs = Context.get(ctx, JobRunner)
+      // Threat Channel alerting (design §4): warning-tier arrivals
+      // publish platform banners through CommsBanner. The scan job
+      // stays service-free; it calls this sink. A banner that can't
+      // publish is dropped with a log line, never a crash.
+      const commsSvc = Context.get(ctx, CommsBanner)
+      setNewsAlertSink((alert) => {
+        void Effect.runPromise(
+          Effect.catch(
+            Effect.asVoid(
+              commsSvc.publish({
+                severity: alert.severity,
+                source: `job:${WORLD_NEWS_SCAN_ID}`,
+                title: alert.title,
+                body: alert.body,
+                dedupeKey: `globenews:${alert.id}`,
+              })
+            ),
+            (e) =>
+              Effect.sync(() => {
+                console.error(`[aimy] globenews alert: banner dropped (${e._tag})`)
+              })
+          )
+        ).catch(() => undefined)
+        // The alerts voice (design §8): risk-circle alerts also
+        // activate the announcer, which speaks them on repeat
+        // until silenced. The announcer is constructed later in
+        // the boot (it needs the broadcast channel); anything it
+        // misses here is picked up by its boot replay.
+        if (alert.voice) voiceAnnouncer?.activate(alert, true)
+      })
+      // The GlobeNews scan job (2026-10-13): hourly per Kimler's
+      // spec, plus an immediate run when the events store is stale
+      // so a fresh install isn't empty until the hour turns. A
+      // scheduling failure never blocks boot.
+      yield* jobs.schedule(worldNewsScanJob()).pipe(
+        Effect.catch((e) =>
+          Effect.sync(() => console.warn(`[aimy] globenews job: schedule skipped (${e._tag})`))
+        )
+      )
+      if (Date.now() - readNewsStore().updatedAtMs > NEWS_SCAN_INTERVAL_MS) {
+        yield* jobs.runNow(WORLD_NEWS_SCAN_ID).pipe(Effect.catch(() => Effect.void))
+      }
       return {
         comms: Context.get(ctx, CommsBanner),
         asc: Context.get(ctx, ASCEngine),
-        jobs: Context.get(ctx, JobRunner),
+        jobs,
         timeline,
         identity: Context.get(ctx, IdentityService),
         locker: Context.get(ctx, SecretLocker),
@@ -696,6 +792,85 @@ const reqNumber = (payload: FieldBag, field: string): number => {
   return value
 }
 
+/**
+ * Prompt history (2026-10-13): his sent prompts, persisted
+ * globally at ~/.aimy/prompt-history.json so composer history
+ * cycling survives new chats and relaunches (shell-style).
+ * Only HIS words are stored — chat.send carries the raw prompt
+ * separately from the composed inference input. Capped at 300,
+ * consecutive duplicates collapsed. Every failure is logged
+ * and swallowed: history is a convenience, never a blocker.
+ */
+const PROMPT_HISTORY_CAP = 300
+const promptHistoryPath = (): string => path.join(os.homedir(), ".aimy", "prompt-history.json")
+const readPromptHistory = (): Array<string> => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(promptHistoryPath(), "utf-8")) as unknown
+    if (!Array.isArray(raw)) return []
+    return raw.filter((x): x is string => typeof x === "string").slice(-PROMPT_HISTORY_CAP)
+  } catch {
+    return []
+  }
+}
+const appendPromptHistory = (text: string): void => {
+  const trimmed = text.trim()
+  if (trimmed === "") return
+  try {
+    const list = readPromptHistory()
+    if (list[list.length - 1] === text) return
+    list.push(text)
+    fs.writeFileSync(promptHistoryPath(), JSON.stringify(list.slice(-PROMPT_HISTORY_CAP)), "utf-8")
+  } catch (err) {
+    console.error("[aimy] prompt-history: append failed:", err)
+  }
+}
+
+/**
+ * Session fork for edit-and-resend (2026-10-13): copy every
+ * entry that precedes his Nth prompt (1-based, wake turns
+ * excluded — they are not his messages) into a new session
+ * file under a fresh header. The store is append-only and a
+ * parent always precedes its children (verified on live
+ * session files), so the prefix is chain-closed and its last
+ * entry is exactly the leaf the session had when that prompt
+ * was sent. A parent-chain walk would be WRONG here: final
+ * replies hang as side leaves off the summary line, and a
+ * walk from the target drops them (44 real entries on the
+ * session this was tested against). The original session is
+ * never touched. The fork is marked woken: it is a
+ * continuation of a conversation, not an awakening, so no
+ * wake turn runs on its first send.
+ */
+const branchSessionAtUserOrdinal = (sessionId: string, userOrdinal: number): string => {
+  const dir = path.join(os.homedir(), ".aimy", "memory", "sessions")
+  const raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), "utf-8")
+  const lines = raw.split("\n").filter((l) => l.trim() !== "")
+  if (lines.length < 2) {
+    throw new Error(`aimy: chat.branch session ${sessionId} has no entries`)
+  }
+  type Entry = { id: string; parentId: string | null; kind: string; payload?: { role?: string; wake?: boolean } }
+  const entries = lines.slice(1).map((l) => JSON.parse(l) as Entry)
+  let seen = 0
+  let targetIdx = -1
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!
+    if (e.kind === "message" && e.payload?.role === "user" && e.payload?.wake !== true) {
+      seen += 1
+      if (seen === userOrdinal) { targetIdx = i; break }
+    }
+  }
+  if (targetIdx < 0) {
+    throw new Error(`aimy: chat.branch prompt #${userOrdinal} not found in ${sessionId}`)
+  }
+  const keptLines = lines.slice(1, targetIdx + 1)
+  const newSessionId = `session-${Date.now()}`
+  const header = JSON.stringify({ v: 1, sessionId: newSessionId })
+  fs.writeFileSync(path.join(dir, `${newSessionId}.jsonl`), [header, ...keptLines].join("\n") + "\n", "utf-8")
+  wokenSessions.add(newSessionId)
+  console.log(`[aimy] chat.branch: ${sessionId} -> ${newSessionId} at prompt #${userOrdinal} (${keptLines.length} entries kept)`)
+  return newSessionId
+}
+
 export const createHandlerTable = (
   deps: IpcWireDeps,
   broadcast: (evt: IpcEvent) => void
@@ -710,6 +885,11 @@ export const createHandlerTable = (
       const images = Array.isArray(rawImages)
         ? (rawImages as ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>).map((img) => ({ ...img }))
         : undefined
+      // Prompt history (2026-10-13): the renderer sends the raw
+      // user text alongside the composed input; persist it so
+      // composer history cycling is global across chats.
+      const promptText = (payload as { promptText?: unknown }).promptText
+      if (typeof promptText === "string") appendPromptHistory(promptText)
       // Wake ritual (2026-10-11): first turn of a new session, when her
       // journal has content. She reads herself and settles before he speaks.
       // Awaited — she wakes up BEFORE his message is processed.
@@ -732,6 +912,11 @@ export const createHandlerTable = (
     },
     "chat.cancel": async (payload) => {
       await deps.chatStreams.cancel(reqString(payload, "streamId"))
+    },
+    "chat.branch": async (payload) => {
+      const sessionId = reqString(payload, "sessionId")
+      const userOrdinal = reqNumber(payload, "userOrdinal")
+      return { newSessionId: branchSessionAtUserOrdinal(sessionId, userOrdinal) }
     },
     "banners.list": async () => ({
       banners: await engine.run(deps.comms.listBanners())
@@ -969,7 +1154,7 @@ export const createHandlerTable = (
     "tts.pickVoiceFile": async () => {
       const picked = await dialog.showOpenDialog({
         title: "Choose a voice reference recording",
-        filters: [{ name: "WAV audio", extensions: ["wav"] }],
+        filters: [{ name: "Audio", extensions: ["wav", "mp3", "flac", "ogg", "m4a"] }],
         properties: ["openFile"]
       })
       if (picked.canceled || picked.filePaths.length === 0) {
@@ -1388,6 +1573,37 @@ export const createHandlerTable = (
       console.log(`[aimy] docs.load: read ${docPath} (${content.length} chars)`)
       return { path: docPath, content }
     },
+    // Open a library document in the OS default application
+    // (2026-10-13: Cmd-Opt-click on a document link). Resolution
+    // mirrors docs.load exactly — bare names search planning/
+    // then docs/, traversal refused — then the absolute path
+    // goes to shell.openPath, so the OS picks the .md viewer.
+    "docs.openExternal": async (payload) => {
+      const rawPath = reqString(payload, "path")
+      const repoRoot = process.env.AIMY_REPO_ROOT ?? process.cwd()
+      let docPath = rawPath
+      if (!rawPath.startsWith("planning/") && !rawPath.startsWith("docs/")) {
+        if (rawPath.includes("/") || rawPath.includes("..") || !rawPath.endsWith(".md")) {
+          throw new Error("aimy: docs.openExternal only opens under planning/ or docs/")
+        }
+        const hit = ["planning", "docs"].find((dir) => fs.existsSync(path.join(repoRoot, dir, rawPath)))
+        if (hit === undefined) {
+          throw new Error(`aimy: docs.openExternal no document named ${rawPath} under planning/ or docs/`)
+        }
+        docPath = `${hit}/${rawPath}`
+      }
+      if (docPath.includes("..")) {
+        throw new Error("aimy: docs.openExternal path traversal refused")
+      }
+      const abs = path.join(repoRoot, docPath)
+      const { shell } = await import("electron")
+      const err = await shell.openPath(abs)
+      if (err !== "") {
+        console.error(`[aimy] docs.openExternal: openPath failed for ${docPath}: ${err}`)
+        throw new Error(`aimy: could not open ${docPath} externally: ${err}`)
+      }
+      console.log(`[aimy] docs.openExternal: opened ${docPath} in the OS default app`)
+    },
     "home.data": async () => {
       const repoRoot = process.env.AIMY_REPO_ROOT ?? process.cwd()
       const aimyHome = path.join(os.homedir(), ".aimy")
@@ -1667,8 +1883,9 @@ export const createHandlerTable = (
       } catch {
         journal = null
       }
-      console.log(`[aimy] home.data: recents=${recents.length} requests=${requests.length} cards=${cards.length} project=${project?.id ?? "none"} runs=${project?.runs.length ?? 0} projectList=${projectList.length} chats=${chats.length} memories=${memories.length} journal=${journal === null ? "none" : "yes"}`)
-      return { recents: recents.slice(0, 8), requests: requests.slice(0, 6), cards, project, projectList, chats, memories, journal }
+      const promptHistory = readPromptHistory()
+      console.log(`[aimy] home.data: recents=${recents.length} requests=${requests.length} cards=${cards.length} project=${project?.id ?? "none"} runs=${project?.runs.length ?? 0} projectList=${projectList.length} chats=${chats.length} memories=${memories.length} journal=${journal === null ? "none" : "yes"} prompts=${promptHistory.length}`)
+      return { recents: recents.slice(0, 8), requests: requests.slice(0, 6), cards, project, projectList, chats, memories, journal, promptHistory }
     },
     "home.requestDetail": async (payload) => {
       const capability = reqString(payload, "capability")
@@ -1744,15 +1961,7 @@ export const createHandlerTable = (
             { key: "showJobs", type: "toggle", label: "Show running jobs", default: true },
           ],
         },
-        globenews: {
-          id: "globenews", name: "GlobeNews", description: "The vector earth: grab it, tilt it, watch the world on it.", version: "1.0.0", priority: 400,
-          settings: [
-            { key: "spinMinutes", type: "slider", label: "Spin — minutes per turn", min: 0.5, max: 6, step: 0.5, default: 2 },
-            { key: "density", type: "select", label: "Dot density", options: ["calm", "rich"], default: "rich" },
-            { key: "glowPx", type: "slider", label: "Rim glow reach (px)", min: 0, max: 40, step: 1, default: 20 },
-            { key: "tiltDeg", type: "slider", label: "Tilt — disc-centre latitude", min: -60, max: 24, step: 1, default: -24 },
-          ],
-        },
+        globenews: GLOBENEWS_MANIFEST,
         mindmap: {
           id: "mindmap", name: "MindMap", description: "The organism graph: projects, knowledge, memories. Recency flows downward.", version: "1.0.0", priority: 300,
           settings: [
@@ -1765,7 +1974,22 @@ export const createHandlerTable = (
         const dir = path.join(availDir, id)
         fs.mkdirSync(dir, { recursive: true })
         const f = path.join(dir, "widget.json")
-        if (!fs.existsSync(f)) fs.writeFileSync(f, JSON.stringify(manifest, null, 2), "utf-8")
+        // Seed when missing; refresh when the bundled version has
+        // moved on (platform widgets are versioned — the manifest
+        // is the upgrade channel; user settings live in
+        // settings.json and are never touched by this).
+        let current: Record<string, unknown> | undefined
+        try {
+          current = JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>
+        } catch {
+          current = undefined
+        }
+        if (current === undefined || current["version"] !== manifest["version"]) {
+          fs.writeFileSync(f, JSON.stringify(manifest, null, 2), "utf-8")
+          if (current !== undefined) {
+            console.log(`[aimy] homedash: widget ${id} manifest upgraded to v${String(manifest["version"])}`)
+          }
+        }
       }
       if (fs.readdirSync(enabDir).length === 0) {
         for (const id of Object.keys(BUNDLED)) {
@@ -1808,7 +2032,7 @@ export const createHandlerTable = (
           const extraSettings: Array<HomedashSettingEntry> = Object.keys(v)
             .filter((k) => k !== "priority" && !schemaKeys.has(k))
             .map((k) => ({ key: k, type: "number", label: k, value: v[k] as string | number | boolean }))
-          widgets.push({
+          const widgetEntry: HomedashWidgetEntry = {
             id,
             name: typeof manifest["name"] === "string" ? (manifest["name"] as string) : id,
             description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
@@ -1827,7 +2051,69 @@ export const createHandlerTable = (
               })),
               ...extraSettings,
             ],
-          })
+          }
+          // GlobeNews (2026-10-13): the widget's events ride its
+          // entry — and its feed component's entry, below.
+          const newsStore = id === "globenews" ? readNewsStore() : undefined
+          const newsFields =
+            newsStore !== undefined
+              ? {
+                  // detail rides capped: the desk shows an excerpt;
+                  // the full text is one click away in the drawer.
+                  news: newsStore.events.map((e) => ({
+                    ...e,
+                    ...(e.detail !== undefined ? { detail: e.detail.slice(0, 2000) } : {}),
+                  })),
+                  newsUpdatedAt: newsStore.updatedAtMs,
+                  voiceAlerts: voiceAnnouncer?.list() ?? [],
+                }
+              : {}
+          widgets.push({ ...widgetEntry, ...newsFields })
+          // Declared components become their own layers: same
+          // widget, independently placed spaces (own priority,
+          // geometry and settings bucket, all keyed by layer id).
+          const components = Array.isArray(manifest["components"])
+            ? (manifest["components"] as Array<Record<string, unknown>>)
+            : []
+          for (const comp of components) {
+            const compId = typeof comp["id"] === "string" ? (comp["id"] as string) : ""
+            if (compId === "") continue
+            const layerId = `${id}-${compId}`
+            const cv = (values[layerId] ?? {}) as Record<string, unknown>
+            const compSchema = Array.isArray(comp["settings"])
+              ? (comp["settings"] as Array<Record<string, unknown>>)
+              : []
+            const compKeys = new Set(compSchema.map((s) => String(s["key"])))
+            const compExtras: Array<HomedashSettingEntry> = Object.keys(cv)
+              .filter((k) => k !== "priority" && !compKeys.has(k))
+              .map((k) => ({ key: k, type: "number", label: k, value: cv[k] as string | number | boolean }))
+            widgets.push({
+              id: layerId,
+              name: typeof comp["name"] === "string" ? (comp["name"] as string) : layerId,
+              description: typeof comp["description"] === "string" ? (comp["description"] as string) : "",
+              version: widgetEntry.version,
+              priority:
+                typeof cv["priority"] === "number"
+                  ? (cv["priority"] as number)
+                  : typeof comp["priority"] === "number"
+                    ? (comp["priority"] as number)
+                    : 500,
+              settings: [
+                ...compSchema.map((s): HomedashSettingEntry => ({
+                  key: String(s["key"]),
+                  type: String(s["type"]),
+                  label: String(s["label"]),
+                  value: (cv[String(s["key"])] ?? s["default"]) as string | number | boolean,
+                  ...(typeof s["min"] === "number" ? { min: s["min"] as number } : {}),
+                  ...(typeof s["max"] === "number" ? { max: s["max"] as number } : {}),
+                  ...(typeof s["step"] === "number" ? { step: s["step"] as number } : {}),
+                  ...(Array.isArray(s["options"]) ? { options: s["options"] as Array<string> } : {}),
+                })),
+                ...compExtras,
+              ],
+              ...newsFields,
+            })
+          }
         } catch {
           // A broken widget folder skips; the dash survives it.
         }
@@ -1859,6 +2145,99 @@ export const createHandlerTable = (
       values[widgetId] = { ...(values[widgetId] ?? {}), [key]: value }
       fs.writeFileSync(file, JSON.stringify(values, null, 2), "utf-8")
       console.log(`[aimy] homedash.setSetting: ${widgetId}.${key} = ${JSON.stringify(value)}`)
+    },
+    "news.markRead": async (payload) => {
+      const id = reqString(payload, "id")
+      if (!markNewsRead(id)) console.warn(`[aimy] news.markRead: unknown event id ${id}`)
+    },
+    // The article behind a news event, as markdown for the drawer
+    // (Kimler, 2026-10-13). Fetched in the main process (no CORS),
+    // extracted by the widget's small reader, cached in the
+    // widget's folder so re-opens are instant and work offline.
+    // A page that won't extract falls back to the event's own
+    // summary with an honest note — never an empty drawer.
+    "news.open": async (payload) => {
+      const id = reqString(payload, "id")
+      const ev = readNewsStore().events.find((e) => e.id === id)
+      if (ev === undefined) throw new Error(`news.open: unknown event ${id}`)
+      // Cache dir is versioned: v1 extractions leaked site chrome
+      // (GDACS footer links); v2 cached a raw JSON payload for
+      // NWS alerts. Each version starts clean rather than serving
+      // stale extractions forever.
+      const cacheFile = path.join(globenewsDir(), "articles-v3", `${id}.md`)
+      try {
+        const cached = fs.readFileSync(cacheFile, "utf-8")
+        if (cached.trim() !== "") {
+          console.log(`[aimy] news.open: ${id} served from cache (${cached.length} chars)`)
+          return { id, title: ev.title, content: cached, url: ev.url }
+        }
+      } catch {
+        // No cache yet — fetch below.
+      }
+      const categoryLabel =
+        NEWS_CATEGORY_LABEL[ev.category as keyof typeof NEWS_CATEGORY_LABEL] ?? ev.category
+      const header =
+        `# ${ev.title}\n\n` +
+        `${ev.source}${ev.place !== undefined ? ` · ${ev.place}` : ""} · ${new Date(ev.atMs).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })} · ${categoryLabel}\n\n` +
+        `[Read at the source](${ev.url})\n\n---\n\n`
+      let body = ""
+      if (ev.detail !== undefined && ev.detail !== "") {
+        // API-native event (NWS): the stored alert text IS the
+        // article — fetching its URL returns JSON, not prose.
+        body = ev.detail
+        console.log(`[aimy] news.open: ${id} composed from the event's own text (${body.length} chars)`)
+      } else {
+        try {
+          const html = await fetchTextLive(ev.url)
+          const extracted = extractArticleMarkdown(html, ev.url)
+          if (extracted.textLength >= 200 && !isMachineReadableDocument(extracted.markdown)) {
+            body = extracted.markdown
+          } else {
+            console.warn(`[aimy] news.open: unusable extraction for ${id} (${extracted.textLength} chars)`)
+          }
+        } catch (e) {
+          console.warn(`[aimy] news.open: fetch failed for ${id} (${e instanceof Error ? e.message : String(e)})`)
+        }
+      }
+      if (body === "") {
+        body =
+          (ev.summary !== undefined && ev.summary !== "" ? `${ev.summary}\n\n` : "") +
+          `The full text couldn't be extracted from the source page — [read it there](${ev.url}).`
+      }
+      const content = (header + body).slice(0, 60_000)
+      try {
+        fs.mkdirSync(path.dirname(cacheFile), { recursive: true })
+        fs.writeFileSync(cacheFile, content, "utf-8")
+      } catch {
+        // Caching is best-effort; the drawer still gets its text.
+      }
+      console.log(`[aimy] news.open: ${id} fetched (${content.length} chars)`)
+      return { id, title: ev.title, content, url: ev.url }
+    },
+    // Manual scan, from the feed's "last updated" click. Runs the
+    // same function the hourly job runs; a click during a scan is
+    // a no-op (logged) rather than a second concurrent scan.
+    "news.refresh": async () => {
+      if (newsScanRunning) {
+        console.log("[aimy] news.refresh: a scan is already running — click ignored")
+        return
+      }
+      newsScanRunning = true
+      try {
+        console.log("[aimy] news.refresh: manual scan started")
+        await runNewsScan(true)
+      } finally {
+        newsScanRunning = false
+      }
+    },
+    // Silence a repeating voice alert (Threat Channel §8): the
+    // dismissal persists in the events store, and the announcer
+    // drops the alert from its rotation immediately.
+    "news.dismissVoiceAlert": async (payload) => {
+      const id = reqString(payload, "id")
+      dismissVoiceAlert(id)
+      voiceAnnouncer?.dismiss(id)
+      return { voiceAlerts: voiceAnnouncer?.list() ?? [] }
     },
     // ── Projects UI (2026-10-12) ─────────────────────────────────────
     // Direct-manipulation surface over the SAME store AImy's tools use
@@ -2191,6 +2570,158 @@ export const registerIpc: (
       trace.log("main", "session", "narrate.enqueue", { text, textLen: text.length })
       return narrationQueue.enqueue(text)
     })
+    // Voice alerts (Threat Channel §8): a SECOND NarrationQueue
+    // whose synthesis always uses the alerts voice on the local
+    // server — AImy's conversational queue (OMA anchors, default
+    // voice) is never touched. Playback rides the same
+    // chat.audioChunk broadcast under streamId "alerts", so the
+    // renderer's single playback channel serialises both voices.
+    let alertSynthBusy = false
+    let alertVoiceCache: { id: string | undefined; at: number } | undefined
+    const resolveAlertVoiceId = async (): Promise<string | undefined> => {
+      if (alertVoiceCache !== undefined && Date.now() - alertVoiceCache.at < 60_000) {
+        return alertVoiceCache.id
+      }
+      let id: string | undefined
+      try {
+        const res = await fetch("http://127.0.0.1:8001/voices")
+        const data = (await res.json()) as { voices?: Array<{ id: string }> }
+        const ids = (data.voices ?? []).map((v) => v.id)
+        id = ids.includes("alerts") ? "alerts" : ids.includes("alert") ? "alert" : undefined
+        if (id !== undefined && alertVoiceCache?.id !== id) {
+          console.log(`[aimy] globenews voice: announcements use the '${id}' voice`)
+        }
+      } catch {
+        id = undefined
+      }
+      alertVoiceCache = { id, at: Date.now() }
+      return id
+    }
+    const alertQueue = new NarrationQueue(
+      {
+        synthesize: async (text: string): Promise<Uint8Array> => {
+          const voiceId = await resolveAlertVoiceId()
+          if (voiceId === undefined) {
+            throw new Error("no 'alerts' or 'alert' voice on the local TTS server")
+          }
+          alertSynthBusy = true
+          try {
+            const res = await fetch("http://127.0.0.1:8001/speak", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text, voice_id: voiceId })
+            })
+            if (!res.ok) throw new Error(`alerts TTS failed: ${res.status}`)
+            const data = (await res.json()) as { audio_base64?: string; error?: string }
+            if (data.error !== undefined) throw new Error(data.error)
+            if (data.audio_base64 === undefined) throw new Error("alerts TTS returned no audio")
+            const bin = atob(data.audio_base64)
+            const bytes = new Uint8Array(bin.length)
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+            return bytes
+          } finally {
+            alertSynthBusy = false
+          }
+        }
+      },
+      (audio) => {
+        broadcast({
+          _tag: "chat.audioChunk",
+          streamId: "alerts",
+          sequence: audio.sequence,
+          audioBase64: Buffer.from(audio.audio).toString("base64")
+        } as never)
+      },
+      (id, reason) => {
+        console.error(`[aimy] globenews voice: announcement ${id} failed: ${reason}`)
+      }
+    )
+    {
+      interface ActiveVoiceAlert {
+        readonly alert: NewsAlert
+        lastSpokenAt: number
+      }
+      const activeAlerts = new Map<string, ActiveVoiceAlert>()
+      let alertTimer: ReturnType<typeof setInterval> | undefined
+      const listAlerts = (): ReadonlyArray<HomedashVoiceAlert> =>
+        [...activeAlerts.values()].map(({ alert }) => ({
+          id: alert.id,
+          title: alert.title,
+          severity: alert.severity
+        }))
+      const publishAlerts = (): void => {
+        broadcast({ _tag: "news.voiceAlerts", alerts: listAlerts() } as never)
+      }
+      const speakAlert = (entry: ActiveVoiceAlert): void => {
+        entry.lastSpokenAt = Date.now()
+        alertQueue.enqueue(entry.alert.spoken)
+        console.log(`[aimy] globenews voice: announcing "${entry.alert.title}" (repeats until silenced)`)
+      }
+      const alertTick = (): void => {
+        if (activeAlerts.size === 0) return
+        const settings = readVoiceAlertSettings()
+        if (!settings.announce) return
+        if (alertSynthBusy || alertQueue.pending > 0) return
+        const now = Date.now()
+        const due = [...activeAlerts.values()]
+          .filter((a) => now - a.lastSpokenAt >= settings.repeatMinutes * 60_000)
+          .sort((x, y) =>
+            x.alert.severity !== y.alert.severity
+              ? x.alert.severity === "critical"
+                ? -1
+                : 1
+              : x.lastSpokenAt - y.lastSpokenAt
+          )
+        const next = due[0]
+        if (next !== undefined) speakAlert(next)
+      }
+      voiceAnnouncer = {
+        activate: (alert, speakNow) => {
+          if (!alert.voice || activeAlerts.has(alert.id)) return
+          const entry: ActiveVoiceAlert = { alert, lastSpokenAt: 0 }
+          activeAlerts.set(alert.id, entry)
+          console.log(`[aimy] globenews voice: alert active — ${alert.title}`)
+          publishAlerts()
+          if (alertTimer === undefined) alertTimer = setInterval(alertTick, 30_000)
+          if (speakNow && readVoiceAlertSettings().announce) speakAlert(entry)
+        },
+        dismiss: (id) => {
+          if (!activeAlerts.delete(id)) return
+          alertQueue.clear()
+          console.log(`[aimy] globenews voice: silenced ${id} (${activeAlerts.size} still active)`)
+          publishAlerts()
+          if (activeAlerts.size === 0 && alertTimer !== undefined) {
+            clearInterval(alertTimer)
+            alertTimer = undefined
+          }
+        },
+        list: listAlerts,
+        replayFromStore: () => {
+          try {
+            const store = readNewsStore()
+            let replayed = 0
+            for (const e of store.events) {
+              if (store.voiceDismissed[e.id] !== undefined) continue
+              const a = buildNewsAlert(e)
+              if (a !== undefined && a.voice) {
+                // speakNow=false: lastSpokenAt stays 0, so the
+                // first timer tick makes the announcement.
+                voiceAnnouncer?.activate(a, false)
+                replayed++
+              }
+            }
+            if (replayed > 0) {
+              console.log(`[aimy] globenews voice: replayed ${replayed} active alert(s) from the store`)
+            }
+          } catch (e) {
+            console.error(
+              `[aimy] globenews voice: replay failed (${e instanceof Error ? e.message : String(e)})`
+            )
+          }
+        }
+      }
+      voiceAnnouncer.replayFromStore()
+    }
     const messaging = makeMessagingGateway({
       engine,
       locker: services.locker,

@@ -40,6 +40,9 @@ const TOOL_ALIASES: Readonly<Record<string, string>> = {
   "doc.write": "Saved",
   // Module tools (installed via the module seam as extraTools).
   "retrieval.query": "Search",
+  "retrieval.news": "News",
+  "retrieval.images": "Images",
+  "retrieval.videos": "Videos",
   "research.query": "Research",
 }
 

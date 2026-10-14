@@ -29,6 +29,11 @@ export interface ChatSendResult {
   readonly streamId: string
 }
 
+/** Result of a `chat.branch` fork: the new session's id. */
+export interface ChatBranchResult {
+  readonly newSessionId: string
+}
+
 /** One FACS keyframe, JSON-safe for the bridge. */
 export interface ExpressionCueWire {
   readonly atMs: number
@@ -248,6 +253,30 @@ export interface HomedashSettingEntry {
   readonly options?: ReadonlyArray<string> | undefined
 }
 
+/** One world event on the GlobeNews wire (2026-10-13). Mirrors the widget's NewsEvent. */
+export interface HomedashNewsEvent {
+  readonly id: string
+  readonly title: string
+  readonly category: string
+  readonly source: string
+  readonly url: string
+  readonly atMs: number
+  readonly lat?: number | undefined
+  readonly lon?: number | undefined
+  readonly place?: string | undefined
+  readonly summary?: string | undefined
+  /** The event's own full text (API-native sources), capped at the attach point. */
+  readonly detail?: string | undefined
+  readonly read: boolean
+}
+
+/** One active voice alert (Threat Channel §8): a threat inside the risk circle, being announced until silenced. */
+export interface HomedashVoiceAlert {
+  readonly id: string
+  readonly title: string
+  readonly severity: "warning" | "critical"
+}
+
 /** One enabled HomeDash widget with its effective settings. */
 export interface HomedashWidgetEntry {
   readonly id: string
@@ -257,10 +286,24 @@ export interface HomedashWidgetEntry {
   /** Screen depth on the dash stage, 1–1000. Higher is on top. */
   readonly priority: number
   readonly settings: ReadonlyArray<HomedashSettingEntry>
+  /** GlobeNews only: the widget's current world events (2026-10-13). */
+  readonly news?: ReadonlyArray<HomedashNewsEvent> | undefined
+  /** GlobeNews only: when the events store was last scanned, epoch ms. */
+  readonly newsUpdatedAt?: number | undefined
+  /** GlobeNews only: voice alerts currently repeating (2026-10-13). */
+  readonly voiceAlerts?: ReadonlyArray<HomedashVoiceAlert> | undefined
 }
 
 export interface HomedashListResult {
   readonly widgets: ReadonlyArray<HomedashWidgetEntry>
+}
+
+/** A fetched news article, as markdown, for the drawer (2026-10-13). */
+export interface NewsArticleResult {
+  readonly id: string
+  readonly title: string
+  readonly content: string
+  readonly url: string
 }
 
 /** One past conversation, from its session record (Mirror Field, 2026-10-13). */
@@ -300,6 +343,8 @@ export interface HomeDataResult {
   readonly memories: ReadonlyArray<HomeMemoryEntry>
   /** Journal metadata, or null when no journal exists yet. */
   readonly journal: HomeJournalEntry | null
+  /** His sent prompts, oldest first (2026-10-13: global composer history). */
+  readonly promptHistory: ReadonlyArray<string>
 }
 
 /** projects.list result: every project plus which one is active. */
@@ -406,7 +451,9 @@ export interface ChatImageWire {
 }
 
 export type IpcCommand =
-  | { _tag: "chat.send"; sessionId: string; input: string; images?: ReadonlyArray<ChatImageWire> | undefined }
+  | { _tag: "chat.send"; sessionId: string; input: string; images?: ReadonlyArray<ChatImageWire> | undefined; promptText?: string | undefined }
+  /** Fork a session at his Nth prompt (2026-10-13: edit-and-resend). The new session keeps the ancestor chain before that prompt. */
+  | { _tag: "chat.branch"; sessionId: string; userOrdinal: number }
   | { _tag: "chat.cancel"; streamId: string }
   | { _tag: "banners.list" }
   | { _tag: "banners.dismiss"; id: string }
@@ -460,6 +507,8 @@ export type IpcCommand =
   | { _tag: "docs.save"; path: string; content: string }
   /** Read a markdown document from disk (2026-10-12: drawer home panel "Continue"). Same path validation as docs.save. */
   | { _tag: "docs.load"; path: string }
+  /** Open a library document in the OS default app (2026-10-13: Cmd-Opt-click on a document link). Same resolution as docs.load. */
+  | { _tag: "docs.openExternal"; path: string }
   /** Drawer home panel data (2026-10-12): recents (mtime scan), pending capability requests, knowledge cards — all read from the user's own stores by main. */
   | { _tag: "home.data" }
   /** Read the full text of one pending capability request (2026-10-12): used to open it as a build brief without truncating the request detail. */
@@ -470,6 +519,14 @@ export type IpcCommand =
   | { _tag: "homedash.list" }
   /** Persist one HomeDash widget setting (the reserved key "priority" sets screen depth 1–1000). */
   | { _tag: "homedash.setSetting"; widgetId: string; key: string; value: string | number | boolean }
+  /** Mark one GlobeNews event read (2026-10-13): its dot gains the cyan ring. */
+  | { _tag: "news.markRead"; id: string }
+  /** Fetch (or recall from the widget cache) one event's article as markdown for the drawer. */
+  | { _tag: "news.open"; id: string }
+  /** Run the world-news scan now (the feed's "last updated" click). */
+  | { _tag: "news.refresh" }
+  /** Silence one repeating voice alert for good (Threat Channel §8). */
+  | { _tag: "news.dismissVoiceAlert"; id: string }
   /** Every project + the active one (2026-10-12, project UI). */
   | { _tag: "projects.list" }
   /** Create a user-declared project and make it active (2026-10-12). */
@@ -487,6 +544,7 @@ export type IpcCommand =
 /** The response type for each command tag (index for Track 2's handler table). */
 export interface IpcResponse {
   "chat.send": ChatSendResult
+  "chat.branch": ChatBranchResult
   "chat.cancel": void
   "banners.list": BannersListResult
   "banners.dismiss": void
@@ -530,6 +588,7 @@ export interface IpcResponse {
   "dev.rebuild": DevRebuildResult
   "docs.save": DocsSaveResult
   "docs.load": DocsLoadResult
+  "docs.openExternal": void
   "home.data": HomeDataResult
   "projects.list": ProjectsListResult
   "projects.create": ProjectsCreateResult
@@ -540,6 +599,10 @@ export interface IpcResponse {
   "home.dismissRequest": void
   "homedash.list": HomedashListResult
   "homedash.setSetting": void
+  "news.markRead": void
+  "news.open": NewsArticleResult
+  "news.refresh": void
+  "news.dismissVoiceAlert": { voiceAlerts: ReadonlyArray<HomedashVoiceAlert> }
   "shell.openExternal": void
   "trace.log": void
   "providers.load": unknown
@@ -566,11 +629,13 @@ export type IpcEvent =
   | { _tag: "tts.installProgress"; progress: TtsInstallProgressEvent }
   | { _tag: "stt.installProgress"; progress: SttInstallProgressEvent }
   | { _tag: "banner.published"; banner: Banner }
+  | { _tag: "news.voiceAlerts"; alerts: ReadonlyArray<HomedashVoiceAlert> }
   | { _tag: "asc.dialsUpdated"; dials: DialVector }
 
 /** The set of channel names the preload allowlists. Nothing else crosses. */
 export const IPC_COMMAND_TAGS = [
   "chat.send",
+  "chat.branch",
   "chat.cancel",
   "banners.list",
   "banners.dismiss",
@@ -618,11 +683,17 @@ export const IPC_COMMAND_TAGS = [
   "messaging.testMessage",
   "docs.save",
   "docs.load",
+  "docs.openExternal",
   "home.data",
   "home.requestDetail",
   "home.dismissRequest",
   "homedash.list",
   "homedash.setSetting",
+  "news.markRead",
+  "news.open",
+  "news.refresh",
+  "news.dismissVoiceAlert",
+  "shell.openExternal",
   "projects.list",
   "projects.create",
   "projects.setActive",
@@ -641,6 +712,7 @@ export const IPC_EVENT_TAGS = [
   "tts.installProgress",
   "stt.installProgress",
   "banner.published",
+  "news.voiceAlerts",
   "asc.dialsUpdated"
 ] as const
 

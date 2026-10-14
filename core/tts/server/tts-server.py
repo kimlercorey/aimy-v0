@@ -35,6 +35,108 @@ _model_lock = threading.Lock()
 _voices_cache: dict | None = None
 
 
+def _sniff_format(raw: bytes) -> tuple[str, str]:
+    """(temp-file suffix, human label) from magic bytes."""
+    if raw[:4] == b"RIFF":
+        return ".wav", "WAV"
+    if raw[:3] == b"ID3" or raw[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3", "MP3"
+    if raw[:4] == b"fLaC":
+        return ".flac", "FLAC"
+    if raw[:4] == b"OggS":
+        return ".ogg", "OGG"
+    if len(raw) >= 8 and raw[4:8] == b"ftyp":
+        return ".m4a", "M4A"
+    return ".audio", "unknown-format"
+
+
+def _slugify_voice_id(name: str) -> str:
+    """Voice id from a display name: the server's alphabet is
+    [a-z0-9_-]; everything else folds to underscores, so a name
+    the user (or a filename) supplies can never be rejected for
+    its punctuation — "Mom's Voice (final!)" becomes
+    mom_s_voice_final instead of a 400."""
+    return re.sub(r"[^a-z0-9_-]+", "_", name.strip().lower()).strip("_")[:40].strip("_")
+
+
+def _reference_to_wav(raw: bytes) -> tuple[bytes | None, str]:
+    """Normalise a voice reference clip to WAV bytes.
+
+    Returns (wav_bytes, format_label) or (None, format_label).
+    WAV passes through untouched (the long-standing behavior).
+    Anything else is decoded by TRYING EACH DECODER THIS HOST
+    MIGHT HAVE — torchaudio (Chatterbox's own dependency), then
+    soundfile (bundled with librosa, Chatterbox's other
+    dependency; its libsndfile decodes MP3/FLAC/OGG), then an
+    ffmpeg binary (the only one of the three that reads M4A).
+    A decoder that is missing or fails is logged and the next
+    is tried: one unavailable library must never become a
+    refused voice. ~/.aimy/voices stays WAV on disk either way.
+    """
+    suffix, label = _sniff_format(raw)
+    if len(raw) < 1000:
+        return None, label
+    if raw[0:4] == b"RIFF":
+        return raw, label
+    tmp_path: str | None = None
+    try:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(raw)
+            tmp_path = f.name
+
+        try:
+            import torchaudio
+
+            waveform, sample_rate = torchaudio.load(tmp_path)
+            buf = io.BytesIO()
+            torchaudio.save(buf, waveform, sample_rate, format="wav")
+            data = buf.getvalue()
+            if len(data) >= 1000:
+                return data, label
+            raise RuntimeError("torchaudio produced a suspiciously small WAV")
+        except Exception as e:
+            print(f"[tts] reference decode via torchaudio failed ({label}): {e}", flush=True)
+
+        try:
+            import soundfile as sf
+
+            frames, sample_rate = sf.read(tmp_path, always_2d=True)
+            buf = io.BytesIO()
+            sf.write(buf, frames, sample_rate, format="WAV")
+            data = buf.getvalue()
+            if len(data) >= 1000:
+                return data, label
+            raise RuntimeError("soundfile produced a suspiciously small WAV")
+        except Exception as e:
+            print(f"[tts] reference decode via soundfile failed ({label}): {e}", flush=True)
+
+        try:
+            import subprocess
+
+            out = subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-i", tmp_path, "-f", "wav", "pipe:1"],
+                capture_output=True,
+                timeout=60,
+            )
+            if out.returncode == 0 and len(out.stdout) >= 1000:
+                return out.stdout, label
+            raise RuntimeError(
+                f"ffmpeg exited {out.returncode}: {out.stderr.decode(errors='replace')[:200]}"
+            )
+        except Exception as e:
+            print(f"[tts] reference decode via ffmpeg failed ({label}): {e}", flush=True)
+
+        return None, label
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def detect_device() -> str:
     try:
         import torch
@@ -294,12 +396,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"audio_base64": base64.b64encode(wav).decode()})
         elif path == "/voices/add":
             body = self._read_json()
-            name = str(body.get("name", "")).strip()
+            name = str(body.get("name", "")).strip()[:80]
             audio_b64 = str(body.get("audio_base64", ""))
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,39}", name):
-                self._json({"error": "name must be 1-40 chars: letters, digits, space, _ -"}, 400)
+            vid = _slugify_voice_id(name)
+            if vid == "":
+                self._json({"error": "the voice name needs at least one letter or digit"}, 400)
                 return
-            vid = re.sub(r"\s+", "_", name.strip().lower())
             if not audio_b64:
                 self._json({"error": "audio_base64 required"}, 400)
                 return
@@ -308,11 +410,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json({"error": "audio_base64 is not valid base64"}, 400)
                 return
-            if raw[0:4] != b"RIFF" or len(raw) < 1000:
-                self._json({"error": "reference must be a WAV file (>= 1KB)"}, 400)
+            wav_raw, fmt_label = _reference_to_wav(raw)
+            if wav_raw is None:
+                self._json(
+                    {
+                        "error": f"could not decode the {fmt_label} reference on this machine — torchaudio, soundfile and ffmpeg all failed or are unavailable (a WAV export always works)"
+                    },
+                    400,
+                )
                 return
             VOICES_DIR.mkdir(parents=True, exist_ok=True)
-            (VOICES_DIR / f"{vid}.wav").write_bytes(raw)
+            (VOICES_DIR / f"{vid}.wav").write_bytes(wav_raw)
             self._json({"voice": {"id": vid, "name": name, "is_default": False}})
         elif re.fullmatch(r"/voices/[A-Za-z0-9_-]+/default", path):
             vid = path.split("/")[2]

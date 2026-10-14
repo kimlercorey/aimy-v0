@@ -25,7 +25,7 @@ import { Schema } from "effect"
 import { Update } from "foldkit"
 import { MemoryService } from "../../memory/service.js"
 import type { SafetyKernel } from "../../permission-kernel/index.js"
-import { PersistMemory, RequestPermission, SendToInference, StopNarration, SaveDocument, LoadHomeData, LoadHomeDocument, LoadHomeRequestBrief, DismissHomeRequest, SwitchHomeProject, CreateHomeProject, MoveHomeAsset, AddHomeRecentToProject, LoadHomedash, ApplyHomedashSetting } from "./commands.js"
+import { PersistMemory, RequestPermission, SendToInference, StopNarration, SaveDocument, LoadHomeData, LoadHomeDocument, LoadHomeRequestBrief, DismissHomeRequest, SwitchHomeProject, CreateHomeProject, MoveHomeAsset, AddHomeRecentToProject, LoadHomedash, ApplyHomedashSetting, MarkNewsRead, LoadNewsArticle, RefreshNews, DismissVoiceAlert, LoadLinkedDocument, BranchForEdit } from "./commands.js"
 import { parseMessageTools, splitBlocks, extractToolCalls } from "./tool-calls.js";
 import {
   AddVoice,
@@ -51,9 +51,10 @@ import type { TtsIpc } from "./voice/seam.js"
 import type { DocsIpc } from "./docs-seam.js"
 import type { HomeIpc } from "./home-seam.js"
 import type { HomedashIpc } from "./homedash-seam.js"
+import type { ChatIpc } from "./chat-seam.js"
 
 /** Services the shell track's commands require; provided at the shell boundary. */
-export type ShellServices = SafetyKernel | MemoryService | TtsIpc | DocsIpc | HomeIpc | HomedashIpc
+export type ShellServices = SafetyKernel | MemoryService | TtsIpc | DocsIpc | HomeIpc | HomedashIpc | ChatIpc
 
 /** Estimated transcript-row height (px) mapping scrollTop -> window anchor. */
 export const ESTIMATED_ROW_PX = 64
@@ -153,6 +154,110 @@ const pushVersion = (
   const last = hist[hist.length - 1]
   if (last !== undefined && last.content === content && last.title === title) return hist
   return [...hist, { title, content, at, label }]
+}
+
+/**
+ * Open content in the drawer as a space (2026-10-13): an existing
+ * space (matched by path, then id) updates in place and activates;
+ * a new id appends (refused past maxSpaces) and resets height
+ * ratios. The space reads CLEAN (savedContent = content) — these
+ * are previews, not drafts. Used by documents and news articles.
+ */
+/**
+ * A loaded document's drawer identity: the space id slugs the
+ * filename stem; the title is the first `# ` heading when the
+ * document has one. Shared by the Continue open flow and the
+ * document-link flow so a document is the same space however
+ * it was reached.
+ */
+const docSpaceSeed = (path: string, content: string): { id: string; title: string } => {
+  const stem = (path.split("/").pop() ?? "document").replace(/\.md$/, "")
+  const id = stem.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "document"
+  const heading = content.split("\n").map((l) => l.trim()).find((l) => l.startsWith("# "))
+  const title = heading !== undefined ? heading.replace(/^#\s+/, "").slice(0, 80) : stem.replace(/-/g, " ")
+  return { id, title }
+}
+
+/**
+ * Append a sent prompt to the in-memory global history
+ * (2026-10-13): same rules as the persisted store in the main
+ * process — blanks skipped, consecutive duplicates collapsed,
+ * capped at 300. The store on disk is written by chat.send;
+ * this keeps the open app current without a reload.
+ */
+const appendedPromptHistory = (
+  list: ReadonlyArray<string> | undefined,
+  text: string,
+): Array<string> => {
+  const base = list ?? []
+  if (text.trim() === "" || base[base.length - 1] === text) return [...base]
+  return [...base, text].slice(-300)
+}
+
+const openInDrawer = (
+  model: Model,
+  opts: { id: string; title: string; content: string; path?: string | undefined }
+): Model => {
+  const drawer = model.session.drawer
+  const at = Date.now()
+  const existing =
+    (opts.path !== undefined ? drawer.spaces.find((s) => s.path === opts.path) : undefined) ??
+    drawer.spaces.find((s) => s.id === opts.id)
+  if (existing !== undefined) {
+    const spaces =
+      existing.content === opts.content
+        ? drawer.spaces
+        : drawer.spaces.map((s) =>
+            s.id === existing.id
+              ? {
+                  ...s,
+                  title: opts.title,
+                  content: opts.content,
+                  savedContent: opts.content,
+                  savedAt: at,
+                  saveError: undefined,
+                  history: pushVersion(s, opts.title, opts.content, at, "Opened"),
+                }
+              : s
+          )
+    return {
+      ...model,
+      session: {
+        ...model.session,
+        drawer: { ...drawer, open: true, activeSpaceId: existing.id, spaces },
+      },
+    }
+  }
+  if (drawer.spaces.length >= drawer.maxSpaces) {
+    console.warn(
+      `[diag] update: openInDrawer refused (maxSpaces) id=${opts.id} path=${opts.path ?? "-"}`
+    )
+    return model
+  }
+  const space: DrawerSpace = {
+    id: opts.id,
+    title: opts.title,
+    kind: "preview",
+    content: opts.content,
+    ...(opts.path !== undefined ? { path: opts.path } : {}),
+    savedContent: opts.content,
+    savedAt: at,
+    history: [{ title: opts.title, content: opts.content, at, label: "Opened" }],
+  }
+  return {
+    ...model,
+    session: {
+      ...model.session,
+      drawer: {
+        ...drawer,
+        open: true,
+        activeSpaceId: opts.id,
+        spaces: [...drawer.spaces, space],
+        // Space count changed — reset height ratios to equal split.
+        heightRatios: {},
+      },
+    },
+  }
 }
 
 /**
@@ -297,21 +402,151 @@ export const update = (
 
   const message: Message = rawMessage
   return Message.match<Update.Return<Model, Message, ShellServices>>(message, {
-    ComposerDraftChanged: ({ text }) => ({
+    ComposerDraftChanged: ({ text }) => {
+      // Draft persistence (2026-10-13): keep the stored copy
+      // current so a relaunch restores the half-typed prompt.
+      try {
+        localStorage.setItem("aimy.composerDraft", text)
+      } catch { /* storage unavailable — draft lives in memory only */ }
+      return {
+        model: {
+          ...model,
+          // Manual edit clears the voice-draft flag (user took over).
+          // Preserve attachments (2026-10-11). Rebuilding the
+          // composer without a historyIndex is also what ends
+          // prompt-history cycling when he types (2026-10-13).
+          session: {
+            ...model.session,
+            composer: { draft: text, attachments: model.session.composer.attachments, documents: model.session.composer.documents },
+            voiceDraft: false,
+          },
+        },
+      }
+    },
+
+    // Stop generation (2026-10-13, Kimler): Esc or the stop
+    // button. What she had said so far settles as a stopped
+    // message — display-parsed only; the settle machinery
+    // never runs on a partial turn (a half-written tool call
+    // must not execute). Clearing the streaming state is also
+    // what tears the chat pump down, and its teardown cancels
+    // the main-side stream.
+    StreamStopRequested: () => {
+      const streaming = model.session.streaming
+      if (!streaming.active) return { model }
+      console.warn(`[diag] update: StreamStopRequested stream=${streaming.streamId} partialChars=${streaming.text.length}`)
+      let partial = ""
+      try {
+        partial = parseMessageTools(streaming.text).text
+      } catch {
+        partial = ""
+      }
+      const messages =
+        partial.trim() !== ""
+          ? [
+              ...model.session.messages,
+              {
+                id: `${streaming.streamId}-stopped`,
+                role: "assistant" as const,
+                text: partial,
+                at: Date.now(),
+                stopped: true,
+              },
+            ]
+          : model.session.messages
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            messages,
+            streaming: { active: false, streamId: "", text: "", startedAt: 0 },
+            speakingStreamId: undefined,
+            pendingAudioChunks: [],
+          },
+        },
+        commands: [StopNarration()],
+      }
+    },
+
+    // Edit-and-resend (2026-10-13): load one of his messages
+    // into the composer as a pending edit. Sending forks the
+    // session at that message (see UserSentMessage); cancelling
+    // clears both the flag and the box.
+    UserMessageEditRequested: ({ id }) => {
+      const target = model.session.messages.find((m) => m.id === id && m.role === "user")
+      if (target === undefined || model.session.streaming.active) {
+        console.warn(`[diag] update: UserMessageEditRequested refused id=${id}`)
+        return { model }
+      }
+      try {
+        localStorage.setItem("aimy.composerDraft", target.text)
+      } catch { /* storage unavailable */ }
+      console.warn(`[diag] update: UserMessageEditRequested id=${id} chars=${target.text.length}`)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            pendingEditFromId: id,
+            composer: {
+              draft: target.text,
+              attachments: model.session.composer.attachments,
+              // The message's documents ride along (2026-10-13):
+              // editing a prompt he gave her WITH a file should
+              // not silently strip the file from the resend.
+              documents: [...(target.documents ?? [])],
+            },
+          },
+        },
+      }
+    },
+
+    UserMessageEditCancelled: () => {
+      try {
+        localStorage.removeItem("aimy.composerDraft")
+      } catch { /* storage unavailable */ }
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            pendingEditFromId: undefined,
+            // Cancelling the edit also unloads the documents it
+            // restored — they belonged to that message, not to a
+            // fresh prompt (2026-10-13).
+            composer: { draft: "", attachments: model.session.composer.attachments, documents: [] },
+          },
+        },
+      }
+    },
+
+    // Prompt-history cycling (2026-10-13): the view's decider
+    // computed the recalled prompt and its position; the update
+    // just lands them (attachments preserved, as on any draft
+    // change). index -1 with an empty text = cycled past the
+    // newest, back to a fresh box.
+    ComposerHistoryStepped: ({ text, index }) => ({
       model: {
         ...model,
-        // Manual edit clears the voice-draft flag (user took over).
-        // Preserve attachments (2026-10-11).
         session: {
           ...model.session,
-          composer: { draft: text, attachments: model.session.composer.attachments },
-          voiceDraft: false,
+          composer: {
+            draft: text,
+            attachments: model.session.composer.attachments,
+            documents: model.session.composer.documents,
+            ...(index >= 0 ? { historyIndex: index } : {}),
+          },
         },
       },
     }),
 
-    UserSentMessage: ({ id, text, at, images }) => {
-      if (text.trim().length === 0 && (images ?? []).length === 0) return { model }
+    UserSentMessage: ({ id, text, at, images, documents }) => {
+      if (text.trim().length === 0 && (images ?? []).length === 0 && (documents ?? []).length === 0) return { model }
+      // The draft is sent — its persisted copy goes too (2026-10-13).
+      try {
+        localStorage.removeItem("aimy.composerDraft")
+      } catch { /* storage unavailable */ }
       const sessionId = model.session.sessionId
       // Derive subject from AImy's perspective: what the user is asking about
       const subject = text.trim().slice(0, 50) + (text.trim().length > 50 ? "…" : "")
@@ -325,9 +560,51 @@ export const update = (
         model.session.streaming.active || model.session.speakingStreamId !== undefined
       // Attachments: use message images if provided, else composer staged.
       const msgImages = images ?? model.session.composer.attachments
+      const msgDocuments = documents ?? model.session.composer.documents ?? []
+      // Edit-and-resend (2026-10-13): he is sending an edited
+      // earlier prompt. The thread forks at that prompt FIRST —
+      // the send is stashed and lands on EditBranchReady, inside
+      // the branched session, so her context and the visible
+      // thread truncate together. A second send while a branch
+      // is in flight is refused: the stash is the one truth.
+      const editFromId = model.session.pendingEditFromId
+      if (editFromId !== undefined) {
+        if (model.session.pendingEditSend !== undefined) {
+          console.warn("[diag] update: UserSentMessage refused — an edit branch is already in flight")
+          return { model }
+        }
+        const upto = model.session.messages.findIndex((m) => m.id === editFromId)
+        if (upto >= 0) {
+          const userOrdinal = model.session.messages
+            .slice(0, upto + 1)
+            .filter((m) => m.role === "user").length
+          console.warn(`[diag] update: edit-and-resend from=${editFromId} ordinal=${userOrdinal}`)
+          return {
+            model: {
+              ...model,
+              session: {
+                ...model.session,
+                pendingEditFromId: undefined,
+                pendingEditSend: {
+                  id,
+                  fromId: editFromId,
+                  text,
+                  at,
+                  ...(msgImages.length > 0 ? { images: [...msgImages] } : {}),
+                  ...(msgDocuments.length > 0 ? { documents: [...msgDocuments] } : {}),
+                },
+                composer: { draft: "", attachments: [] },
+                voiceDraft: false,
+              },
+            },
+            commands: [BranchForEdit({ sessionId, userOrdinal })],
+          }
+        }
+        console.warn(`[diag] update: edit target ${editFromId} not found; sending normally`)
+      }
       const newMessages = [
         ...model.session.messages,
-        { id, role: "user" as const, text, at, ...(msgImages.length > 0 ? { images: msgImages } : {}) },
+        { id, role: "user" as const, text, at, ...(msgImages.length > 0 ? { images: msgImages } : {}), ...(msgDocuments.length > 0 ? { documents: msgDocuments } : {}) },
       ]
       return {
         model: {
@@ -339,6 +616,7 @@ export const update = (
             // Pin the window to the newest message (column-reverse: bottom).
             listWindow: { ...model.session.listWindow, anchorIndex: newMessages.length - 1 },
             composer: { draft: "", attachments: [] },
+            promptHistory: appendedPromptHistory(model.session.promptHistory, text),
             voiceDraft: false,
             // Clear speaking indicator: user interrupted, narration stopped.
             speakingStreamId: undefined,
@@ -1479,11 +1757,84 @@ export const update = (
       },
     }),
     /** Global click confirmed voice draft — send current draft as message. */
+    // Edit-and-resend (2026-10-13): the fork exists. Truncate
+    // the visible thread at the edited message, adopt the new
+    // session, and replay the stashed send through the normal
+    // send path (recursion into update keeps ONE landing).
+    EditBranchReady: ({ newSessionId }) => {
+      const stash = model.session.pendingEditSend
+      console.warn(`[diag] update: EditBranchReady newSession=${newSessionId} stash=${stash !== undefined}`)
+      if (stash === undefined) {
+        return {
+          model: {
+            ...model,
+            session: { ...model.session, sessionId: newSessionId, branchId: newSessionId },
+          },
+        }
+      }
+      const idx = model.session.messages.findIndex((m) => m.id === stash.fromId)
+      const branched: Model = {
+        ...model,
+        session: {
+          ...model.session,
+          sessionId: newSessionId,
+          branchId: newSessionId,
+          messages: idx >= 0 ? model.session.messages.slice(0, idx) : model.session.messages,
+          pendingEditSend: undefined,
+        },
+      }
+      return update(
+        branched,
+        Message.UserSentMessage({
+          id: stash.id,
+          text: stash.text,
+          at: stash.at,
+          ...(stash.images !== undefined ? { images: [...stash.images] } : {}),
+          ...(stash.documents !== undefined ? { documents: [...stash.documents] } : {}),
+        })
+      )
+    },
+
+    // The fork failed: his edited text goes back to the
+    // composer (never silently lost) and the failure is a
+    // visible message in the thread.
+    EditBranchFailed: ({ reason }) => {
+      const stash = model.session.pendingEditSend
+      console.warn(`[diag] update: EditBranchFailed reason=${reason} stash=${stash !== undefined}`)
+      if (stash === undefined) return { model }
+      try {
+        localStorage.setItem("aimy.composerDraft", stash.text)
+      } catch { /* storage unavailable */ }
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            pendingEditSend: undefined,
+            composer: { draft: stash.text, attachments: model.session.composer.attachments },
+            messages: [
+              ...model.session.messages,
+              {
+                id: `${stash.id}-branch-failed`,
+                role: "assistant" as const,
+                text: `edit-and-resend failed: ${reason}`,
+                at: Date.now(),
+              },
+            ],
+          },
+        },
+      }
+    },
+
     VoiceDraftConfirmed: () => {
       const draft = model.session.composer.draft
       if (draft.trim().length === 0) {
         return { model }
       }
+      // The draft is sent — its persisted copy goes too (2026-10-13).
+      try {
+        localStorage.removeItem("aimy.composerDraft")
+      } catch { /* storage unavailable */ }
       const id = `msg-${Date.now()}`
       const sessionId = model.session.sessionId
       // Same barge-in semantics as UserSentMessage (2026-10-11).
@@ -1494,9 +1845,14 @@ export const update = (
       // so a document opened in the drawer was invisible to AImy and she
       // reported the drawer as empty (field failure 2026-10-12 17:02).
       const input = uiStateMarker(model) + draft
+      // Staged documents ride a voice send too (2026-10-13): the
+      // composer is rebuilt empty below, so leaving them behind
+      // would drop his files silently. (Staged images do not ride
+      // voice sends — pre-existing behavior, unchanged.)
+      const voiceDocuments = model.session.composer.documents ?? []
       const newMessages = [
         ...model.session.messages,
-        { id, role: "user" as const, text: draft, at: Date.now() },
+        { id, role: "user" as const, text: draft, at: Date.now(), ...(voiceDocuments.length > 0 ? { documents: voiceDocuments } : {}) },
       ]
       return {
         model: {
@@ -1509,6 +1865,12 @@ export const update = (
             // visible window and appear to "vanish" while responses merged).
             listWindow: { ...model.session.listWindow, anchorIndex: newMessages.length - 1 },
             composer: { draft: "", attachments: [] },
+            promptHistory: appendedPromptHistory(model.session.promptHistory, draft),
+            // A voice send abandons any loaded edit-and-resend
+            // (2026-10-13): the branch detour is a typed-send
+            // path; leaving the flag set would fork a later,
+            // unrelated send.
+            pendingEditFromId: undefined,
             voiceDraft: false,
             speakingStreamId: undefined,
             pendingAudioChunks: [],
@@ -2444,12 +2806,20 @@ export const update = (
 
     HomedashLoaded: ({ widgets }) => {
       console.warn(`[diag] update: HomedashLoaded widgets=${widgets.map((w) => `${w.id}@${w.priority}`).join(",")}`)
+      // Voice alerts ride the globenews entries (2026-10-13):
+      // mirror them onto the drawer so the desk/feed strip and
+      // the live news.voiceAlerts events share one state field.
+      const voiceAlerts = widgets.find((w) => w.voiceAlerts !== undefined)?.voiceAlerts
       return {
         model: {
           ...model,
           session: {
             ...model.session,
-            drawer: { ...model.session.drawer, dash: { widgets } },
+            drawer: {
+              ...model.session.drawer,
+              dash: { widgets },
+              ...(voiceAlerts !== undefined ? { voiceAlerts } : {}),
+            },
           },
         },
       }
@@ -2472,13 +2842,100 @@ export const update = (
       ],
     }),
 
-    HomeDataLoaded: ({ recents, requests, cards, project, projectList, chats, memories, journal }) => {
-      console.warn(`[diag] update: HomeDataLoaded recents=${recents.length} requests=${requests.length} cards=${cards.length} project=${project?.id ?? "none"} runs=${project?.runs.length ?? 0} projectList=${projectList.length} chats=${chats.length} memories=${memories.length}`)
+    NewsReadRequested: ({ id }) => ({
+      model,
+      commands: [MarkNewsRead({ correlationId: "news-read", id })],
+    }),
+
+    NewsOpenRequested: ({ id }) => ({
+      model,
+      commands: [LoadNewsArticle({ correlationId: "news-open", id })],
+    }),
+
+    NewsArticleLoaded: ({ id, title, content, url }) => {
+      console.warn(`[diag] update: NewsArticleLoaded id=${id} chars=${content.length}`)
+      // One space per event (id `news-<eventId>`); re-clicking an
+      // updated article refreshes it in place. path carries the
+      // source URL, so a space is never mistaken for a local file.
+      return { model: openInDrawer(model, { id: `news-${id}`, title, content, path: url }) }
+    },
+
+    NewsArticleFailed: ({ id, reason }) => {
+      console.warn(`[diag] update: NewsArticleFailed id=${id} reason=${reason}`)
+      return { model }
+    },
+
+    NewsRefreshRequested: () => ({
+      model,
+      commands: [RefreshNews({ correlationId: "news-refresh" })],
+    }),
+
+    NewsRegionToggled: ({ region }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          drawer: {
+            ...model.session.drawer,
+            newsRegion:
+              region === "global" || region === "national" || region === "local"
+                ? region
+                : "local",
+          },
+        },
+      },
+    }),
+
+    NewsFocusChanged: ({ id, kind }) => {
+      const drawer = model.session.drawer
+      // A feature ending (empty id) clears only a director
+      // feature — never a selection the user made.
+      if (id === "" && drawer.newsFocusKind !== "featured") return { model }
       return {
         model: {
           ...model,
           session: {
             ...model.session,
+            drawer: {
+              ...drawer,
+              newsFocusId: id,
+              newsFocusKind: id === "" ? "" : kind,
+            },
+          },
+        },
+      }
+    },
+
+    // Voice alerts (2026-10-13, Threat Channel §8): the active
+    // set is main-process truth — the announcer publishes it on
+    // every change; the strip renders straight from this field.
+    VoiceAlertsChanged: ({ alerts }) => ({
+      model: {
+        ...model,
+        session: {
+          ...model.session,
+          drawer: { ...model.session.drawer, voiceAlerts: alerts },
+        },
+      },
+    }),
+
+    VoiceAlertDismissRequested: ({ id }) => ({
+      model,
+      commands: [DismissVoiceAlert({ correlationId: "voice-dismiss", id })],
+    }),
+
+    HomeDataLoaded: ({ recents, requests, cards, project, projectList, chats, memories, journal, promptHistory }) => {
+      console.warn(`[diag] update: HomeDataLoaded recents=${recents.length} requests=${requests.length} cards=${cards.length} project=${project?.id ?? "none"} runs=${project?.runs.length ?? 0} projectList=${projectList.length} chats=${chats.length} memories=${memories.length} prompts=${promptHistory.length}`)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            // Global prompt history (2026-10-13): the persisted
+            // list is the floor; anything sent this session is
+            // already in it (chat.send persists before the turn
+            // runs), so replacing is safe.
+            promptHistory: [...promptHistory],
             drawer: {
               ...model.session.drawer,
               homeData: { recents, requests, cards, project, projectList, chats, memories, journal },
@@ -2500,61 +2957,73 @@ export const update = (
 
     HomeDocumentLoaded: ({ path, content }) => {
       console.warn(`[diag] update: HomeDocumentLoaded path=${path} chars=${content.length}`)
+      const seed = docSpaceSeed(path, content)
+      return { model: openInDrawer(model, { id: seed.id, title: seed.title, content, path }) }
+    },
+
+    // Document links (2026-10-13, Kimler's spec): a library
+    // link clicked inside a document or a chat message. The
+    // load carries the click mode + containing space; placement
+    // happens when the content lands (LinkedDocumentLoaded).
+    DocLinkClicked: ({ path, mode, spaceId }) => {
+      console.warn(`[diag] update: DocLinkClicked path=${path} mode=${mode} space=${spaceId || "chat"}`)
+      return { model, commands: [LoadLinkedDocument({ path, mode, spaceId })] }
+    },
+
+    LinkedDocumentLoaded: ({ path, content, mode, spaceId }) => {
+      console.warn(
+        `[diag] update: LinkedDocumentLoaded path=${path} chars=${content.length} mode=${mode} space=${spaceId || "chat"}`
+      )
+      const seed = docSpaceSeed(path, content)
       const drawer = model.session.drawer
-      const at = Date.now()
-      const stem = (path.split("/").pop() ?? "document").replace(/\.md$/, "")
-      const id = stem.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "document"
-      const heading = content.split("\n").map((l) => l.trim()).find((l) => l.startsWith("# "))
-      const title = heading !== undefined ? heading.replace(/^#\s+/, "").slice(0, 80) : stem.replace(/-/g, " ")
-      const existing = drawer.spaces.find((s) => s.path === path) ?? drawer.spaces.find((s) => s.id === id)
-      if (existing !== undefined) {
-        const spaces = existing.content === content
-          ? drawer.spaces
-          : drawer.spaces.map((s) =>
-              s.id === existing.id
-                ? { ...s, title, content, savedContent: content, savedAt: at, saveError: undefined, history: pushVersion(s, title, content, at, "Opened") }
-                : s
-            )
-        return {
-          model: {
-            ...model,
-            session: {
-              ...model.session,
-              drawer: { ...drawer, open: true, activeSpaceId: existing.id, spaces },
-            },
-          },
+      // Already open anywhere: focus it (content refreshed) —
+      // a second space for the same document is never useful,
+      // whichever mode the click asked for.
+      const alreadyOpen = drawer.spaces.find((s) => s.path === path)
+      if (alreadyOpen !== undefined) {
+        return { model: openInDrawer(model, { id: seed.id, title: seed.title, content, path }) }
+      }
+      if (mode === "same" && spaceId !== "") {
+        const clicked = drawer.spaces.find((s) => s.id === spaceId)
+        const idTaken = drawer.spaces.some((s) => s.id === seed.id && s.id !== spaceId)
+        if (clicked !== undefined && !idTaken) {
+          // Replace the clicked space's document IN ITS SLOT:
+          // same position, the target's own identity — unless
+          // the space holds unsaved edits, which are never
+          // silently discarded (fall back to a normal open).
+          if (!spaceDirty(clicked)) {
+            const at = Date.now()
+            const replacement: DrawerSpace = {
+              id: seed.id,
+              title: seed.title,
+              kind: "preview",
+              content,
+              path,
+              savedContent: content,
+              savedAt: at,
+              history: [{ title: seed.title, content, at, label: "Opened" }],
+            }
+            const spaces = drawer.spaces.map((s) => (s.id === spaceId ? replacement : s))
+            console.warn(`[diag] update: doc link replaced space ${spaceId} with ${seed.id}`)
+            return {
+              model: {
+                ...model,
+                session: {
+                  ...model.session,
+                  drawer: { ...drawer, open: true, activeSpaceId: seed.id, spaces },
+                },
+              },
+            }
+          }
+          console.warn(`[diag] update: doc link kept dirty space ${spaceId}; opening alongside`)
         }
       }
-      if (drawer.spaces.length >= drawer.maxSpaces) {
-        console.warn(`[diag] update: HomeDocumentLoaded refused (maxSpaces) path=${path}`)
-        return { model }
-      }
-      const space: DrawerSpace = {
-        id,
-        title,
-        kind: "preview",
-        content,
-        path,
-        savedContent: content,
-        savedAt: at,
-        history: [{ title, content, at, label: "Opened" }],
-      }
-      return {
-        model: {
-          ...model,
-          session: {
-            ...model.session,
-            drawer: {
-              ...drawer,
-              open: true,
-              activeSpaceId: id,
-              spaces: [...drawer.spaces, space],
-              // Space count changed — reset height ratios to equal split.
-              heightRatios: {},
-            },
-          },
-        },
-      }
+      return { model: openInDrawer(model, { id: seed.id, title: seed.title, content, path }) }
+    },
+
+    LinkedDocumentLoadFailed: ({ path, reason }) => {
+      console.warn(`[diag] update: LinkedDocumentLoadFailed path=${path} reason=${reason}`)
+      return { model }
     },
 
     HomeDocumentLoadFailed: ({ path, reason }) => {
@@ -2927,6 +3396,35 @@ export const update = (
       }
     },
 
+    DocumentDropped: ({ id, name, text }) => {
+      // Max 4 documents per message; total staged text capped
+      // (the pump inlines at most ~20k chars into the turn —
+      // staging far beyond that would pretend she read it all).
+      const current = model.session.composer.documents ?? []
+      if (current.length >= 4) {
+        console.warn(`[diag] update: DocumentDropped refused (already 4 documents): ${name}`)
+        return { model }
+      }
+      const totalChars = current.reduce((n, d) => n + d.text.length, 0) + text.length
+      if (totalChars > 200_000) {
+        console.warn(`[diag] update: DocumentDropped refused (staged text would exceed 200k chars): ${name}`)
+        return { model }
+      }
+      console.warn(`[diag] update: DocumentDropped ${name} (${text.length} chars)`)
+      return {
+        model: {
+          ...model,
+          session: {
+            ...model.session,
+            composer: {
+              ...model.session.composer,
+              documents: [...current, { id, name, text }],
+            },
+          },
+        },
+      }
+    },
+
     AttachmentRemoved: ({ id }) => ({
       model: {
         ...model,
@@ -2935,6 +3433,7 @@ export const update = (
           composer: {
             ...model.session.composer,
             attachments: model.session.composer.attachments.filter((a) => a.id !== id),
+            documents: (model.session.composer.documents ?? []).filter((d) => d.id !== id),
           },
         },
       },

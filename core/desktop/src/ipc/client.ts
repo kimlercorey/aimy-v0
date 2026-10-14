@@ -16,7 +16,7 @@ import type { ChatImageWire, IpcCommand, IpcCommandResult, IpcEvent, WindowAimy 
 export interface IpcClient {
   readonly invoke: <C extends IpcCommand>(cmd: C) => Promise<IpcCommandResult<C>>
   readonly subscribe: (handler: (evt: IpcEvent) => void) => () => void
-  readonly chatStream: (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>) => ChatStreamHandle
+  readonly chatStream: (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>, promptText?: string) => ChatStreamHandle
 }
 
 /** A live chat stream: token deltas as an AsyncIterable, plus `cancel()`. */
@@ -42,7 +42,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
 
   type ChatIpcEvent = Extract<IpcEvent, { _tag: "chat.token" | "chat.done" | "chat.error" }>
 
-  const chatStream = (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>): ChatStreamHandle => {
+  const chatStream = (sessionId: string, input: string, images?: ReadonlyArray<ChatImageWire>, promptText?: string): ChatStreamHandle => {
     const queue: Array<ChatOutcome> = []
     /**
      * Chat events that arrived before the `chat.send` response told us our
@@ -102,7 +102,7 @@ export const createIpcClient = (aimy: WindowAimy): IpcClient => {
 
     // Kick off the stream. A rejected chat.send surfaces as a stream error
     // rather than a hang.
-    void invoke({ _tag: "chat.send", sessionId, input, ...(images !== undefined ? { images } : {}) }).then(
+    void invoke({ _tag: "chat.send", sessionId, input, ...(images !== undefined ? { images } : {}), ...(promptText !== undefined && promptText !== "" ? { promptText } : {}) }).then(
       (res) => {
         streamId = res.streamId
         // Replay pre-response events in arrival order. Synchronous, so no

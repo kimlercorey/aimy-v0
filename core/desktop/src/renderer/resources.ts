@@ -67,6 +67,7 @@ import { DevtoolsRelay, DevtoolsError, type DevtoolsRelayShape } from "../../../
 import { MessagingIpc, type MessagingIpcShape } from "../../../ui/src/messaging/seam.js"
 import { TtsIpc, type TtsIpcShape } from "../../../ui/src/voice/seam.js"
 import { DocsIpc, type DocsIpcShape } from "../../../ui/src/docs-seam.js"
+import { ChatIpc, type ChatIpcShape } from "../../../ui/src/chat-seam.js"
 import { HomeIpc, type HomeIpcShape } from "../../../ui/src/home-seam.js"
 import { HomedashIpc, type HomedashIpcShape } from "../../../ui/src/homedash-seam.js"
 import { MCP_BIND_HOST } from "../../../ui/src/devtools/model.js"
@@ -98,6 +99,27 @@ let isRecording = false
 // Pre-roll: 500ms of audio before the button press.
 const PREROLL_SAMPLES = 16000 * 0.5
 
+export type MicPreRollStatus = "warming" | "ready" | "unavailable"
+
+/**
+ * The pre-roll status lives in module state, not only in the
+ * `aimy:mic-preroll` event (2026-10-13 fix): the warmup runs at
+ * boot, often BEFORE the shell subscription registers its event
+ * listener, and a fire-and-forget event that fires into the void
+ * stranded the mic dot at amber "warming" for the whole session
+ * even when capture was running. The subscription now reads the
+ * current status via getMicPreRollStatus when it starts; the
+ * event still carries later changes.
+ */
+let micPreRollStatus: MicPreRollStatus = "warming"
+
+export const getMicPreRollStatus = (): MicPreRollStatus => micPreRollStatus
+
+const setMicPreRollStatus = (status: MicPreRollStatus): void => {
+  micPreRollStatus = status
+  window.dispatchEvent(new CustomEvent("aimy:mic-preroll", { detail: { status } }))
+}
+
 /**
  * Warm up mic capture in the background (2026-10-11): the pre-roll ring
  * buffer needs ~500ms of audio BEFORE the first PTT press. If capture only
@@ -109,11 +131,11 @@ export const warmupMicCapture = (): void => {
   ensureMicCapture().then(
     () => {
       console.log("[mic] warmupMicCapture: pre-roll active")
-      window.dispatchEvent(new CustomEvent("aimy:mic-preroll", { detail: { status: "ready" } }))
+      setMicPreRollStatus("ready")
     },
     (e) => {
       console.log(`[mic] warmupMicCapture: deferred (${e instanceof Error ? e.message : e})`)
-      window.dispatchEvent(new CustomEvent("aimy:mic-preroll", { detail: { status: "unavailable" } }))
+      setMicPreRollStatus("unavailable")
     }
   )
 }
@@ -771,12 +793,20 @@ const ipcDocs: DocsIpcShape = {
       .then((r) => ({ path: r.path, content: r.content })),
 }
 
+/** The chat session seam: session forks over `chat.branch`. */
+const ipcChat: ChatIpcShape = {
+  branchSession: (sessionId: string, userOrdinal: number) =>
+    getAimy()
+      .invoke({ _tag: "chat.branch", sessionId, userOrdinal })
+      .then((r) => ({ newSessionId: r.newSessionId })),
+}
+
 /** The drawer home panel seam: home.data / requestDetail / dismissRequest. */
 const ipcHome: HomeIpcShape = {
   getHomeData: () =>
     getAimy()
       .invoke({ _tag: "home.data" })
-      .then((r) => ({ recents: r.recents, requests: r.requests, cards: r.cards, project: r.project ?? null, projectList: r.projectList ?? [], chats: r.chats ?? [], memories: r.memories ?? [], journal: r.journal ?? null })),
+      .then((r) => ({ recents: r.recents, requests: r.requests, cards: r.cards, project: r.project ?? null, projectList: r.projectList ?? [], chats: r.chats ?? [], memories: r.memories ?? [], journal: r.journal ?? null, promptHistory: r.promptHistory ?? [] })),
   getRequestDetail: (capability: string, at: string) =>
     getAimy()
       .invoke({ _tag: "home.requestDetail", capability, at })
@@ -818,6 +848,22 @@ const ipcHomedash: HomedashIpcShape = {
     getAimy()
       .invoke({ _tag: "homedash.setSetting", widgetId, key, value })
       .then(() => undefined),
+  markNewsRead: (id: string) =>
+    getAimy()
+      .invoke({ _tag: "news.markRead", id })
+      .then(() => undefined),
+  getNewsArticle: (id: string) =>
+    getAimy()
+      .invoke({ _tag: "news.open", id })
+      .then((r) => ({ id: r.id, title: r.title, content: r.content, url: r.url })),
+  refreshNews: () =>
+    getAimy()
+      .invoke({ _tag: "news.refresh" })
+      .then(() => undefined),
+  dismissVoiceAlert: (id: string) =>
+    getAimy()
+      .invoke({ _tag: "news.dismissVoiceAlert", id })
+      .then((r) => r.voiceAlerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity }))),
 }
 
 /** The full IPC-backed service set for the composed app. */
@@ -835,6 +881,7 @@ export const ipcResources: Layer.Layer<AppServices> = Layer.mergeAll(
   Layer.succeed(MessagingIpc, ipcMessaging),
   Layer.succeed(TtsIpc, ipcTts),
   Layer.succeed(DocsIpc, ipcDocs),
+  Layer.succeed(ChatIpc, ipcChat),
   Layer.succeed(HomeIpc, ipcHome),
   Layer.succeed(HomedashIpc, ipcHomedash)
 )

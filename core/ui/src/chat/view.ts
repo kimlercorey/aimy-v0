@@ -179,11 +179,29 @@ const messageRow = (h: H, m: ChatMessage) => {
       }
     })
   }
+  // Stopped marker (2026-10-13): a reply he cut short says so
+  // in the footer, in the same register as the tool tags.
+  if (m.stopped === true) {
+    if (footerNodes.length > 0) footerNodes.push(", ")
+    footerNodes.push(h.span([h.Class("tool-tag tool-tag--stopped")], ["Stopped"]))
+  }
   // Copy source (2026-10-11): clean text for the copy button, hidden like
   // the narrate tooltip source. Voice tags stripped, code blocks kept.
   // Gesture (2026-10-12): click copies rich text (rendered HTML + this
   // text as the plain representation); long-click copies this markdown.
   const copyText = cleanCopyText(displayText)
+  // Documents (2026-10-13): file chips at the top of the bubble,
+  // beside any images — the record of what she was handed.
+  const documentNodes = (m.documents ?? []).length > 0
+    ? [h.div([h.Class("msg-documents")],
+        (m.documents ?? []).map((d) =>
+          h.span([h.Class("msg-document-chip"), h.Title(`${d.name} — ${d.text.length} characters`)], [
+            icon.fileText(h),
+            h.span([h.Class("msg-document-name")], [d.name]),
+          ]),
+        ),
+      )]
+    : []
   // Images (2026-10-11): thumbnails at the top of the bubble, click to expand.
   const imageNodes = (m.images ?? []).length > 0
     ? [h.div([h.Class("msg-images")],
@@ -198,16 +216,23 @@ const messageRow = (h: H, m: ChatMessage) => {
       )]
     : []
   // Wrapper: bubble + tool indicator below (outside the bubble).
-  return h.div([h.Class("msg-row"), h.Key(m.id)], [
+  return h.div([h.Class(`msg-row msg-id-${m.id}`), h.Key(m.id)], [
     h.div([h.Class(`msg ${roleClass(m.role)}`)], [
       h.span([h.Class("msg-role")], [roleLabel(m.role)]),
       h.button([h.Class("msg-copy-btn"), h.Title("Copy — click for rich text, long-click for markdown")], [icon.copy(h)]),
+      // Edit-and-resend (2026-10-13): his own messages carry a
+      // pencil. Inert like the copy button — the delegated
+      // click listener in main.ts dispatches aimy:edit-message.
+      ...(m.role === "user"
+        ? [h.button([h.Class("msg-edit-btn"), h.Title("Edit and resend — branches the chat at this message")], [icon.pencil(h)])]
+        : []),
       h.span([h.Class("msg-copy-source")], [copyText]),
       ...imageNodes,
+      ...documentNodes,
       body,
     ]),
     // Faint right-aligned tool indicator BELOW the bubble (Kimler spec 2026-10-10).
-    ...(toolsUsed.length > 0
+    ...(toolsUsed.length > 0 || m.stopped === true
       ? [h.div([h.Class("msg-tools")], footerNodes)]
       : []),
   ])
@@ -786,7 +811,7 @@ const voicePanelView = (h: H, session: SessionSlice) => {
     // --- Add Voice ---
     sections.push(
       h.div([h.Class("voice-section")], [
-        sectionHead("Add Voice", "Clone a voice from a short WAV recording. Chatterbox clones at synthesis time — no training needed."),
+        sectionHead("Add Voice", "Clone a voice from a short recording — WAV, MP3, FLAC, OGG or M4A; other formats are converted on the way in. Chatterbox clones at synthesis time — no training needed."),
         h.div([h.Class("voice-add-row")], [
           h.input([
             h.Class("voice-name-input"),
@@ -796,7 +821,7 @@ const voicePanelView = (h: H, session: SessionSlice) => {
           ]),
           h.button(
             [h.Class("voice-btn"), h.OnClick(Message.VoiceFilePickRequested({}))],
-            ["Choose WAV…"]
+            ["Choose audio…"]
           ),
         ]),
         h.button(
@@ -976,8 +1001,9 @@ export const composerKeySubmit = (
   streaming: boolean,
   key: string,
   shiftKey: boolean,
+  hasFiles = false,
 ): Option.Option<Message> => {
-  const submittable = !streaming && draft.trim().length > 0
+  const submittable = !streaming && (draft.trim().length > 0 || hasFiles)
   if (key !== "Enter" || shiftKey || !submittable) return Option.none()
   return Option.some(
     Message.UserSentMessage({
@@ -988,14 +1014,83 @@ export const composerKeySubmit = (
   )
 }
 
-const composerView = (h: H, session: SessionSlice) => {
+/**
+ * Prompt-history cycling (2026-10-13, Kimler): ArrowUp in an
+ * untouched (empty) composer recalls the previous prompt he
+ * sent; ArrowDown walks back toward the present, and stepping
+ * past the newest returns the empty box and ends the cycle.
+ * With text in the box the arrows keep their cursor job
+ * (multi-line editing) — cycling engages only from empty, and
+ * any typing ends it (ComposerDraftChanged rebuilds the
+ * composer without an index). While cycling the arrows own
+ * the keys even on multi-line recalls; one typed character
+ * hands them back to the caret. At the oldest entry ArrowUp
+ * declines, so the caret can still go home. Pure, like
+ * composerKeySubmit above.
+ */
+export const composerHistoryStep = (
+  history: ReadonlyArray<string>,
+  index: number,
+  draft: string,
+  streaming: boolean,
+  key: string,
+): Option.Option<Message> => {
+  if (streaming || history.length === 0) return Option.none()
+  if (key === "ArrowUp") {
+    if (index < 0) {
+      if (draft !== "") return Option.none()
+      const i = history.length - 1
+      return Option.some(Message.ComposerHistoryStepped({ text: history[i]!, index: i }))
+    }
+    if (index === 0) return Option.none()
+    const i = index - 1
+    return Option.some(Message.ComposerHistoryStepped({ text: history[i]!, index: i }))
+  }
+  if (key === "ArrowDown") {
+    if (index < 0) return Option.none()
+    if (index >= history.length - 1) {
+      return Option.some(Message.ComposerHistoryStepped({ text: "", index: -1 }))
+    }
+    const i = index + 1
+    return Option.some(Message.ComposerHistoryStepped({ text: history[i]!, index: i }))
+  }
+  return Option.none()
+}
+
+/** His own sent prompts, oldest to newest, consecutive
+ * duplicates collapsed so recall never appears stuck. */
+export const promptHistoryOf = (
+  messages: ReadonlyArray<{ role: string; text: string }>,
+): Array<string> => {
+  const out: Array<string> = []
+  for (const m of messages) {
+    if (m.role === "user" && m.text !== "" && out[out.length - 1] !== m.text) out.push(m.text)
+  }
+  return out
+}
+
+/**
+ * The composer (chat input row). Exported for the composed
+ * Home panel (2026-10-13): the dash is where work starts, so
+ * the Home destination mounts this under the stage — one
+ * composer implementation, two homes. Pure in the session.
+ */
+export const composerView = (h: H, session: SessionSlice) => {
   const draft = session.composer.draft
   const streaming = session.streaming.active
   const attachments = session.composer.attachments
-  // Attachment thumbnails (2026-10-11): staged images above the input.
-  const attachmentStrip = attachments.length > 0
-    ? h.div([h.Class("composer-attachments")],
-        attachments.map((a) =>
+  const documents = session.composer.documents ?? []
+  const historyIndex = session.composer.historyIndex ?? -1
+  // Global history (2026-10-13): the persisted cross-chat list
+  // once it has loaded; until then, this session's own prompts.
+  const promptHistory = session.promptHistory ?? promptHistoryOf(session.messages)
+  // Attachment strip (2026-10-11 images; 2026-10-13 documents):
+  // staged files above the input. Documents render as a chip
+  // with the file-text icon and the filename — the document
+  // equivalent of the photo thumbnail.
+  const attachmentStrip = attachments.length > 0 || documents.length > 0
+    ? h.div([h.Class("composer-attachments")], [
+        ...attachments.map((a) =>
           h.div([h.Class("composer-attachment"), h.Key(a.id)], [
             h.img([h.Class("composer-attachment-thumb"), h.Src(a.dataUrl), h.Alt(a.name)]),
             h.button(
@@ -1004,9 +1099,38 @@ const composerView = (h: H, session: SessionSlice) => {
             ),
           ]),
         ),
-      )
+        ...documents.map((d) =>
+          h.div([h.Class("composer-attachment composer-attachment-doc"), h.Key(d.id), h.Title(`${d.name} — ${d.text.length} characters`)], [
+            icon.fileText(h),
+            h.span([h.Class("composer-attachment-doc-name")], [d.name]),
+            h.button(
+              [h.Class("composer-attachment-remove"), h.Title("Remove"), h.OnClick(Message.AttachmentRemoved({ id: d.id }))],
+              ["\u00d7"],
+            ),
+          ]),
+        ),
+      ])
+    : null
+  // Editing strip (2026-10-13): while a past prompt is loaded
+  // for edit-and-resend, the composer says what sending will
+  // do (branch the chat at that message) and offers a cancel.
+  const editingTarget =
+    session.pendingEditFromId !== undefined
+      ? session.messages.find((m) => m.id === session.pendingEditFromId)
+      : undefined
+  const editingStrip = editingTarget !== undefined
+    ? h.div([h.Class("composer-editing")], [
+        h.span([h.Class("composer-editing-label")], [
+          `Editing an earlier message — sending branches the chat there: “${editingTarget.text.slice(0, 60)}${editingTarget.text.length > 60 ? "…" : ""}”`,
+        ]),
+        h.button(
+          [h.Class("composer-editing-cancel"), h.Title("Cancel edit"), h.OnClick(Message.UserMessageEditCancelled({}))],
+          ["Cancel"],
+        ),
+      ])
     : null
   return h.div([h.Class("composer-wrap")], [
+    ...(editingStrip ? [editingStrip] : []),
     ...(attachmentStrip ? [attachmentStrip] : []),
     h.div([h.Class("composer")], [
       h.div(
@@ -1022,20 +1146,35 @@ const composerView = (h: H, session: SessionSlice) => {
           h.Rows(1),
           h.OnInput((value) => Message.ComposerDraftChanged({ text: value })),
           h.OnKeyDownPreventDefault((key, modifiers) =>
-            composerKeySubmit(draft, streaming, key, modifiers.shiftKey),
+            composerKeySubmit(draft, streaming, key, modifiers.shiftKey, attachments.length > 0 || documents.length > 0).pipe(
+              Option.orElse(() =>
+                composerHistoryStep(promptHistory, historyIndex, draft, streaming, key),
+              ),
+            ),
           ),
         ]),
+        // Stop (2026-10-13): while she is generating, a stop
+        // button sits beside send. Inert — the delegated click
+        // listener in main.ts dispatches aimy:stop-stream (the
+        // same channel Esc uses).
+        ...(streaming
+          ? [h.button(
+              [h.Class("composer-stop-inside js-stop-stream"), h.Title("Stop generating (Esc)")],
+              [icon.stop(h)],
+            )]
+          : []),
         h.button(
           [
             h.Class("composer-send-inside"),
             h.Title("Send (Enter)"),
-            h.Disabled(streaming || (draft.trim().length === 0 && attachments.length === 0)),
+            h.Disabled(streaming || (draft.trim().length === 0 && attachments.length === 0 && documents.length === 0)),
             h.OnClick(
               Message.UserSentMessage({
                 id: `msg-${Date.now()}`,
                 text: draft,
                 at: Date.now(),
                 ...(attachments.length > 0 ? { images: attachments } : {}),
+                ...(documents.length > 0 ? { documents } : {}),
               }),
             ),
           ],

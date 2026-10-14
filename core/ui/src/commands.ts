@@ -33,6 +33,7 @@ import { Message } from "./messages.js"
 import { ChatImage } from "./model.js"
 import { TtsIpc } from "./voice/seam.js"
 import { DocsIpc } from "./docs-seam.js"
+import { ChatIpc } from "./chat-seam.js"
 import { HomeIpc } from "./home-seam.js"
 import { HomedashIpc } from "./homedash-seam.js"
 
@@ -444,6 +445,7 @@ export const LoadHomeData: CommandDefinitionWithArgs<
             chats: [...d.chats],
             memories: [...d.memories],
             journal: d.journal === null ? null : { ...d.journal },
+            promptHistory: [...(d.promptHistory ?? [])],
           })
         ),
         Effect.catch((e) =>
@@ -455,6 +457,10 @@ export const LoadHomeData: CommandDefinitionWithArgs<
 
 type HomeDocLoadedMsg = ReturnType<typeof Message.HomeDocumentLoaded>
 type HomeDocFailedMsg = ReturnType<typeof Message.HomeDocumentLoadFailed>
+type LinkedDocLoadedMsg = ReturnType<typeof Message.LinkedDocumentLoaded>
+type LinkedDocFailedMsg = ReturnType<typeof Message.LinkedDocumentLoadFailed>
+type EditBranchReadyMsg = ReturnType<typeof Message.EditBranchReady>
+type EditBranchFailedMsg = ReturnType<typeof Message.EditBranchFailed>
 
 /**
  * Open a document from the home panel's Continue list via the DocsIpc
@@ -480,6 +486,67 @@ export const LoadHomeDocument: CommandDefinitionWithArgs<
           Effect.succeed(
             Message.HomeDocumentLoadFailed({ path, reason: e.message.slice(0, 300) })
           )
+        )
+      )
+    }),
+})
+
+/**
+ * Document links (2026-10-13): load a linked library document
+ * through the same DocsIpc seam, carrying the click's mode and
+ * the containing space id so the update can place it — same
+ * space (replace) or new space (append) per Kimler's spec.
+ */
+export const LoadLinkedDocument: CommandDefinitionWithArgs<
+  "LoadLinkedDocument",
+  { path: typeof Schema.String; mode: typeof Schema.String; spaceId: typeof Schema.String },
+  Effect.Effect<LinkedDocLoadedMsg | LinkedDocFailedMsg, never, DocsIpc>
+> = defineCommand("LoadLinkedDocument", {
+  args: { path: Schema.String, mode: Schema.String, spaceId: Schema.String },
+  messages: [Message.LinkedDocumentLoaded, Message.LinkedDocumentLoadFailed],
+  execute: ({ path, mode, spaceId }) =>
+    Effect.gen(function* () {
+      const ipc = yield* DocsIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.loadDocument(path),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((r) =>
+          Message.LinkedDocumentLoaded({ path: r.path, content: r.content, mode, spaceId })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(
+            Message.LinkedDocumentLoadFailed({ path, reason: e.message.slice(0, 300) })
+          )
+        )
+      )
+    }),
+})
+
+/**
+ * Edit-and-resend (2026-10-13): fork the session at the edited
+ * prompt via the ChatIpc seam. Success lands as EditBranchReady
+ * (the update truncates the thread and replays the stashed
+ * send into the branch); failure as EditBranchFailed, which
+ * restores his text to the composer — never a silent loss.
+ */
+export const BranchForEdit: CommandDefinitionWithArgs<
+  "BranchForEdit",
+  { sessionId: typeof Schema.String; userOrdinal: typeof Schema.Number },
+  Effect.Effect<EditBranchReadyMsg | EditBranchFailedMsg, never, ChatIpc>
+> = defineCommand("BranchForEdit", {
+  args: { sessionId: Schema.String, userOrdinal: Schema.Number },
+  messages: [Message.EditBranchReady, Message.EditBranchFailed],
+  execute: ({ sessionId, userOrdinal }) =>
+    Effect.gen(function* () {
+      const ipc = yield* ChatIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.branchSession(sessionId, userOrdinal),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((r) => Message.EditBranchReady({ newSessionId: r.newSessionId })),
+        Effect.catch((e) =>
+          Effect.succeed(Message.EditBranchFailed({ reason: e.message.slice(0, 300) }))
         )
       )
     }),
@@ -630,6 +697,9 @@ export const AddHomeRecentToProject: CommandDefinitionWithArgs<
 
 type HomedashLoadedMsg = ReturnType<typeof Message.HomedashLoaded>
 type HomedashFailedMsg = ReturnType<typeof Message.HomedashFailed>
+type VoiceAlertsChangedMsg = ReturnType<typeof Message.VoiceAlertsChanged>
+type NewsArticleLoadedMsg = ReturnType<typeof Message.NewsArticleLoaded>
+type NewsArticleFailedMsg = ReturnType<typeof Message.NewsArticleFailed>
 
 /**
  * Load the HomeDash state (enabled widgets, manifests, effective
@@ -708,6 +778,144 @@ export const ApplyHomedashSetting: CommandDefinitionWithArgs<
         ),
         Effect.catch((e) =>
           Effect.succeed(Message.HomedashFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+/**
+ * Mark one GlobeNews event read, then reload — same discipline as
+ * ApplyHomedashSetting: the store is the truth, the reload carries
+ * the read flag to the globe (cyan ring) and the feed (dimmed row).
+ */
+export const MarkNewsRead: CommandDefinitionWithArgs<
+  "MarkNewsRead",
+  { correlationId: typeof Schema.String; id: typeof Schema.String },
+  Effect.Effect<HomedashLoadedMsg | HomedashFailedMsg, never, HomedashIpc>
+> = defineCommand("MarkNewsRead", {
+  args: { correlationId: Schema.String, id: Schema.String },
+  messages: [Message.HomedashLoaded, Message.HomedashFailed],
+  execute: (args) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: async () => {
+          await ipc.markNewsRead(args.id)
+          return ipc.getHomedash()
+        },
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((d) =>
+          Message.HomedashLoaded({
+            widgets: d.widgets.map((w) => ({
+              ...w,
+              settings: w.settings.map((s) => ({ ...s })),
+            })),
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomedashFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+/** GlobeNews (2026-10-13): run the scan now, then reload the dash (the store is the truth). */
+export const RefreshNews: CommandDefinitionWithArgs<
+  "RefreshNews",
+  { correlationId: typeof Schema.String },
+  Effect.Effect<HomedashLoadedMsg | HomedashFailedMsg, never, HomedashIpc>
+> = defineCommand("RefreshNews", {
+  args: { correlationId: Schema.String },
+  messages: [Message.HomedashLoaded, Message.HomedashFailed],
+  execute: () =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: async () => {
+          await ipc.refreshNews()
+          return ipc.getHomedash()
+        },
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((d) =>
+          Message.HomedashLoaded({
+            widgets: d.widgets.map((w) => ({
+              ...w,
+              settings: w.settings.map((s) => ({ ...s })),
+            })),
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.HomedashFailed({ reason: e.message.slice(0, 300) }))
+        )
+      )
+    }),
+})
+
+/**
+ * Voice alerts (2026-10-13, Threat Channel §8): silence one
+ * repeating alert. The response carries the still-active set;
+ * on failure the command logs and re-reads the dash so the
+ * strip keeps telling the truth (the alert is still active).
+ */
+export const DismissVoiceAlert: CommandDefinitionWithArgs<
+  "DismissVoiceAlert",
+  { correlationId: typeof Schema.String; id: typeof Schema.String },
+  Effect.Effect<VoiceAlertsChangedMsg, never, HomedashIpc>
+> = defineCommand("DismissVoiceAlert", {
+  args: { correlationId: Schema.String, id: Schema.String },
+  messages: [Message.VoiceAlertsChanged],
+  execute: (args) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.dismissVoiceAlert(args.id),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((alerts) =>
+          Message.VoiceAlertsChanged({
+            alerts: alerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity })),
+          })
+        ),
+        Effect.catch((e) =>
+          Effect.gen(function* () {
+            console.error(`[aimy] voice alert dismiss failed: ${e.message}`)
+            const d = yield* Effect.tryPromise({
+              try: () => ipc.getHomedash(),
+              catch: () => new Error("homedash reload failed"),
+            }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+            const alerts =
+              d?.widgets.find((w) => w.voiceAlerts !== undefined)?.voiceAlerts ?? []
+            return Message.VoiceAlertsChanged({
+              alerts: alerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity })),
+            })
+          })
+        )
+      )
+    }),
+})
+
+/** GlobeNews (2026-10-13): fetch one event's article for the drawer. */
+export const LoadNewsArticle: CommandDefinitionWithArgs<
+  "LoadNewsArticle",
+  { correlationId: typeof Schema.String; id: typeof Schema.String },
+  Effect.Effect<NewsArticleLoadedMsg | NewsArticleFailedMsg, never, HomedashIpc>
+> = defineCommand("LoadNewsArticle", {
+  args: { correlationId: Schema.String, id: Schema.String },
+  messages: [Message.NewsArticleLoaded, Message.NewsArticleFailed],
+  execute: (args) =>
+    Effect.gen(function* () {
+      const ipc = yield* HomedashIpc
+      return yield* Effect.tryPromise({
+        try: () => ipc.getNewsArticle(args.id),
+        catch: (e) => (e instanceof Error ? e : new Error(String(e))),
+      }).pipe(
+        Effect.map((a) =>
+          Message.NewsArticleLoaded({ id: a.id, title: a.title, content: a.content, url: a.url })
+        ),
+        Effect.catch((e) =>
+          Effect.succeed(Message.NewsArticleFailed({ id: args.id, reason: e.message.slice(0, 300) }))
         )
       )
     }),

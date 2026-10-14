@@ -28,6 +28,21 @@ export const ChatImage = Schema.Struct({
 })
 export type ChatImage = typeof ChatImage.Type
 
+/**
+ * A document attached to a message (2026-10-13): a markdown (or
+ * plain-text) file dropped onto the chat. Unlike an image, its
+ * payload IS its text — the pump inlines the text into the turn's
+ * input, so she reads exactly what the chip names.
+ */
+export const ChatDocument = Schema.Struct({
+  id: Schema.String,
+  /** Original filename for display. */
+  name: Schema.String,
+  /** Full file text (capped at drop time in the renderer). */
+  text: Schema.String,
+})
+export type ChatDocument = typeof ChatDocument.Type
+
 /** One transcript row. `role: "tool"` rows are rendered from observed tool calls. */
 export const ChatMessage = Schema.Struct({
   id: Schema.String,
@@ -71,6 +86,10 @@ export const ChatMessage = Schema.Struct({
    * Rendered as thumbnails in the bubble; sent to vision-capable models.
    */
   images: Schema.optional(Schema.Array(ChatImage)),
+  /** Documents attached to this message (2026-10-13). */
+  documents: Schema.optional(Schema.Array(ChatDocument)),
+  /** True when this reply was cut short by his stop (2026-10-13). */
+  stopped: Schema.optional(Schema.Boolean),
 })
 export type ChatMessage = typeof ChatMessage.Type
 
@@ -266,6 +285,31 @@ export const HomedashSetting = Schema.Struct({
 })
 export type HomedashSetting = typeof HomedashSetting.Type
 
+/** One world event carried by the GlobeNews widget (2026-10-13). */
+export const HomedashNewsEvent = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  category: Schema.String,
+  source: Schema.String,
+  url: Schema.String,
+  atMs: Schema.Number,
+  lat: Schema.optional(Schema.Number),
+  lon: Schema.optional(Schema.Number),
+  place: Schema.optional(Schema.String),
+  summary: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+  read: Schema.Boolean,
+})
+export type HomedashNewsEvent = typeof HomedashNewsEvent.Type
+
+/** One active voice alert carried by the GlobeNews widget (2026-10-13, Threat Channel §8). */
+export const HomedashVoiceAlert = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  severity: Schema.String,
+})
+export type HomedashVoiceAlert = typeof HomedashVoiceAlert.Type
+
 /** One enabled HomeDash widget with effective settings (2026-10-13). */
 export const HomedashWidget = Schema.Struct({
   id: Schema.String,
@@ -274,6 +318,9 @@ export const HomedashWidget = Schema.Struct({
   version: Schema.String,
   priority: Schema.Number,
   settings: Schema.Array(HomedashSetting),
+  news: Schema.optional(Schema.Array(HomedashNewsEvent)),
+  newsUpdatedAt: Schema.optional(Schema.Number),
+  voiceAlerts: Schema.optional(Schema.Array(HomedashVoiceAlert)),
 })
 export type HomedashWidget = typeof HomedashWidget.Type
 
@@ -345,6 +392,27 @@ export const DrawerState = Schema.Struct({
    * HomeDash section of Settings.
    */
   dash: Schema.optional(HomedashData),
+  /**
+   * GlobeNews feed region (2026-10-13): "usa" filters the feed
+   * to US-located events; absent or "world" shows everything.
+   * View state only — the globe keeps showing the world.
+   */
+  newsRegion: Schema.optional(Schema.String),
+  /**
+   * GlobeNews focus (2026-10-13, Threat Channel §5/§7): the event
+   * the intel desk and the broadcast lower-third are showing.
+   * kind is "selected" (the user picked it) or "featured" (the
+   * director flew to it); absent = nothing focused.
+   */
+  newsFocusId: Schema.optional(Schema.String),
+  newsFocusKind: Schema.optional(Schema.String),
+  /**
+   * Voice alerts currently repeating (2026-10-13, Threat
+   * Channel §8): mirrored from the main-process announcer via
+   * the news.voiceAlerts event + homedash.list; the desk and
+   * the feed render the silence strip from this.
+   */
+  voiceAlerts: Schema.optional(Schema.Array(HomedashVoiceAlert)),
   /** Project UI (2026-10-12): the new-project form is open. */
   projectFormOpen: Schema.optional(Schema.Boolean),
   /** Project UI: new-project form draft fields. */
@@ -512,11 +580,33 @@ export const SessionSlice = Schema.Struct({
     })
   ),
   streaming: StreamingState,
+  /** His sent prompts across all chats (2026-10-13: global composer
+   * history, seeded from the persisted store on home-data load and
+   * appended locally on every send). Absent until the first load. */
+  promptHistory: Schema.optional(Schema.Array(Schema.String)),
+  /** Edit-and-resend (2026-10-13): the user message he chose to
+   * edit; the composer holds its text until he sends or cancels. */
+  pendingEditFromId: Schema.optional(Schema.String),
+  /** A send stashed while its session branch is created. */
+  pendingEditSend: Schema.optional(
+    Schema.Struct({
+      id: Schema.String,
+      fromId: Schema.String,
+      text: Schema.String,
+      at: Schema.Number,
+      images: Schema.optional(Schema.Array(ChatImage)),
+      documents: Schema.optional(Schema.Array(ChatDocument)),
+    })
+  ),
   contextMeter: ContextMeter,
   composer: Schema.Struct({
     draft: Schema.String,
     /** Images staged for the next message (2026-10-11: drag-and-drop). */
     attachments: Schema.Array(ChatImage),
+    /** Documents staged for the next message (2026-10-13: drag-and-drop). */
+    documents: Schema.optional(Schema.Array(ChatDocument)),
+    /** Prompt-history cycling position (2026-10-13): absent = not cycling. */
+    historyIndex: Schema.optional(Schema.Number),
   }),
   listWindow: ListWindow,
   /**
@@ -817,7 +907,17 @@ export const initialModel = (): Model => {
       ceiling: 64000,
       compactionThreshold: 56000,
     },
-    composer: { draft: "", attachments: [] },
+    composer: {
+      // Draft persistence (2026-10-13): a half-typed prompt is
+      // restored after a relaunch. ComposerDraftChanged keeps
+      // the stored copy current; sends clear it.
+      draft: (() => {
+        try {
+          return localStorage.getItem("aimy.composerDraft") ?? ""
+        } catch { return "" }
+      })(),
+      attachments: [],
+    },
     // Anchor starts at max: visibleWindow clamps to newest message.
     // (Column-reverse layout: we want the bottom/newest visible on load.)
     listWindow: { anchorIndex: Number.MAX_SAFE_INTEGER, overscan: 8 },

@@ -23,12 +23,14 @@ import {
 } from "../../../ui/src/composed/index.js"
 
 import { getAimy } from "./ipc.js"
+import { classifyHref, modeForClick, spaceIdOf } from "./doc-links.js"
 import { ipcResources, warmupMicCapture } from "./resources.js"
 import { subscriptions, stopAllAudio } from "./subscriptions.js"
 import { startMermaid } from "./mermaid.js"
-import { startMirrorField } from "./mirror-field.js"
+import { startMirrorField } from "./widgets/globenews/engine.js"
 import { startMindMap } from "./mindmap.js"
 import { startHomedashEdit } from "./homedash-edit.js"
+import { startNewsLink } from "./widgets/globenews/news-link.js"
 
 const escapeHtml = (raw: string): string =>
   raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -72,6 +74,8 @@ const boot = (): void => {
   // the chat empty state — counter-rotating pyramids, as above/so below.
   startMirrorField()
   startMindMap()
+  // GlobeNews feed↔globe link overlay (2026-10-13).
+  startNewsLink()
   // HomeDash in-place editor (2026-10-13): Cmd+right-click the dash.
   startHomedashEdit()
 
@@ -84,6 +88,13 @@ const boot = (): void => {
   // them to the next message. Downscaled client-side to max 1568px.
   const isImageFile = (f: File): boolean =>
     f.type === "image/png" || f.type === "image/jpeg" || f.type === "image/gif" || f.type === "image/webp"
+  // Document drop (2026-10-13, Kimler): markdown (and plain-text)
+  // files can be handed to her like photos. The file's TEXT is the
+  // payload — read here via the File API, so any file he drops is
+  // fair game (no planning/docs folder restriction: he handed it
+  // over explicitly). Extension is the test; some systems report
+  // an empty MIME type for .md.
+  const isDocumentFile = (f: File): boolean => /\.(md|markdown|txt)$/i.test(f.name)
   const downscaleImage = (file: File): Promise<{ dataUrl: string; mimeType: string }> =>
     new Promise((resolve, reject) => {
       // Use FileReader (data: URL) instead of blob: URL — the CSP img-src
@@ -125,7 +136,7 @@ const boot = (): void => {
     if (!dropOverlay) {
       dropOverlay = document.createElement("div")
       dropOverlay.className = "drop-overlay"
-      dropOverlay.textContent = "Drop images"
+      dropOverlay.textContent = "Drop images or documents"
       document.body.appendChild(dropOverlay)
     }
   })
@@ -135,16 +146,11 @@ const boot = (): void => {
       dropOverlay = null
     }
   })
-  document.addEventListener("drop", (e) => {
-    if (dropOverlay) { dropOverlay.remove(); dropOverlay = null }
-    if (!e.dataTransfer) return
-    e.preventDefault()
-    const files = [...e.dataTransfer.files].filter(isImageFile)
-    console.log(`[aimy] drop: ${e.dataTransfer.files.length} files, ${files.length} images`)
-    if (files.length === 0) return
-    // Downscale, then dispatch a DOM event. The `imageDrop` subscription
-    // in subscriptions.ts picks it up and yields the ImageDropped message
-    // through the proper foldkit channel (no app-object internals).
+  // Downscale, then dispatch a DOM event. The `imageDrop` subscription
+  // in subscriptions.ts picks it up and yields the ImageDropped message
+  // through the proper foldkit channel (no app-object internals).
+  // Shared by drag-and-drop and paste (2026-10-13).
+  const stageImageFiles = (files: Array<File>, source: string): void => {
     void (async () => {
       for (const file of files.slice(0, 4)) {
         try {
@@ -156,10 +162,97 @@ const boot = (): void => {
             },
           }))
         } catch (err) {
-          console.error("[aimy] image drop failed:", err)
+          console.error(`[aimy] image ${source} failed:`, err)
         }
       }
     })()
+  }
+  // Read the file's text, then dispatch. The `documentDrop`
+  // subscription in subscriptions.ts yields DocumentDropped
+  // through the foldkit channel. Raw text capped at 200,000
+  // chars at read time; the turn inlines at most ~20,000 (with a
+  // truncation marker) — staging beyond the cap is refused in
+  // update.ts, never silently dropped.
+  const stageDocumentFiles = (files: Array<File>, source: string): void => {
+    void (async () => {
+      for (const file of files.slice(0, 4)) {
+        try {
+          const raw = await file.text()
+          const text = raw.slice(0, 200_000)
+          if (raw.length > text.length) {
+            console.warn(`[aimy] document ${source}: ${file.name} is ${raw.length} chars — staged the first 200,000`)
+          }
+          console.log(`[aimy] document ${source}: ${file.name} (${text.length} chars)`)
+          window.dispatchEvent(new CustomEvent("aimy:document-dropped", {
+            detail: {
+              id: `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              name: file.name, text,
+            },
+          }))
+        } catch (err) {
+          console.error(`[aimy] document ${source} failed:`, err)
+        }
+      }
+    })()
+  }
+  document.addEventListener("drop", (e) => {
+    if (dropOverlay) { dropOverlay.remove(); dropOverlay = null }
+    if (!e.dataTransfer) return
+    e.preventDefault()
+    const all = [...e.dataTransfer.files]
+    const images = all.filter(isImageFile)
+    const documents = all.filter((f) => !isImageFile(f) && isDocumentFile(f))
+    console.log(`[aimy] drop: ${all.length} files, ${images.length} images, ${documents.length} documents`)
+    if (images.length === 0 && documents.length === 0) return
+    if (images.length > 0) stageImageFiles(images, "drop")
+    if (documents.length > 0) stageDocumentFiles(documents, "drop")
+  })
+  // Image paste (2026-10-13, Kimler): Cmd+V with an image on the
+  // clipboard stages it as an attachment — but only when the
+  // paste lands in the chat composer. A paste anywhere else
+  // (the drawer editor, another input) keeps its normal
+  // meaning, and a text-only paste is never touched.
+  document.addEventListener("paste", (e) => {
+    const target = e.target as HTMLElement | null
+    if (target === null || target.closest(".composer") === null) return
+    if (!e.clipboardData) return
+    const files = [...e.clipboardData.files].filter(isImageFile)
+    console.log(`[aimy] paste: ${e.clipboardData.files.length} files, ${files.length} images`)
+    if (files.length === 0) return
+    e.preventDefault()
+    stageImageFiles(files, "paste")
+  })
+
+  // Stop generation (2026-10-13): Esc anywhere, or the
+  // composer's stop button, dispatches aimy:stop-stream; the
+  // subscriptions pump turns it into StreamStopRequested. The
+  // shell no-ops when nothing is streaming, so Esc keeps its
+  // other meanings when she is idle.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      window.dispatchEvent(new CustomEvent("aimy:stop-stream"))
+    }
+  })
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement | null
+    if (target === null) return
+    if (target.closest(".js-stop-stream") !== null) {
+      window.dispatchEvent(new CustomEvent("aimy:stop-stream"))
+      return
+    }
+    // Edit-and-resend (2026-10-13): the pencil on one of his
+    // bubbles. The row carries the message id as a class.
+    if (target.closest(".msg-edit-btn") !== null) {
+      const row = target.closest(".msg-row")
+      const idClass = row === null
+        ? undefined
+        : [...row.classList].find((c) => c.startsWith("msg-id-"))
+      if (idClass !== undefined) {
+        window.dispatchEvent(new CustomEvent("aimy:edit-message", {
+          detail: JSON.stringify({ id: idClass.slice("msg-id-".length) }),
+        }))
+      }
+    }
   })
 
   // Version badge (lower right) — shows git hash + build time
@@ -456,18 +549,23 @@ const boot = (): void => {
     }
   })
 
-  // Intercept markdown link clicks: open http/https in OS browser, not in-app.
+  // Intercept markdown link clicks (2026-10-13): http/https
+  // opens in the OS browser, as before. Library links — the
+  // documents AImy writes and links between (planning/…, docs/…,
+  // bare *.md) — follow Kimler's modes: plain click opens in
+  // the same drawer space, Cmd-click in a new space (both via
+  // the aimy:doc-link event the subscriptions pump turns into
+  // shell messages), Cmd-Opt-click opens the file in the OS
+  // default app. Anything else is swallowed: the webview never
+  // navigates away from the app.
   document.addEventListener("click", async (e) => {
     const target = e.target as HTMLElement
     const anchor = target.closest(".markdown-body a") as HTMLAnchorElement | null
     if (!anchor) return
     const href = anchor.getAttribute("href")
     if (!href) return
-    if (href.startsWith("aimy://")) {
-      e.preventDefault()
-      return
-    }
-    if (href.startsWith("http://") || href.startsWith("https://")) {
+    const kind = classifyHref(href)
+    if (kind === "external") {
       e.preventDefault()
       try {
         const aimy = getAimy()
@@ -475,6 +573,31 @@ const boot = (): void => {
       } catch (err) {
         console.error("[aimy] failed to open external link:", err)
       }
+      return
+    }
+    if (kind === "internal") {
+      e.preventDefault()
+      let path = href
+      try {
+        path = decodeURIComponent(href)
+      } catch {
+        // Keep the raw href when it is not valid percent-encoding.
+      }
+      const mode = modeForClick(e.metaKey, e.altKey)
+      if (mode === "external") {
+        try {
+          const aimy = getAimy()
+          await aimy.invoke({ _tag: "docs.openExternal", path })
+        } catch (err) {
+          console.error("[aimy] failed to open document externally:", err)
+        }
+        return
+      }
+      window.dispatchEvent(
+        new CustomEvent("aimy:doc-link", {
+          detail: JSON.stringify({ path, mode, spaceId: spaceIdOf(anchor) }),
+        })
+      )
       return
     }
     e.preventDefault()

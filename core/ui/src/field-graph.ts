@@ -318,3 +318,114 @@ export const buildFieldGraph = (home: FieldHomeInput | undefined, nowMs: number 
   const keptIds = new Set(kept.map((n) => n.id))
   return { nodes: kept, edges: edges.filter((e) => keptIds.has(e.a) && keptIds.has(e.b)) }
 }
+
+/**
+ * GlobeNews USA filter (Kimler, 2026-10-13): an event counts as US
+ * news when it carries coordinates inside the CONUS, Alaska, or
+ * Hawaii boxes. Coordinate-less events are never US (the feed
+ * cannot honestly place them). Place names veto the boxes for
+ * the gazetteer's Canadian hits (Toronto/Ottawa sit inside the
+ * CONUS box on latitude/longitude alone).
+ */
+const NON_US_PLACE_RE = /\b(Canada|Ottawa|Toronto|Vancouver|Montreal|Calgary|Edmonton|Winnipeg|Quebec|Québec)\b/
+
+export const isUsEvent = (e: {
+  lat?: number | undefined
+  lon?: number | undefined
+  place?: string | undefined
+}): boolean => {
+  const { lat, lon } = e
+  if (lat === undefined || lon === undefined) return false
+  if (e.place !== undefined && NON_US_PLACE_RE.test(e.place)) return false
+  return (
+    (lat >= 24.5 && lat <= 49.5 && lon >= -125 && lon <= -66.5) ||
+    (lat >= 51 && lat <= 71.5 && lon >= -170 && lon <= -129.5) ||
+    (lat >= 18.5 && lat <= 22.5 && lon >= -161 && lon <= -154.5)
+  )
+}
+
+// ── Threat Channel scopes (design §2, frozen 2026-10-13) ────
+// Global / National / Local, defaulting to Local. Local = within
+// LOCAL_RADIUS_KM of a watched place; Tucson ranks first.
+
+export interface WatchedPlace {
+  readonly name: string
+  readonly lat: number
+  readonly lon: number
+}
+
+export const WATCHED_PLACES: ReadonlyArray<WatchedPlace> = [
+  { name: "Tucson", lat: 32.2, lon: -110.9 },
+  { name: "Tall Timbers", lat: 38.3, lon: -76.7 },
+]
+
+export const LOCAL_RADIUS_KM = 150
+
+export const distanceKm = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number => {
+  const rad = Math.PI / 180
+  const dLat = (lat2 - lat1) * rad
+  const dLon = (lon2 - lon1) * rad
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+export const nearestWatchedPlace = (e: {
+  lat?: number | undefined
+  lon?: number | undefined
+}): { readonly place: string; readonly km: number } | undefined => {
+  if (e.lat === undefined || e.lon === undefined) return undefined
+  let best: { place: string; km: number } | undefined
+  for (const p of WATCHED_PLACES) {
+    const km = distanceKm(e.lat, e.lon, p.lat, p.lon)
+    if (best === undefined || km < best.km) best = { place: p.name, km }
+  }
+  return best
+}
+
+export const isLocalEvent = (e: {
+  lat?: number | undefined
+  lon?: number | undefined
+}): boolean => {
+  const near = nearestWatchedPlace(e)
+  return near !== undefined && near.km <= LOCAL_RADIUS_KM
+}
+
+/**
+ * Initial great-circle bearing from point 1 to point 2, degrees
+ * clockwise from north, normalised to [0, 360). The intel desk's
+ * facts strip speaks in bearings ("42 km NE of Tucson").
+ */
+export const bearingDeg = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const rad = Math.PI / 180
+  const dLon = (lon2 - lon1) * rad
+  const y = Math.sin(dLon) * Math.cos(lat2 * rad)
+  const x =
+    Math.cos(lat1 * rad) * Math.sin(lat2 * rad) -
+    Math.sin(lat1 * rad) * Math.cos(lat2 * rad) * Math.cos(dLon)
+  return ((Math.atan2(y, x) / rad) + 360) % 360
+}
+
+const COMPASS8 = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const
+
+/** Eight-point compass label for a bearing in degrees. */
+export const compass8 = (deg: number): string =>
+  COMPASS8[Math.round((((deg % 360) + 360) % 360) / 45) % 8] ?? "N"
+
+/** Bearing from the nearest watched place to an event, for the desk facts strip. */
+export const bearingFromWatched = (e: {
+  lat?: number | undefined
+  lon?: number | undefined
+}): { readonly place: string; readonly km: number; readonly bearing: string } | undefined => {
+  const near = nearestWatchedPlace(e)
+  if (near === undefined || e.lat === undefined || e.lon === undefined) return undefined
+  const place = WATCHED_PLACES.find((p) => p.name === near.place)
+  if (place === undefined) return undefined
+  return { place: near.place, km: near.km, bearing: compass8(bearingDeg(place.lat, place.lon, e.lat, e.lon)) }
+}

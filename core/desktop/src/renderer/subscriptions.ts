@@ -27,7 +27,7 @@
  */
 import { Effect, Queue, Schema, Stream } from "effect"
 import { make as makeSubscriptions } from "foldkit/subscription"
-import { setupPushToTalk } from "./resources.js"
+import { getMicPreRollStatus, setupPushToTalk } from "./resources.js"
 
 import type { DialVector } from "../../../asc-engine/index.js"
 import {
@@ -87,9 +87,10 @@ const pumpChat = (
   input: string,
   interrupted: boolean,
   images?: ReadonlyArray<{ dataUrl: string; mimeType: string; name: string }>,
+  promptText?: string,
 ): Stream.Stream<AppMessage> => {
   const client = getClient()
-  const handle = client.chatStream(sessionId, interrupted ? INTERRUPTED_MARKER + input : input, images)
+  const handle = client.chatStream(sessionId, interrupted ? INTERRUPTED_MARKER + input : input, images, promptText)
   const sanitizer = new ChunkSanitizer()
   let text = ""
   let completedNaturally = false
@@ -461,6 +462,13 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
             case "banner.published":
               push(AppMessage.GotBanners({ message: BannersMessage.BannersRefreshRequested() }))
               break
+            case "news.voiceAlerts":
+              push(
+                AppMessage.GotShell({
+                  message: ShellMessage.VoiceAlertsChanged({ alerts: evt.alerts }),
+                })
+              )
+              break
             case "asc.dialsUpdated":
               push(ascDialsMessage(evt.dials))
               break
@@ -575,6 +583,37 @@ const pumpIpcEvents = (): Stream.Stream<AppMessage> =>
  */
 const pumpInputCache = new Map<string, string>()
 
+/**
+ * Documents attached to a message (2026-10-13) are inlined into
+ * the turn's input after his words — she reads the file because
+ * its text is in front of her, and the framing says so plainly.
+ * Total inlined text is capped at ~20,000 characters (the same
+ * budget the drawer-space inlining uses); a document that does
+ * not fit is truncated WITH a visible marker naming how much
+ * was shown — never silently cut.
+ */
+export const DOCUMENT_INLINE_CAP = 20000
+export const documentsSuffix = (
+  documents: ReadonlyArray<{ readonly name: string; readonly text: string }> | undefined,
+): string => {
+  if (documents === undefined || documents.length === 0) return ""
+  let out = ""
+  for (const d of documents) {
+    const header = `\n\n--- Attached document: ${d.name} ---\n`
+    const room = DOCUMENT_INLINE_CAP - out.length - header.length
+    if (room <= 0) {
+      out += `\n\n--- Attached document: ${d.name} omitted — the 20,000-character attachment limit was already reached ---`
+      continue
+    }
+    if (d.text.length > room) {
+      out += header + d.text.slice(0, room) + `\n[document truncated: showing ${room} of ${d.text.length} characters]`
+    } else {
+      out += header + d.text
+    }
+  }
+  return out
+}
+
 export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((entry) => ({
   chatPump: entry(
     {
@@ -589,12 +628,13 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
           name: Schema.String,
         })
       ),
+      promptText: Schema.String,
     },
     {
       modelToDependencies: (model) => {
         const streaming = model.shell.session.streaming
         if (!streaming.active)
-          return { streamId: "", sessionId: "", input: "", interrupted: false, images: [] }
+          return { streamId: "", sessionId: "", input: "", interrupted: false, images: [], promptText: "" }
         // The user message whose id armed this stream (UserSentMessage's id
         // is the SendToInference correlationId is the StreamStarted streamId).
         const userMessage = model.shell.session.messages.find(
@@ -613,7 +653,7 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
         // the turn twice).
         let input = pumpInputCache.get(streaming.streamId)
         if (input === undefined) {
-          input = userMessage !== undefined ? uiStateMarker(model.shell) + userMessage.text : ""
+          input = userMessage !== undefined ? uiStateMarker(model.shell) + userMessage.text + documentsSuffix(userMessage.documents) : ""
           if (userMessage !== undefined) {
             pumpInputCache.set(streaming.streamId, input)
             for (const k of Array.from(pumpInputCache.keys())) {
@@ -631,10 +671,11 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
             mimeType: img.mimeType,
             name: img.name,
           })),
+          promptText: userMessage?.text ?? "",
         }
       },
-      dependenciesToStream: ({ streamId, sessionId, input, interrupted, images }) =>
-        streamId === "" ? Stream.empty : pumpChat(streamId, sessionId, input, interrupted, images)
+      dependenciesToStream: ({ streamId, sessionId, input, interrupted, images, promptText }) =>
+        streamId === "" ? Stream.empty : pumpChat(streamId, sessionId, input, interrupted, images, promptText)
     }
   ),
   ipcEvents: entry(
@@ -880,6 +921,13 @@ export const subscriptions = makeSubscriptions<AppModel, AppMessage, never>()((e
       dependenciesToStream: () => pumpImageDrop(),
     }
   ),
+  documentDrop: entry(
+    { active: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ active: true }),
+      dependenciesToStream: () => pumpDocumentDrop(),
+    }
+  ),
   // Mic pre-roll status (2026-10-11): listens for the `aimy:mic-preroll`
   // DOM event (dispatched by warmupMicCapture) and yields MicPreRollChanged.
   // Always active.
@@ -965,6 +1013,46 @@ const pumpImageDrop = (): Stream.Stream<AppMessage> => {
           Effect.sync(() => {
             window.removeEventListener("aimy:image-dropped", onImageDropped)
             console.log("[image] drop listener removed")
+          })
+        )
+        return queue
+      })
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue)))
+  )
+}
+
+/**
+ * Listens for `aimy:document-dropped` CustomEvents (dispatched by
+ * the drop handler in main.ts after reading the file's text) and
+ * yields DocumentDropped messages (2026-10-13). Mirrors
+ * pumpImageDrop.
+ */
+const pumpDocumentDrop = (): Stream.Stream<AppMessage> => {
+  console.log("[aimy] documentDrop subscription starting")
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<AppMessage>()
+        console.log("[aimy] documentDrop listener attached")
+        const onDocumentDropped = (e: Event) => {
+          const detail = (e as CustomEvent).detail as {
+            id: string
+            name: string
+            text: string
+          }
+          console.log(`[aimy] document dropped: ${detail.name} (${detail.text.length} chars)`)
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.DocumentDropped(detail),
+            })
+          )
+        }
+        window.addEventListener("aimy:document-dropped", onDocumentDropped)
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            window.removeEventListener("aimy:document-dropped", onDocumentDropped)
+            console.log("[document] drop listener removed")
           })
         )
         return queue
@@ -1080,12 +1168,88 @@ const pumpFieldActions = (): Stream.Stream<AppMessage> => {
             }
           }
         }
+        // Document links (2026-10-13): the desktop link
+        // interceptor classifies library links and forwards the
+        // click — path, mode (same/new space), and the space the
+        // link was clicked in — as an aimy:doc-link event.
+        // Placement is the shell update's job (DocLinkClicked).
+        const onDocLink = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as {
+              path: string
+              mode: string
+              spaceId: string
+            }
+            if (typeof detail.path !== "string" || detail.path === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({
+                message: ShellMessage.DocLinkClicked({
+                  path: detail.path,
+                  mode: detail.mode === "new" ? "new" : "same",
+                  spaceId: typeof detail.spaceId === "string" ? detail.spaceId : "",
+                }),
+              })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
+        // Stop generation (2026-10-13): Esc and the composer
+        // stop button arrive as aimy:stop-stream (main.ts).
+        const onStopStream = () => {
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({ message: ShellMessage.StreamStopRequested({}) })
+          )
+        }
+        // Edit-and-resend (2026-10-13): the pencil on one of
+        // his bubbles arrives as aimy:edit-message with the
+        // message id (main.ts reads it off the row's class).
+        const onEditMessage = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as { id: string }
+            if (typeof detail.id !== "string" || detail.id === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({
+                message: ShellMessage.UserMessageEditRequested({ id: detail.id }),
+              })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
         window.addEventListener("aimy:field-open", onOpen)
         window.addEventListener("aimy:field-project", onProject)
         window.addEventListener("aimy:field-panel", onPanel)
         window.addEventListener("aimy:field-refresh", onRefresh)
+        // GlobeNews manual refresh (2026-10-13): the feed footer's
+        // "last updated" label is a button (js-news-refresh). The
+        // click folds NewsRefreshRequested (a real scan runs in
+        // the main process); the label swaps to "updating…" so
+        // the click visibly lands, restoring itself if no reload
+        // re-renders it first. Delegated listener — same DOM rule
+        // as the doc-ref pattern above.
+        const onNewsRefresh = (e: Event) => {
+          const t = e.target as HTMLElement | null
+          const el = t !== null && typeof t.closest === "function" ? t.closest(".js-news-refresh") : null
+          if (el === null) return
+          const original = el.textContent ?? ""
+          if (!original.startsWith("updating")) {
+            el.textContent = "updating…"
+            window.setTimeout(() => {
+              if (el.isConnected && el.textContent === "updating…") el.textContent = original
+            }, 30_000)
+          }
+          Queue.offerUnsafe(queue, AppMessage.GotShell({ message: ShellMessage.NewsRefreshRequested({}) }))
+        }
         document.addEventListener("click", onHomeNav)
         document.addEventListener("click", onDocRef)
+        document.addEventListener("click", onNewsRefresh)
+        window.addEventListener("aimy:doc-link", onDocLink)
+        window.addEventListener("aimy:stop-stream", onStopStream)
+        window.addEventListener("aimy:edit-message", onEditMessage)
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             window.removeEventListener("aimy:field-open", onOpen)
@@ -1094,6 +1258,10 @@ const pumpFieldActions = (): Stream.Stream<AppMessage> => {
             window.removeEventListener("aimy:field-refresh", onRefresh)
             document.removeEventListener("click", onHomeNav)
             document.removeEventListener("click", onDocRef)
+            document.removeEventListener("click", onNewsRefresh)
+            window.removeEventListener("aimy:doc-link", onDocLink)
+            window.removeEventListener("aimy:stop-stream", onStopStream)
+            window.removeEventListener("aimy:edit-message", onEditMessage)
           })
         )
         return queue
@@ -1136,10 +1304,123 @@ const pumpHomedashSetting = (): Stream.Stream<AppMessage> => {
             // A malformed editor event is ignored, never fatal.
           }
         }
+        // GlobeNews read-marking (2026-10-13): the feed/link layer
+        // dispatches `aimy:news-read` {id} when an event is opened.
+        const onNewsRead = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as { id: string }
+            if (typeof detail.id !== "string" || detail.id === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({ message: ShellMessage.NewsReadRequested({ id: detail.id }) })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
+        // GlobeNews article-open (2026-10-13): a feed click or globe
+        // pick dispatches `aimy:news-open` {id}; the article lands
+        // in the drawer as its own space.
+        const onNewsOpen = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as { id: string }
+            if (typeof detail.id !== "string" || detail.id === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({ message: ShellMessage.NewsOpenRequested({ id: detail.id }) })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
+        // Threat Channel focus (2026-10-13): the director's
+        // feature events and the link layer's selection events
+        // move the model focus the intel desk + lower-third read.
+        const onNewsFeature = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as { id: string }
+            if (typeof detail.id !== "string" || detail.id === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({
+                message: ShellMessage.NewsFocusChanged({ id: detail.id, kind: "featured" }),
+              })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
+        const onNewsFeatureEnd = () => {
+          Queue.offerUnsafe(
+            queue,
+            AppMessage.GotShell({
+              message: ShellMessage.NewsFocusChanged({ id: "", kind: "" }),
+            })
+          )
+        }
+        const onNewsSelect = (e: Event) => {
+          try {
+            const detail = JSON.parse((e as CustomEvent).detail as string) as { id: string }
+            if (typeof detail.id !== "string" || detail.id === "") return
+            Queue.offerUnsafe(
+              queue,
+              AppMessage.GotShell({
+                message: ShellMessage.NewsFocusChanged({ id: detail.id, kind: "selected" }),
+              })
+            )
+          } catch {
+            // Malformed event ignored.
+          }
+        }
+        // Desk + crawl clicks (view-rendered, delegated here per
+        // the DOM side-effect rule): open the article through the
+        // same events the feed uses.
+        const onDashNewsClick = (e: Event) => {
+          const t = e.target as HTMLElement | null
+          // Voice alert silence (Threat Channel §8): the strip's
+          // button carries the alert id in a hidden span, the
+          // same pattern as the news rows.
+          const dismissEl = t?.closest?.(".js-voice-dismiss") as HTMLElement | null
+          if (dismissEl !== null && dismissEl !== undefined) {
+            const id = dismissEl.querySelector(".voice-alert-id")?.textContent?.trim()
+            if (typeof id === "string" && id !== "") {
+              Queue.offerUnsafe(
+                queue,
+                AppMessage.GotShell({
+                  message: ShellMessage.VoiceAlertDismissRequested({ id }),
+                })
+              )
+            }
+            return
+          }
+          const el = t?.closest?.(".js-news-desk-open, .js-crawl-item") as HTMLElement | null
+          // The id rides a hidden span inside the clickable —
+          // the same pattern the feed rows use.
+          const id = el?.querySelector(".news-item-id")?.textContent?.trim()
+          if (typeof id !== "string" || id === "") return
+          window.dispatchEvent(
+            new CustomEvent("aimy:news-read", { detail: JSON.stringify({ id }) })
+          )
+          window.dispatchEvent(
+            new CustomEvent("aimy:news-open", { detail: JSON.stringify({ id }) })
+          )
+        }
         window.addEventListener("aimy:homedash-setting", onSetting)
+        window.addEventListener("aimy:news-read", onNewsRead)
+        window.addEventListener("aimy:news-open", onNewsOpen)
+        window.addEventListener("aimy:news-feature", onNewsFeature)
+        window.addEventListener("aimy:news-feature-end", onNewsFeatureEnd)
+        window.addEventListener("aimy:news-select", onNewsSelect)
+        document.addEventListener("click", onDashNewsClick)
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             window.removeEventListener("aimy:homedash-setting", onSetting)
+            window.removeEventListener("aimy:news-read", onNewsRead)
+            window.removeEventListener("aimy:news-open", onNewsOpen)
+            window.removeEventListener("aimy:news-feature", onNewsFeature)
+            window.removeEventListener("aimy:news-feature-end", onNewsFeatureEnd)
+            window.removeEventListener("aimy:news-select", onNewsSelect)
+            document.removeEventListener("click", onDashNewsClick)
           })
         )
         return queue
@@ -1419,6 +1700,20 @@ const pumpMicPreRoll = (): Stream.Stream<AppMessage> => {
           }
         }
         window.addEventListener("aimy:mic-preroll", onPreRoll)
+        // Boot race fix (2026-10-13): the warmup may have settled
+        // BEFORE this listener registered — its one-shot event is
+        // gone, and the dot would sit at "warming" all session.
+        // Read the module-held current status and land it now;
+        // the event carries any later change.
+        const currentStatus = getMicPreRollStatus()
+        if (currentStatus !== "warming") {
+          console.log(`[mic] pre-roll status (initial read): ${currentStatus}`)
+          push(
+            AppMessage.GotShell({
+              message: ShellMessage.MicPreRollChanged({ status: currentStatus }),
+            })
+          )
+        }
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             window.removeEventListener("aimy:mic-preroll", onPreRoll)

@@ -37,6 +37,8 @@ export const icon = {
     h.span([h.InnerHTML(svgFilled('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>', 12))], []),
   play: (h: H): Html =>
     h.span([h.InnerHTML(svg('<polygon points="6 3 20 12 6 21 6 3"/>', 12))], []),
+  stop: (h: H): Html =>
+    h.span([h.InnerHTML(svgFilled('<rect width="14" height="14" x="5" y="5" rx="2"/>', 14))], []),
   trash: (h: H): Html =>
     h.span([h.InnerHTML(svg('<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>', 12))], []),
   info: (h: H): Html =>
@@ -55,6 +57,8 @@ export const icon = {
     h.span([h.InnerHTML(svg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>', 14))], []),
   pencil: (h: H): Html =>
     h.span([h.InnerHTML(svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>', 14))], []),
+  fileText: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>', 14))], []),
   check: (h: H): Html =>
     h.span([h.InnerHTML(svg('<path d="M20 6 9 17l-5-5"/>', 14))], []),
   plus: (h: H): Html =>
@@ -98,6 +102,19 @@ export const icon = {
    */
   home: (h: H): Html =>
     h.span([h.InnerHTML(svg('<path d="M12 2.5 L19.5 10.5 L4.5 10.5 Z"/><path d="M12 21.5 L4.5 13.5 L19.5 13.5 Z"/>', 20))], []),
+  /** GlobeNews category glyphs (2026-10-13) — feed chips share the globe dots' category colours. */
+  crosshair: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<circle cx="12" cy="12" r="10"/><line x1="22" x2="18" y1="12" y2="12"/><line x1="6" x2="2" y1="12" y2="12"/><line x1="12" x2="12" y1="6" y2="2"/><line x1="12" x2="12" y1="22" y2="18"/>', 13))], []),
+  megaphone: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>', 13))], []),
+  activity: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>', 13))], []),
+  flame: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>', 13))], []),
+  cloudLightning: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5"/>', 13))], []),
+  waves: (h: H): Html =>
+    h.span([h.InnerHTML(svg('<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>', 13))], []),
 } as const
 
 export type IconName = keyof typeof icon

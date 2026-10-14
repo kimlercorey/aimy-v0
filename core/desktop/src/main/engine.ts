@@ -31,8 +31,12 @@ import { makeBackgroundJobRegistry } from "../../../agent-loop/src/background-jo
 import { buildChatStack, type ChatStack } from "../../../chat/src/stack.js"
 import {
   bootRetrievalModule,
+  braveSearchConfigured,
+  makeBraveMediaAgentTools,
+  makeBraveMediaToolsForChat,
   makeRetrievalAgentTool,
   makeRetrievalToolForChat,
+  type BraveMediaTool,
   type RetrievalTool
 } from "../../../chat/src/retrieval.js"
 import {
@@ -221,6 +225,12 @@ export const bootDesktopEngine = async (opts?: {
   let retrievalTool: RetrievalTool | undefined
   const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
 
+  // Brave media tools (2026-10-13): news / images / videos. Registered
+  // ONLY when a Brave key is configured — the endpoints exist only on
+  // the keyed API, and a listed tool that cannot work is a lie.
+  let braveMediaTools: ReadonlyArray<BraveMediaTool> | undefined
+  const braveMediaAgentTools = makeBraveMediaAgentTools(() => braveMediaTools)
+
   // Same pattern for deep-research (2026-10-12): the model-callable
   // research.query tool, closing over a boot-stashed FACTORY (each run
   // builds its tool with that run's stage sink for the run record).
@@ -252,7 +262,7 @@ export const bootDesktopEngine = async (opts?: {
     baseUrl: config.baseUrl,
     model: config.model,
     streaming,
-    extraTools: [retrievalAgentTool, researchAgentTool],
+    extraTools: [retrievalAgentTool, researchAgentTool, ...(braveSearchConfigured() ? braveMediaAgentTools : [])],
     backgroundJobs,
     narration: narrationSink
   })
@@ -272,6 +282,7 @@ export const bootDesktopEngine = async (opts?: {
       const http = yield* HttpClient
       yield* bootRetrievalModule(host)
       retrievalTool = makeRetrievalToolForChat(http, honesty)
+      braveMediaTools = makeBraveMediaToolsForChat(http)
       yield* bootResearchModule(host)
       researchToolFactory = (onStage) => makeResearchToolForChat(http, honesty, makePoolPlanModel(pool), onStage)
     })

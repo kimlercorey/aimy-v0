@@ -34,7 +34,7 @@ import type { NewClaim } from "../../honesty/src/types.js"
 import { fetchSource } from "./fetcher.js"
 import type { HttpClientShape } from "./http.js"
 import type { SearchProvider } from "./provider.js"
-import type { AnswerClaim, FetchedSource, RetrievalReport, SourceEvidence } from "./types.js"
+import type { AnswerClaim, FetchedSource, RetrievalReport, SearchFreshness, SourceEvidence } from "./types.js"
 import type { RetrievalError } from "./errors.js"
 
 export const DEFAULT_MAX_SOURCES = 3
@@ -53,6 +53,10 @@ export interface RetrievalInput {
   readonly turnId: string
   /** Override for maxSources on a single call. */
   readonly maxSources?: number | undefined
+  /** Recency window (2026-10-13): honored by the Brave provider; the DDG provider accepts and ignores it. */
+  readonly freshness?: SearchFreshness | undefined
+  /** Brave result_filter passthrough (2026-10-13). */
+  readonly resultFilter?: string | undefined
 }
 
 const excerptOf = (source: FetchedSource): string => {
@@ -116,7 +120,11 @@ const renderAnswer = (
 export const retrieval = (deps: RetrievalDeps) => (input: RetrievalInput): Effect.Effect<RetrievalReport, RetrievalError | HonestyError> =>
   Effect.gen(function* () {
     const maxSources = input.maxSources ?? deps.maxSources ?? DEFAULT_MAX_SOURCES
-    const results = yield* deps.provider.search(input.query)
+    const searchOpts = {
+      ...(input.freshness !== undefined ? { freshness: input.freshness } : {}),
+      ...(input.resultFilter !== undefined ? { resultFilter: input.resultFilter } : {}),
+    }
+    const results = yield* deps.provider.search(input.query, searchOpts)
     const top = results.slice(0, Math.max(0, maxSources))
     const resultHosts = new Set<string>()
     for (const r of top) {
@@ -138,7 +146,10 @@ export const retrieval = (deps: RetrievalDeps) => (input: RetrievalInput): Effec
     const claims: Array<AnswerClaim> = []
     for (const s of sources) claims.push(claimFromSource(s))
     claims.push({
-      text: `Fetched ${sources.length} of ${results.length} search results for "${input.query}".`,
+      // Provider attribution (2026-10-13): with a provider chain, the
+      // report names the provider that actually served the search —
+      // a fallback answer is never dressed as the primary's.
+      text: `Fetched ${sources.length} of ${results.length} search results for "${input.query}"${input.freshness !== undefined ? (deps.provider.name === "brave" ? ` (past ${input.freshness})` : ` (a past-${input.freshness} window was requested; ${deps.provider.name} does not apply one)`) : ""} (via ${deps.provider.name}).`,
       kind: "tool-outcome",
       sources: [],
     })

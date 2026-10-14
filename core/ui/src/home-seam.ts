@@ -111,6 +111,8 @@ export interface HomeData {
   readonly memories: ReadonlyArray<HomeMemory>
   /** Journal metadata, or null when no journal exists yet. */
   readonly journal: HomeJournal | null
+  /** His sent prompts, oldest first (2026-10-13: global composer history). */
+  readonly promptHistory: ReadonlyArray<string>
 }
 
 /** Full text of one pending capability request, for a build brief. */

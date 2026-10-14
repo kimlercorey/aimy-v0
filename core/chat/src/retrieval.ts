@@ -8,11 +8,15 @@
  * hooks (before/afterToolCall), DirectGate execution — and the retrieval
  * tool records every claim in the shared HonestyService ledger.
  *
- * The module's SKILL.md declares exactly one static egress host
- * (html.duckduckgo.com); result URLs are governed by the declared fetch
- * policy (https-only, result-hosts-only), enforced before any socket opens.
+ * The module's SKILL.md declares the search egress hosts
+ * (html.duckduckgo.com, api.search.brave.com); result URLs are governed
+ * by the declared fetch policy (https-only, result-hosts-only), enforced
+ * before any socket opens.
  */
 import { Effect } from "effect"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { HonestyError } from "../../honesty/src/errors.js"
 import type { HonestyServiceShape } from "../../honesty/src/service.js"
@@ -31,16 +35,25 @@ import type { SandboxViolation } from "../../substrate/errors.js"
 import type { HttpClientShape } from "../../web-retrieval/src/http.js"
 import { RETRIEVAL_QUERY_TOOL, RETRIEVAL_TOOL_TIER } from "../../web-retrieval/src/tools.js"
 import {
+  RETRIEVAL_IMAGES_TOOL,
   RETRIEVAL_MODULE,
+  RETRIEVAL_NEWS_TOOL,
+  RETRIEVAL_VIDEOS_TOOL,
+  makeBraveMediaClient,
+  makeBraveMediaTools,
+  makeBraveSearchProvider,
+  makeChainedSearchProvider,
   makeDuckDuckGoHtmlProvider,
   makeRetrievalTool,
   retrievalToolCall,
+  type BraveMediaTool,
   type RetrievalError,
   type RetrievalReport,
-  type RetrievalTool
+  type RetrievalTool,
+  type SearchFreshness
 } from "../../web-retrieval/src/index.js"
 
-export type { RetrievalTool }
+export type { BraveMediaTool, RetrievalTool }
 
 export { RETRIEVAL_MODULE }
 
@@ -64,12 +77,57 @@ export const bootRetrievalModule = (
     return pkg
   })
 
+/**
+ * Search configuration lives at ~/.aimy/search.json (user-owned, never
+ * in the repo): { "braveApiKey": "<subscription token>" }. Absent or
+ * unreadable simply means DuckDuckGo-only — the pre-Brave behavior.
+ */
+const readBraveApiKey = (): string | undefined => {
+  try {
+    const raw = fs.readFileSync(path.join(os.homedir(), ".aimy", "search.json"), "utf-8")
+    const key = (JSON.parse(raw) as { braveApiKey?: unknown }).braveApiKey
+    return typeof key === "string" && key.trim() !== "" ? key.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** True when a Brave key is configured — the gate for every Brave-only tool. */
+export const braveSearchConfigured = (): boolean => readBraveApiKey() !== undefined
+
+/**
+ * The Brave media tools (news / images / videos) for this chat, or
+ * undefined when no Brave key is configured. These endpoints exist
+ * only on the keyed API, so without a key the tools are never
+ * registered — the model never sees a tool that cannot work.
+ */
+export const makeBraveMediaToolsForChat = (
+  http: HttpClientShape
+): ReadonlyArray<BraveMediaTool> | undefined => {
+  const braveKey = readBraveApiKey()
+  if (braveKey === undefined) return undefined
+  console.log("[aimy] search: brave media tools enabled (news, images, videos)")
+  return makeBraveMediaTools(makeBraveMediaClient({ http, apiKey: braveKey }))
+}
+
 /** The retrieval tool bound to the chat's HTTP + honesty services. */
 export const makeRetrievalToolForChat = (
   http: HttpClientShape,
   honesty: HonestyServiceShape
-): RetrievalTool =>
-  makeRetrievalTool({ provider: makeDuckDuckGoHtmlProvider({ http }), http, honesty })
+): RetrievalTool => {
+  const duckduckgo = makeDuckDuckGoHtmlProvider({ http })
+  const braveKey = readBraveApiKey()
+  if (braveKey === undefined) {
+    console.log("[aimy] search: providers = duckduckgo only (no Brave key at ~/.aimy/search.json)")
+    return makeRetrievalTool({ provider: duckduckgo, http, honesty })
+  }
+  console.log("[aimy] search: providers = brave (primary) -> duckduckgo (fallback)")
+  const provider = makeChainedSearchProvider([
+    makeBraveSearchProvider({ http, apiKey: braveKey }),
+    duckduckgo,
+  ])
+  return makeRetrievalTool({ provider, http, honesty })
+}
 
 /**
  * The retrieval tool as a MODEL-CALLABLE agent tool (not just the CLI
@@ -88,18 +146,68 @@ export const makeRetrievalAgentTool = (
   tier: RETRIEVAL_TOOL_TIER,
   description:
     "Search the public web and return a sourced answer where every factual claim carries a verification badge ([verified]/[unverified]/[failed]). Use this when the user asks about current events, facts beyond training data, or anything needing up-to-date or external information — never claim you lack web access while this tool is listed.",
-  argsHint: '{ "query": "<search query>", "maxSources": 3 }',
+  argsHint: '{ "query": "<search query>", "maxSources": 3, "freshness": "day | week | month | year (optional)" }',
   run: (args, ctx) => {
     const tool = getTool()
     if (tool === undefined) return Effect.fail(new Error("retrieval module is not booted"))
     const query = typeof args["query"] === "string" ? args["query"] : ""
     const maxSources = typeof args["maxSources"] === "number" ? args["maxSources"] : undefined
+    const freshness = typeof args["freshness"] === "string" ? (args["freshness"] as SearchFreshness) : undefined
+    const resultFilter = typeof args["resultFilter"] === "string" ? args["resultFilter"] : undefined
     return Effect.map(
-      tool.invoke({ query, sessionId: ctx.sessionId, turnId: ctx.turnId, maxSources }),
+      tool.invoke({ query, sessionId: ctx.sessionId, turnId: ctx.turnId, maxSources, freshness, resultFilter }),
       (report) => report.answer
     )
   }
 })
+
+/**
+ * The Brave media tools as MODEL-CALLABLE agent tools (2026-10-13).
+ * Same closure pattern as the retrieval tool: the definitions are
+ * created before boot and resolve the real tools through `getTools`
+ * at call time. Callers register these ONLY when
+ * braveSearchConfigured() — a keyless install never lists them.
+ */
+export const makeBraveMediaAgentTools = (
+  getTools: () => ReadonlyArray<BraveMediaTool> | undefined
+): ReadonlyArray<AgentToolDef> => {
+  const mediaRun = (name: string) => (args: Record<string, unknown>) => {
+    const tool = getTools()?.find((t) => t.name === name)
+    if (tool === undefined) return Effect.fail(new Error("brave media tools are not booted"))
+    const query = typeof args["query"] === "string" ? args["query"] : ""
+    const freshness = typeof args["freshness"] === "string" ? (args["freshness"] as SearchFreshness) : undefined
+    const count = typeof args["count"] === "number" ? args["count"] : undefined
+    return tool.invoke({ query, freshness, count }).pipe(
+      Effect.mapError((e) => new Error((e as { reason?: string }).reason ?? e._tag)),
+    )
+  }
+  return [
+    {
+      name: RETRIEVAL_NEWS_TOOL,
+      tier: RETRIEVAL_TOOL_TIER,
+      description:
+        "Search Brave News for recent news articles on a topic. Returns headlines with the outlet, the article's age, its URL, and a summary. Use this for current events and 'what is happening with X' questions — fresher and cleaner than a general web search. freshness limits the window: day, week, month, or year.",
+      argsHint: '{ "query": "<topic>", "freshness": "week", "count": 10 }',
+      run: (args) => mediaRun(RETRIEVAL_NEWS_TOOL)(args),
+    },
+    {
+      name: RETRIEVAL_IMAGES_TOOL,
+      tier: RETRIEVAL_TOOL_TIER,
+      description:
+        "Search the web for images via Brave. Returns each image's title, direct image URL, the page it appears on, and a thumbnail URL. Use when the user asks for pictures or images of something, or needs an image URL to show or reference.",
+      argsHint: '{ "query": "<subject>", "count": 10 }',
+      run: (args) => mediaRun(RETRIEVAL_IMAGES_TOOL)(args),
+    },
+    {
+      name: RETRIEVAL_VIDEOS_TOOL,
+      tier: RETRIEVAL_TOOL_TIER,
+      description:
+        "Search for videos via Brave. Returns titles, links, durations, view counts, creators, and ages. Use when the user asks for videos, tutorials, talks, or footage of something. freshness limits the window: day, week, month, or year.",
+      argsHint: '{ "query": "<topic>", "freshness": "month", "count": 10 }',
+      run: (args) => mediaRun(RETRIEVAL_VIDEOS_TOOL)(args),
+    },
+  ]
+}
 
 /** Every typed failure one retrieval pass can produce. */
 export type RetrievalViaSeamError =

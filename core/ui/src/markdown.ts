@@ -7,6 +7,22 @@ import hljs from "highlight.js"
 
 marked.setOptions({ breaks: true, gfm: true })
 
+// External-link decorator (2026-10-13, Kimler): http(s) links
+// leave the app for the OS browser, while library links open
+// inside it — the two kinds must read differently at a glance.
+// Every external anchor gets the Lucide external-link glyph
+// appended inside it; library links stay plain. The svg uses
+// currentColor so it tints with the link.
+const EXTERNAL_LINK_ICON =
+  `<span class="ext-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>`
+
+const decorateExternalLinks = (html: string): string =>
+  html.replace(
+    /<a\s+href="(https?:\/\/[^"]*)"([^>]*)>([\s\S]*?)<\/a>/g,
+    (_m, href: string, attrs: string, inner: string) =>
+      `<a href="${href}"${attrs}>${inner}${EXTERNAL_LINK_ICON}</a>`
+  )
+
 const sanitizeHtml = (html: string): string => {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
@@ -96,7 +112,7 @@ export const renderMarkdown = (text: string): string => {
   // Collapse whitespace between tags (prevents phantom line boxes).
   // Safe: code content is HTML-escaped, so no literal > < inside pre.
   const compact = rawHtml.replace(/>\s+</g, "><")
-  return sanitizeHtml(compact)
+  return sanitizeHtml(decorateExternalLinks(compact))
 }
 
 const escapeHtml = (raw: string): string =>

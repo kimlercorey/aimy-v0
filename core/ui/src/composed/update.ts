@@ -166,7 +166,17 @@ export const update = (
       // the drawer — which lives in the Chat panel. From any other
       // panel (e.g. Projects) the click would otherwise land invisibly;
       // bring the user to where the document opened (2026-10-12).
-      if (message._tag === "HomeRecentClicked" && model.activePanel !== "chat") {
+      // Starting a conversation is the same shape (2026-10-13): the
+      // dash lives on the Home panel too (WorkOn chips, the Home
+      // composer), and a turn begun there must land where the
+      // conversation renders — otherwise AImy answers invisibly.
+      if (
+        (message._tag === "HomeRecentClicked" ||
+          message._tag === "NewsArticleLoaded" ||
+          message._tag === "UserSentMessage" ||
+          message._tag === "VoiceDraftConfirmed") &&
+        model.activePanel !== "chat"
+      ) {
         return { ...result, model: { ...result.model, activePanel: "chat" as const } }
       }
       return result

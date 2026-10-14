@@ -16,7 +16,7 @@
  */
 import { Schema } from "effect"
 import { defineMessageUnion } from "foldkit/message"
-import { ChatImage, HomeCard, HomeChat, HomeJournal, HomeMemory, HomeProject, HomeProjectListEntry, HomeRecent, HomeRequest, HomedashWidget } from "./model.js"
+import { ChatDocument, ChatImage, HomeCard, HomeChat, HomeJournal, HomeMemory, HomeProject, HomeProjectListEntry, HomeRecent, HomeRequest, HomedashWidget } from "./model.js"
 
 /** Token usage incl. reasoning tokens (Pi #9409); optional until the loop reports it. */
 export const Usage = Schema.Struct({
@@ -30,6 +30,12 @@ export const Message = defineMessageUnion({
   /* -- session (owned) ------------------------------------------- */
 
   ComposerDraftChanged: { text: Schema.String },
+  ComposerHistoryStepped: { text: Schema.String, index: Schema.Number },
+  StreamStopRequested: {},
+  UserMessageEditRequested: { id: Schema.String },
+  UserMessageEditCancelled: {},
+  EditBranchReady: { newSessionId: Schema.String },
+  EditBranchFailed: { reason: Schema.String },
 
   UserSentMessage: {
     /** Also the correlation id for the SendToInference command it produces. */
@@ -39,6 +45,8 @@ export const Message = defineMessageUnion({
     at: Schema.Number,
     /** Images attached via drag-and-drop (2026-10-11). */
     images: Schema.optional(Schema.Array(ChatImage)),
+    /** Documents attached via drag-and-drop (2026-10-13). */
+    documents: Schema.optional(Schema.Array(ChatDocument)),
   },
 
   /** An image was dropped onto the chat (2026-10-11). */
@@ -47,6 +55,13 @@ export const Message = defineMessageUnion({
     dataUrl: Schema.String,
     name: Schema.String,
     mimeType: Schema.String,
+  },
+
+  /** A document was dropped onto the chat (2026-10-13). */
+  DocumentDropped: {
+    id: Schema.String,
+    name: Schema.String,
+    text: Schema.String,
   },
 
   /** Remove a staged attachment from the composer (2026-10-11). */
@@ -462,6 +477,7 @@ export const Message = defineMessageUnion({
     chats: Schema.Array(HomeChat),
     memories: Schema.Array(HomeMemory),
     journal: Schema.NullOr(HomeJournal),
+    promptHistory: Schema.Array(Schema.String),
   },
   /** HomeDash (2026-10-13): enabled widgets + settings arrived. */
   HomedashLoaded: { widgets: Schema.Array(HomedashWidget) },
@@ -474,6 +490,33 @@ export const Message = defineMessageUnion({
     key: Schema.String,
     value: Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
   },
+  /** GlobeNews (2026-10-13): an event was read (feed click) — its dot gains the cyan ring. */
+  NewsReadRequested: { id: Schema.String },
+  /** GlobeNews (2026-10-13): an event was clicked — its article should open in the drawer. */
+  NewsOpenRequested: { id: Schema.String },
+  /** Threat Channel (2026-10-13): the desk/lower-third focus moved.
+   * kind: "selected" | "featured"; an empty id clears the focus
+   * (the update handler only lets it clear a director feature, so
+   * a feature ending never erases a user selection). */
+  NewsFocusChanged: { id: Schema.String, kind: Schema.String },
+  VoiceAlertsChanged: {
+    alerts: Schema.Array(
+      Schema.Struct({ id: Schema.String, title: Schema.String, severity: Schema.String })
+    ),
+  },
+  VoiceAlertDismissRequested: { id: Schema.String },
+  /** The article arrived (markdown) — open it as a drawer space. */
+  NewsArticleLoaded: {
+    id: Schema.String,
+    title: Schema.String,
+    content: Schema.String,
+    url: Schema.String,
+  },
+  NewsArticleFailed: { id: Schema.String, reason: Schema.String },
+  /** GlobeNews (2026-10-13): the feed's "last updated" label was clicked — scan now. */
+  NewsRefreshRequested: {},
+  /** GlobeNews feed region toggle: "world" | "usa". */
+  NewsRegionToggled: { region: Schema.String },
   HomeDataFailed: { reason: Schema.String },
   HomeRecentClicked: { path: Schema.String },
   /** Project UI (2026-10-12): switcher, new-project form, asset moves. */
@@ -495,6 +538,14 @@ export const Message = defineMessageUnion({
   HomeRecentAddToProjectClicked: { path: Schema.String, title: Schema.String },
   HomeDocumentLoaded: { path: Schema.String, content: Schema.String },
   HomeDocumentLoadFailed: { path: Schema.String, reason: Schema.String },
+  DocLinkClicked: { path: Schema.String, mode: Schema.String, spaceId: Schema.String },
+  LinkedDocumentLoaded: {
+    path: Schema.String,
+    content: Schema.String,
+    mode: Schema.String,
+    spaceId: Schema.String,
+  },
+  LinkedDocumentLoadFailed: { path: Schema.String, reason: Schema.String },
   HomeRequestBuildBriefClicked: { capability: Schema.String, at: Schema.String },
   HomeRequestBriefLoaded: { capability: Schema.String, why: Schema.String, at: Schema.String },
   HomeRequestBriefLoadFailed: { capability: Schema.String, reason: Schema.String },
@@ -541,8 +592,15 @@ export type Message = typeof Message.Type
 /** Every tag in this track's vocabulary, for the exhaustiveness tests. */
 export const MESSAGE_TAGS = [
   "ComposerDraftChanged",
+  "ComposerHistoryStepped",
+  "StreamStopRequested",
+  "UserMessageEditRequested",
+  "UserMessageEditCancelled",
+  "EditBranchReady",
+  "EditBranchFailed",
   "UserSentMessage",
   "ImageDropped",
+  "DocumentDropped",
   "AttachmentRemoved",
   "StreamStarted",
   "StreamChunkReceived",
@@ -587,6 +645,9 @@ export const MESSAGE_TAGS = [
   "HomeRecentAddToProjectClicked",
   "HomeDocumentLoaded",
   "HomeDocumentLoadFailed",
+  "DocLinkClicked",
+  "LinkedDocumentLoaded",
+  "LinkedDocumentLoadFailed",
   "HomeRequestBuildBriefClicked",
   "HomeRequestBriefLoaded",
   "HomeRequestBriefLoadFailed",
@@ -603,4 +664,13 @@ export const MESSAGE_TAGS = [
   "HomedashFailed",
   "HomedashRefreshRequested",
   "HomedashSettingChanged",
+  "NewsReadRequested",
+  "NewsOpenRequested",
+  "NewsArticleLoaded",
+  "NewsArticleFailed",
+  "NewsRefreshRequested",
+  "NewsRegionToggled",
+  "NewsFocusChanged",
+  "VoiceAlertsChanged",
+  "VoiceAlertDismissRequested",
 ] as const

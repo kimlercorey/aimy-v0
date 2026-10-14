@@ -454,7 +454,11 @@ const previewSpaceView = (
         // 2026-10-12). A different tag forces wholesale replacement.
         h.pre([h.Class("drawer-space-body drawer-space-raw")], [space.content])
       : h.div(
-          [h.Class("drawer-space-body"), h.InnerHTML(renderMarkdown(space.content))],
+          // markdown-body: spaces render with the platform's tuned
+          // markdown style (type scale, cyan links) — without it the
+          // content fell back to browser-default link blue
+          // (Kimler, 2026-10-13).
+          [h.Class("drawer-space-body markdown-body"), h.InnerHTML(renderMarkdown(space.content))],
           []
         )
   // Encode space ID in a data attribute via the class name.

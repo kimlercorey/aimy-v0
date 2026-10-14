@@ -14,6 +14,55 @@ export interface SearchResult {
   readonly snippet: string
 }
 
+/** Recency window for a search (2026-10-13): Brave maps these to its freshness codes (pd/pw/pm/py). */
+export type SearchFreshness = "day" | "week" | "month" | "year"
+
+/** Optional search controls threaded through the SearchProvider seam. Providers that cannot honor one ignore it (documented per provider). */
+export interface SearchOptions {
+  readonly freshness?: SearchFreshness | undefined
+  /** Brave result_filter passthrough (comma-separated result types, e.g. "web,news"). */
+  readonly resultFilter?: string | undefined
+}
+
+/** One Brave News result (2026-10-13). */
+export interface NewsResult {
+  readonly title: string
+  readonly url: string
+  readonly snippet: string
+  /** Human age string from Brave ("2 hours ago"); empty when absent. */
+  readonly age: string
+  /** Outlet name (profile) or hostname when no profile exists. */
+  readonly source: string
+}
+
+/** One Brave Images result (2026-10-13). */
+export interface ImageResult {
+  readonly title: string
+  /** Page the image was found on. */
+  readonly pageUrl: string
+  /** Direct image URL. */
+  readonly imageUrl: string
+  /** Brave-hosted thumbnail URL; empty when absent. */
+  readonly thumbnailUrl: string
+  /** Source domain; empty when absent. */
+  readonly source: string
+}
+
+/** One Brave Videos result (2026-10-13). */
+export interface VideoResult {
+  readonly title: string
+  readonly url: string
+  readonly snippet: string
+  /** Human age/date string from Brave; empty when absent. */
+  readonly age: string
+  /** Duration string ("03:45:00"); empty when absent. */
+  readonly duration: string
+  /** View count; undefined when absent. */
+  readonly views: number | undefined
+  /** Creator/channel name; empty when absent. */
+  readonly creator: string
+}
+
 export interface FetchedSource {
   readonly url: string
   readonly title: string

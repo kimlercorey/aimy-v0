@@ -21,10 +21,14 @@ import { buildChatStack } from "./stack.js"
 import { DEFAULT_SESSION, USAGE, parseArgs } from "./args.js"
 import {
   bootRetrievalModule,
+  braveSearchConfigured,
+  makeBraveMediaAgentTools,
+  makeBraveMediaToolsForChat,
   makeRetrievalAgentTool,
   makeRetrievalToolForChat,
   retrievalViaSeam,
   RETRIEVAL_MODULE,
+  type BraveMediaTool,
   type RetrievalTool
 } from "./retrieval.js"
 import {
@@ -194,6 +198,10 @@ const main = async (): Promise<void> => {
   // Shared factory with the desktop engine: one definition, one description.
   let retrievalTool: RetrievalTool | undefined
   const retrievalAgentTool = makeRetrievalAgentTool(() => retrievalTool)
+  // Brave media tools (2026-10-13): registered only when a Brave key
+  // is configured, same gate as the desktop engine.
+  let braveMediaTools: ReadonlyArray<BraveMediaTool> | undefined
+  const braveMediaAgentTools = makeBraveMediaAgentTools(() => braveMediaTools)
   let researchToolFactory: ResearchToolFactory | undefined
   const researchAgentTool = makeResearchAgentTool((onStage) => researchToolFactory?.(onStage))
   // The CLI gains a background registry (charter E17): job.spawn works
@@ -202,7 +210,7 @@ const main = async (): Promise<void> => {
   const { layer, provider, retrievalHookCounts } = buildChatStack({
     baseUrl: args.baseUrl,
     model,
-    extraTools: [retrievalAgentTool, researchAgentTool],
+    extraTools: [retrievalAgentTool, researchAgentTool, ...(braveSearchConfigured() ? braveMediaAgentTools : [])],
     backgroundJobs
   })
 
@@ -231,6 +239,7 @@ const main = async (): Promise<void> => {
     yield* bootRetrievalModule(host)
     retrievalHost = host
     retrievalTool = makeRetrievalToolForChat(http, honesty)
+    braveMediaTools = makeBraveMediaToolsForChat(http)
     yield* bootResearchModule(host)
     researchToolFactory = (onStage) => makeResearchToolForChat(http, honesty, makePoolPlanModel(pool), onStage)
   })
